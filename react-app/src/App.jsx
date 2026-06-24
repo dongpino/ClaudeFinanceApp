@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import HomePage from './components/HomePage';
 import DetailPage from './components/DetailPage';
 import BottomNav from './components/BottomNav';
@@ -25,29 +25,14 @@ function ShellPage({ activePage, onPageChange, children }) {
   );
 }
 
-export default function App() {
-  const [activePage, setActivePage] = useState('home');
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const isDetail = location.pathname.startsWith('/detail/');
-
-  function handlePageChange(page) {
-    setActivePage(page);
-    navigate('/');
-  }
-
-  if (isDetail) {
-    return <DetailPage onBack={() => navigate('/')} activePage={activePage} onPageChange={handlePageChange} />;
-  }
-
+function MainContent({ activePage, onPageChange }) {
   if (activePage === 'home') {
-    return <HomePage activePage={activePage} onPageChange={setActivePage} />;
+    return <HomePage activePage={activePage} onPageChange={onPageChange} />;
   }
 
   if (activePage === 'chart') {
     return (
-      <ShellPage activePage={activePage} onPageChange={setActivePage}>
+      <ShellPage activePage={activePage} onPageChange={onPageChange}>
         <PlaceholderPage title="차트" sub="상세 차트 준비 중">
           <svg width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5"
                strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
@@ -62,7 +47,7 @@ export default function App() {
 
   if (activePage === 'search') {
     return (
-      <ShellPage activePage={activePage} onPageChange={setActivePage}>
+      <ShellPage activePage={activePage} onPageChange={onPageChange}>
         <PlaceholderPage title="검색" sub="종목 검색 준비 중">
           <svg width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5"
                strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
@@ -76,7 +61,7 @@ export default function App() {
 
   if (activePage === 'profile') {
     return (
-      <ShellPage activePage={activePage} onPageChange={setActivePage}>
+      <ShellPage activePage={activePage} onPageChange={onPageChange}>
         <PlaceholderPage title="내 정보" sub="프로필 준비 중">
           <svg width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5"
                strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
@@ -88,5 +73,34 @@ export default function App() {
     );
   }
 
-  return <HomePage activePage={activePage} onPageChange={setActivePage} />;
+  return <HomePage activePage={activePage} onPageChange={onPageChange} />;
+}
+
+export default function App() {
+  const [activePage, setActivePage] = useState('home');
+  const navigate = useNavigate();
+
+  function handlePageChange(page) {
+    setActivePage(page);
+    navigate('/');
+  }
+
+  return (
+    <Routes>
+      <Route
+        path="/detail/:id"
+        element={
+          <DetailPage
+            onBack={() => navigate('/')}
+            activePage={activePage}
+            onPageChange={handlePageChange}
+          />
+        }
+      />
+      <Route
+        path="*"
+        element={<MainContent activePage={activePage} onPageChange={setActivePage} />}
+      />
+    </Routes>
+  );
 }

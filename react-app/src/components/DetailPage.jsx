@@ -1,3 +1,4 @@
+import { useParams } from 'react-router-dom';
 import { useData } from '../DataContext';
 import Chart from './Chart';
 import BottomNav from './BottomNav';
@@ -22,9 +23,7 @@ function stats90(h90) {
 
 export default function DetailPage({ onBack, activePage, onPageChange }) {
   const { items } = useData();
-
-  // derive id from URL
-  const id = window.location.pathname.split('/').pop();
+  const { id } = useParams();
   const item = items.find(it => it.id === id);
 
   if (!item) {
