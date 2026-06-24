@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Generated data (run market_check.py to regenerate)
+market_data.json
+react-app/public/market_data.json
+
+# Node / React
+react-app/node_modules/
+react-app/dist/
+react-app/.env
+react-app/.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+
+# Vite cache
+react-app/.vite/
