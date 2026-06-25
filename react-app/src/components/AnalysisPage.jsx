@@ -25,9 +25,11 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState(null);
 
-  const [showMA20, setShowMA20] = useState(true);
-  const [showMA60, setShowMA60] = useState(true);
-  const [showRSI,  setShowRSI]  = useState(true);
+  const [showMA20,  setShowMA20]  = useState(true);
+  const [showMA60,  setShowMA60]  = useState(true);
+  const [showMA100, setShowMA100] = useState(false);  // 기본 off — 5선 동시 표시 방지
+  const [showMA200, setShowMA200] = useState(true);
+  const [showRSI,   setShowRSI]   = useState(true);
 
   // 종목 전환 시 90일 데이터 fetch
   useEffect(() => {
@@ -39,7 +41,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     const ctrl = new AbortController();
     const tid  = setTimeout(() => ctrl.abort(), DETAIL_TIMEOUT);
 
-    fetch(`/api/market-data?id=${selectedId}`, { signal: ctrl.signal })
+    fetch(`/api/analysis?id=${selectedId}`, { signal: ctrl.signal })
       .finally(() => clearTimeout(tid))
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(data => {
@@ -55,10 +57,19 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     return () => { cancelled = true; ctrl.abort(); };
   }, [selectedId]);
 
-  // 90일 데이터가 오면 교체, 그 전엔 홈 30일 데이터로 렌더
+  // analysis API 데이터(250d)가 오면 교체, 그 전엔 홈 30일 데이터로 렌더
   const baseItem = homeItems.find(it => it.id === selectedId);
   const item = detailItem ?? baseItem;
   const dir  = item?.direction ?? 'flat';
+
+  // 확보 일수에 따라 토글 비활성화 (데이터 부족 대비)
+  const days = item?.days_available
+    ?? item?.history_long?.length
+    ?? item?.history_90d?.length
+    ?? item?.history?.length
+    ?? 0;
+  const ma100Disabled = days > 0 && days < 100;
+  const ma200Disabled = days > 0 && days < 200;
 
   return (
     <>
@@ -95,22 +106,33 @@ export default function AnalysisPage({ activePage, onPageChange }) {
               className={`ind-toggle${showMA20 ? ' on ma20' : ''}`}
               onClick={() => setShowMA20(v => !v)}
             >
-              <span className="ind-dot ma20" />
-              MA20
+              <span className="ind-dot ma20" />MA20
             </button>
             <button
               className={`ind-toggle${showMA60 ? ' on ma60' : ''}`}
               onClick={() => setShowMA60(v => !v)}
             >
-              <span className="ind-dot ma60" />
-              MA60
+              <span className="ind-dot ma60" />MA60
+            </button>
+            <button
+              className={`ind-toggle${showMA100 ? ' on ma100' : ''}${ma100Disabled ? ' disabled' : ''}`}
+              onClick={() => !ma100Disabled && setShowMA100(v => !v)}
+              title={ma100Disabled ? '데이터 부족 (100일 미만)' : undefined}
+            >
+              <span className="ind-dot ma100" />MA100
+            </button>
+            <button
+              className={`ind-toggle${showMA200 ? ' on ma200' : ''}${ma200Disabled ? ' disabled' : ''}`}
+              onClick={() => !ma200Disabled && setShowMA200(v => !v)}
+              title={ma200Disabled ? '데이터 부족 (200일 미만)' : undefined}
+            >
+              <span className="ind-dot ma200" />MA200
             </button>
             <button
               className={`ind-toggle${showRSI ? ' on rsi' : ''}`}
               onClick={() => setShowRSI(v => !v)}
             >
-              <span className="ind-dot rsi" />
-              RSI(14)
+              <span className="ind-dot rsi" />RSI(14)
             </button>
           </div>
 
@@ -133,6 +155,8 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                 item={item}
                 showMA20={showMA20}
                 showMA60={showMA60}
+                showMA100={showMA100}
+                showMA200={showMA200}
                 showRSI={showRSI}
               />
             )}

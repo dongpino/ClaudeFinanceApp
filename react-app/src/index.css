@@ -506,7 +506,7 @@ body {
 /* 지표 토글 버튼 */
 .analysis-toggles {
   flex-shrink: 0;
-  display: flex; gap: 6px;
+  display: flex; flex-wrap: wrap; gap: 6px;
   padding: 0 16px 8px;
 }
 .ind-toggle {
@@ -519,16 +519,21 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 .ind-toggle.on { background: rgba(255,255,255,.05); color: var(--text-1); }
-.ind-toggle.on.ma20 { border-color: #f97316; }
-.ind-toggle.on.ma60 { border-color: #a855f7; }
-.ind-toggle.on.rsi  { border-color: #22d3ee; }
+.ind-toggle.on.ma20  { border-color: #f97316; }
+.ind-toggle.on.ma60  { border-color: #a855f7; }
+.ind-toggle.on.ma100 { border-color: #10b981; }
+.ind-toggle.on.ma200 { border-color: #fbbf24; }
+.ind-toggle.on.rsi   { border-color: #22d3ee; }
+.ind-toggle.disabled { opacity: .35; cursor: not-allowed; }
 .ind-dot {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
   background: var(--border);
 }
-.ind-toggle.on .ind-dot.ma20 { background: #f97316; }
-.ind-toggle.on .ind-dot.ma60 { background: #a855f7; }
-.ind-toggle.on .ind-dot.rsi  { background: #22d3ee; }
+.ind-toggle.on .ind-dot.ma20  { background: #f97316; }
+.ind-toggle.on .ind-dot.ma60  { background: #a855f7; }
+.ind-toggle.on .ind-dot.ma100 { background: #10b981; }
+.ind-toggle.on .ind-dot.ma200 { background: #fbbf24; }
+.ind-toggle.on .ind-dot.rsi   { background: #22d3ee; }
 
 /* 차트 메인 영역 */
 .analysis-main {
