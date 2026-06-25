@@ -84,7 +84,27 @@ body {
   background: #22c55e; flex-shrink: 0;
   animation: blink 2.4s ease-in-out infinite;
 }
+.pulse-dot.static { background: #f59e0b; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+/* 정적 데이터 출처 칩 */
+.static-chip {
+  font-size: 8.5px; font-weight: 700;
+  color: #f59e0b;
+  background: rgba(245,158,11,.12);
+  border: 1px solid rgba(245,158,11,.35);
+  border-radius: 3px; padding: 1px 5px;
+}
+
+/* ── 이상 종목 요약 바 ─────────────────────── */
+.warn-bar {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 16px;
+  font-size: 10px; color: #f97316;
+  background: rgba(249,115,22,.08);
+  border-bottom: 1px solid rgba(249,115,22,.2);
+}
 
 /* ── 카테고리 탭 ──────────────────────────── */
 .tabs {
@@ -149,11 +169,25 @@ body {
   border-bottom: 1.5px solid var(--gold); padding-bottom: 1px;
   line-height: 1.3;
 }
+.card-top-right {
+  display: flex; align-items: flex-start; gap: 4px; flex-shrink: 0;
+}
 .card-cat {
   font-size: 8.5px; font-weight: 600; color: var(--text-3);
   background: rgba(255,255,255,.04); border: 1px solid var(--border);
   border-radius: 3px; padding: 1px 4px;
-  flex-shrink: 0; margin-left: 4px; margin-top: 1px;
+  flex-shrink: 0; margin-top: 1px;
+}
+
+/* ── 카드 경고 배지 ─────────────────────────── */
+.card-warn {
+  flex-shrink: 0; margin-top: 1px;
+  font-size: 8px; font-weight: 800; line-height: 13px;
+  color: #f97316;
+  background: rgba(249,115,22,.15);
+  border: 1px solid rgba(249,115,22,.45);
+  border-radius: 3px; padding: 0 3px;
+  cursor: help; user-select: none;
 }
 .card-price {
   font-size: 20px; font-weight: 800; color: var(--text-1);

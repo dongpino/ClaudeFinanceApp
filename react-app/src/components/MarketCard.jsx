@@ -7,9 +7,21 @@ const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumF
 const fc   = n => (n > 0 ? '+' : '') + fp(n);
 const fpct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 
+export function detectIssues(item) {
+  const issues = [];
+  if (!item.price || item.price === 0)
+    issues.push('가격 데이터 없음');
+  if (!item.history || item.history.length < 5)
+    issues.push(`차트 데이터 부족 (${item.history?.length ?? 0}포인트)`);
+  if (item.change === 0 && item.change_pct === 0)
+    issues.push('전일대비 계산 실패 의심');
+  return issues;
+}
+
 export default function MarketCard({ item }) {
   const navigate = useNavigate();
   const { direction: dir, name, category, price, change, change_pct, source, as_of, history } = item;
+  const issues = detectIssues(item);
 
   return (
     <article
@@ -20,7 +32,18 @@ export default function MarketCard({ item }) {
       <div className="card-top">
         <div className="card-name-row">
           <span className="card-name">{name}</span>
-          <span className="card-cat">{category}</span>
+          <div className="card-top-right">
+            {issues.length > 0 && (
+              <span
+                className="card-warn"
+                title={issues.join('\n')}
+                onClick={e => e.stopPropagation()}
+              >
+                ⚠
+              </span>
+            )}
+            <span className="card-cat">{category}</span>
+          </div>
         </div>
         <div className="card-price">{fp(price)}</div>
         <div className={`card-change ${dir}`}>

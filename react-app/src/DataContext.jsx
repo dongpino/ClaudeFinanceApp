@@ -15,6 +15,8 @@ export function DataProvider({ children }) {
   const [items,     setItems]     = useState([]);
   const [updatedAt, setUpdatedAt] = useState('데이터 로딩 중…');
   const [loadError, setLoadError] = useState(null);
+  // 'loading' | 'api' | 'static' | 'error'
+  const [source,    setSource]    = useState('loading');
 
   useEffect(() => {
     let cancelled = false;
@@ -28,6 +30,7 @@ export function DataProvider({ children }) {
         console.info('[DataContext] ✅ 서버리스 API:', data.updated_at, `(${data.items.length}종목)`);
         setItems(data.items);
         setUpdatedAt('마지막 갱신 : ' + (data.updated_at ?? '알 수 없음'));
+        setSource('api');
       })
       .catch(apiErr => {
         // ── 2순위: 정적 JSON fallback (API 실패 시에만) ──
@@ -41,14 +44,15 @@ export function DataProvider({ children }) {
             if (cancelled) return;
             console.info('[DataContext] 📄 정적 fallback:', data.updated_at, `(${data.items.length}종목)`);
             setItems(data.items);
-            // [정적] 표시로 어느 소스인지 화면에서 구분 가능
-            setUpdatedAt('마지막 갱신 : ' + (data.updated_at ?? '알 수 없음') + ' [정적]');
+            setUpdatedAt('마지막 갱신 : ' + (data.updated_at ?? '알 수 없음'));
+            setSource('static');
           })
           .catch(jsonErr => {
             if (cancelled) return;
             console.error('[DataContext] 정적 fallback도 실패:', jsonErr.message);
             setLoadError(jsonErr.message);
             setUpdatedAt('로드 실패');
+            setSource('error');
           });
       });
 
@@ -56,7 +60,7 @@ export function DataProvider({ children }) {
   }, []);
 
   return (
-    <DataContext.Provider value={{ items, updatedAt, loadError }}>
+    <DataContext.Provider value={{ items, updatedAt, loadError, source }}>
       {children}
     </DataContext.Provider>
   );
