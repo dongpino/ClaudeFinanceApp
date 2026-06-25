@@ -144,81 +144,82 @@ function recalcChange(item) {
 }
 
 export async function collectKR({ include90d = true } = {}) {
-  const sign  = n => (n >= 0 ? '+' : '') + n.toFixed(2);
-  const items = [];
+  const sign = n => (n >= 0 ? '+' : '') + n.toFixed(2);
 
-  // ── 코스피 (단독 격리) ───────────────────────────
-  try {
-    const kc    = await fetchKOSPICurrent();
-    const kospi = {
-      id: 'kospi', name: '코스피 (^KS11)', symbol: '^KS11',
-      price: r2(kc.current), prev_close: r2(kc.prevClose),
-      change: r2(kc.change), change_pct: r4(kc.changePct),
-      direction: direction(kc.change), source: kc.source, as_of: kc.asOf,
-      category: '지수', history: [], ohlc_available: false, history_90d: [],
-    };
+  // 코스피와 원/달러를 병렬로 수집 (순차 → 병렬: ~8-12s → ~4-6s)
+  const [kospiResult, krwResult] = await Promise.allSettled([
 
-    const kospiTasks = [
-      fetchKOSPIHistory(30).then(h => { kospi.history = h; }).catch(e => console.warn(`[kospi] history 실패: ${e.message}`)),
-    ];
-    if (include90d) {
-      kospiTasks.push(
-        fetchKOSPIHistory90d(15).then(h => { kospi.history_90d = h; }).catch(e => console.warn(`[kospi] history_90d 실패: ${e.message}`))
-      );
-    }
-    await Promise.allSettled(kospiTasks);
+    // ── 코스피 ───────────────────────────────────────
+    (async () => {
+      const kc    = await fetchKOSPICurrent();
+      const kospi = {
+        id: 'kospi', name: '코스피 (^KS11)', symbol: '^KS11',
+        price: r2(kc.current), prev_close: r2(kc.prevClose),
+        change: r2(kc.change), change_pct: r4(kc.changePct),
+        direction: direction(kc.change), source: kc.source, as_of: kc.asOf,
+        category: '지수', history: [], ohlc_available: false, history_90d: [],
+      };
+      const kospiTasks = [
+        fetchKOSPIHistory(30).then(h => { kospi.history = h; }).catch(e => console.warn(`[kospi] history 실패: ${e.message}`)),
+      ];
+      if (include90d) {
+        kospiTasks.push(
+          fetchKOSPIHistory90d(15).then(h => { kospi.history_90d = h; }).catch(e => console.warn(`[kospi] history_90d 실패: ${e.message}`))
+        );
+      }
+      await Promise.allSettled(kospiTasks);
+      recalcChange(kospi);
+      console.log(`[kospi] ${kospi.price.toLocaleString()}  ${sign(kospi.change)} (${sign(kospi.change_pct)}%)  hist=${kospi.history.length}  hist_90d=${kospi.history_90d.length}`);
+      return kospi;
+    })(),
 
-    recalcChange(kospi);
-    console.log(`[kospi] ${kospi.price.toLocaleString()}  ${sign(kospi.change)} (${sign(kospi.change_pct)}%)  hist=${kospi.history.length}  hist_90d=${kospi.history_90d.length}`);
-    items.push(kospi);
-  } catch (e) {
-    console.error(`[kospi] 수집 실패: ${e.message}`);
-  }
-
-  // ── 원/달러 (단독 격리) ──────────────────────────
-  try {
-    let krc;
-    try {
-      krc = await fetchUSDKRWCurrent();
-    } catch (e) {
-      console.warn(`[usdkrw] Naver 실패: ${e.message} → Frankfurter 폴백`);
-      krc = await fetchFrankfurterCurrent();
-    }
-
-    const krw = {
-      id: 'usdkrw', name: '원/달러', symbol: 'USDKRW',
-      price: r2(krc.current), prev_close: r2(krc.prevClose),
-      change: r2(krc.change), change_pct: r4(krc.changePct),
-      direction: direction(krc.change), source: krc.source, as_of: krc.asOf,
-      category: '환율', history: [], ohlc_available: false, history_90d: [],
-    };
-
-    const krwTasks = [
-      fetchUSDKRWHistory(3)
-        .then(h => { if (h.length < 10) throw new Error(`포인트 부족: ${h.length}`); krw.history = h; })
-        .catch(async e => {
-          console.warn(`[usdkrw] history Naver 실패: ${e.message} → Frankfurter 폴백`);
-          krw.history = await fetchFrankfurterHistory(30).catch(e2 => { console.warn(`[usdkrw] history 폴백도 실패: ${e2.message}`); return []; });
-        }),
-    ];
-    if (include90d) {
-      krwTasks.push(
-        fetchUSDKRWHistory(9)
-          .then(h => { if (h.length < 10) throw new Error(`포인트 부족: ${h.length}`); krw.history_90d = h; })
+    // ── 원/달러 ──────────────────────────────────────
+    (async () => {
+      let krc;
+      try {
+        krc = await fetchUSDKRWCurrent();
+      } catch (e) {
+        console.warn(`[usdkrw] Naver 실패: ${e.message} → Frankfurter 폴백`);
+        krc = await fetchFrankfurterCurrent();
+      }
+      const krw = {
+        id: 'usdkrw', name: '원/달러', symbol: 'USDKRW',
+        price: r2(krc.current), prev_close: r2(krc.prevClose),
+        change: r2(krc.change), change_pct: r4(krc.changePct),
+        direction: direction(krc.change), source: krc.source, as_of: krc.asOf,
+        category: '환율', history: [], ohlc_available: false, history_90d: [],
+      };
+      const krwTasks = [
+        fetchUSDKRWHistory(3)
+          .then(h => { if (h.length < 10) throw new Error(`포인트 부족: ${h.length}`); krw.history = h; })
           .catch(async e => {
-            console.warn(`[usdkrw] history_90d Naver 실패: ${e.message} → Frankfurter 폴백`);
-            krw.history_90d = await fetchFrankfurterHistory(90).catch(e2 => { console.warn(`[usdkrw] history_90d 폴백도 실패: ${e2.message}`); return []; });
-          })
-      );
-    }
-    await Promise.allSettled(krwTasks);
+            console.warn(`[usdkrw] history Naver 실패: ${e.message} → Frankfurter 폴백`);
+            krw.history = await fetchFrankfurterHistory(30).catch(e2 => { console.warn(`[usdkrw] history 폴백도 실패: ${e2.message}`); return []; });
+          }),
+      ];
+      if (include90d) {
+        krwTasks.push(
+          fetchUSDKRWHistory(9)
+            .then(h => { if (h.length < 10) throw new Error(`포인트 부족: ${h.length}`); krw.history_90d = h; })
+            .catch(async e => {
+              console.warn(`[usdkrw] history_90d Naver 실패: ${e.message} → Frankfurter 폴백`);
+              krw.history_90d = await fetchFrankfurterHistory(90).catch(e2 => { console.warn(`[usdkrw] history_90d 폴백도 실패: ${e2.message}`); return []; });
+            })
+        );
+      }
+      await Promise.allSettled(krwTasks);
+      recalcChange(krw);
+      console.log(`[usdkrw] ${krw.price.toLocaleString()}  ${sign(krw.change)} (${sign(krw.change_pct)}%)  hist=${krw.history.length}  hist_90d=${krw.history_90d.length}`);
+      return krw;
+    })(),
 
-    recalcChange(krw);
-    console.log(`[usdkrw] ${krw.price.toLocaleString()}  ${sign(krw.change)} (${sign(krw.change_pct)}%)  hist=${krw.history.length}  hist_90d=${krw.history_90d.length}`);
-    items.push(krw);
-  } catch (e) {
-    console.error(`[usdkrw] 수집 실패: ${e.message}`);
-  }
+  ]);
+
+  const items = [];
+  if (kospiResult.status === 'fulfilled') items.push(kospiResult.value);
+  else console.error(`[kospi] 수집 실패: ${kospiResult.reason?.message}`);
+  if (krwResult.status === 'fulfilled') items.push(krwResult.value);
+  else console.error(`[usdkrw] 수집 실패: ${krwResult.reason?.message}`);
 
   return items;
 }

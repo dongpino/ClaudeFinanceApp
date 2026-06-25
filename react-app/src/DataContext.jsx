@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect } from 'react';
 
 const DataContext = createContext(null);
 
-const API_TIMEOUT_MS  = 15_000;  // 서버리스 콜드 스타트 포함 최대 15초 허용
+const API_TIMEOUT_MS  = 15_000;  // 서버리스 콜드 스타트 포함 최대 15초
 const JSON_TIMEOUT_MS =  5_000;  // 정적 JSON fallback 최대 5초
 
 function fetchWithTimeout(url, ms) {
@@ -19,27 +19,37 @@ export function DataProvider({ children }) {
   useEffect(() => {
     let cancelled = false;
 
-    const load = (url, timeoutMs) =>
-      fetchWithTimeout(url, timeoutMs)
-        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-        .then(data => {
-          if (!Array.isArray(data.items)) throw new Error('items 배열 없음');
-          if (cancelled) return;
-          setItems(data.items);
-          setUpdatedAt('마지막 갱신 : ' + (data.updated_at ?? '알 수 없음'));
-        });
-
-    load('/api/market-data', API_TIMEOUT_MS)
-      .catch(err => {
-        console.warn('[DataContext] /api/market-data 실패:', err.name, err.message, '→ 정적 fallback 시도');
+    // ── 1순위: 서버리스 API ────────────────────────────
+    fetchWithTimeout('/api/market-data', API_TIMEOUT_MS)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(data => {
+        if (!Array.isArray(data.items)) throw new Error('items 배열 없음');
         if (cancelled) return;
-        return load('/market_data.json', JSON_TIMEOUT_MS);
+        console.info('[DataContext] ✅ 서버리스 API:', data.updated_at, `(${data.items.length}종목)`);
+        setItems(data.items);
+        setUpdatedAt('마지막 갱신 : ' + (data.updated_at ?? '알 수 없음'));
       })
-      .catch(err => {
+      .catch(apiErr => {
+        // ── 2순위: 정적 JSON fallback (API 실패 시에만) ──
+        console.warn('[DataContext] ⚠ API 실패:', apiErr.name, apiErr.message, '→ 정적 fallback 시도');
         if (cancelled) return;
-        console.error('[DataContext] 정적 fallback도 실패:', err.message);
-        setLoadError(err.message);
-        setUpdatedAt('로드 실패');
+
+        fetchWithTimeout('/market_data.json', JSON_TIMEOUT_MS)
+          .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+          .then(data => {
+            if (!Array.isArray(data.items)) throw new Error('items 배열 없음');
+            if (cancelled) return;
+            console.info('[DataContext] 📄 정적 fallback:', data.updated_at, `(${data.items.length}종목)`);
+            setItems(data.items);
+            // [정적] 표시로 어느 소스인지 화면에서 구분 가능
+            setUpdatedAt('마지막 갱신 : ' + (data.updated_at ?? '알 수 없음') + ' [정적]');
+          })
+          .catch(jsonErr => {
+            if (cancelled) return;
+            console.error('[DataContext] 정적 fallback도 실패:', jsonErr.message);
+            setLoadError(jsonErr.message);
+            setUpdatedAt('로드 실패');
+          });
       });
 
     return () => { cancelled = true; };
