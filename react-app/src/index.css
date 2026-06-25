@@ -337,6 +337,15 @@ body {
   overflow: hidden;
 }
 
+.detail-stats-loading {
+  display: flex; align-items: center; gap: 8px;
+  margin: 14px 16px 0;
+  padding: 14px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 13px; color: var(--text-2);
+}
 .detail-stats {
   margin: 14px 16px 0;
   background: var(--bg-card);

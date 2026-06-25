@@ -91,21 +91,23 @@ function recalcChange(item) {
   item.direction  = direction(item.change);
 }
 
-export async function collectBTC() {
+export async function collectBTC({ include90d = true } = {}) {
   const price    = await fetchCurrentPrice();
   const history  = await fetchHistory30();
 
   let history_90d = [], ohlc_available = false;
-  try {
-    history_90d    = await fetchHistory90dBinance(90);
-    ohlc_available = true;
-  } catch (e) {
-    console.warn(`[btc] Binance 실패: ${e.message} → CoinGecko 백업`);
+  if (include90d) {
     try {
-      history_90d    = await fetchHistory90dCoinGecko();
+      history_90d    = await fetchHistory90dBinance(90);
       ohlc_available = true;
-    } catch (e2) {
-      console.warn(`[btc] CoinGecko도 실패: ${e2.message}`);
+    } catch (e) {
+      console.warn(`[btc] Binance 실패: ${e.message} → CoinGecko 백업`);
+      try {
+        history_90d    = await fetchHistory90dCoinGecko();
+        ohlc_available = true;
+      } catch (e2) {
+        console.warn(`[btc] CoinGecko도 실패: ${e2.message}`);
+      }
     }
   }
 

@@ -1,9 +1,11 @@
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useData } from '../DataContext';
 import Chart from './Chart';
 import BottomNav from './BottomNav';
 
 const ARROW = { up: '▲', down: '▼', flat: '-' };
+const DETAIL_TIMEOUT_MS = 20_000;
 
 const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fc   = n => (n > 0 ? '+' : '') + fp(n);
@@ -23,10 +25,40 @@ function stats90(h90) {
 
 export default function DetailPage({ onBack, activePage, onPageChange }) {
   const { items } = useData();
-  const { id } = useParams();
-  const item = items.find(it => it.id === id);
+  const { id }    = useParams();
 
-  if (!item) {
+  // 홈 데이터(30일)에서 가져온 기본 아이템
+  const baseItem = items.find(it => it.id === id);
+
+  // 상세 데이터(90일 포함) — 별도 fetch
+  const [detailItem,    setDetailItem]    = useState(null);
+  const [detailLoading, setDetailLoading] = useState(true);
+
+  useEffect(() => {
+    if (!id) return;
+    setDetailItem(null);
+    setDetailLoading(true);
+
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), DETAIL_TIMEOUT_MS);
+
+    fetch(`/api/market-data?id=${id}`, { signal: ctrl.signal })
+      .finally(() => clearTimeout(tid))
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(data => {
+        setDetailItem(data.item);
+        setDetailLoading(false);
+      })
+      .catch(err => {
+        console.warn(`[DetailPage] 상세 데이터 실패(${id}): ${err.message}`);
+        setDetailLoading(false);
+      });
+
+    return () => ctrl.abort();
+  }, [id]);
+
+  // 홈 데이터도, 상세 데이터도 아직 없으면 로딩 화면
+  if (!baseItem && !detailItem) {
     return (
       <div className="detail-page">
         <div className="detail-scroll">
@@ -40,6 +72,8 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
     );
   }
 
+  // 상세 데이터가 오면 교체 (90일 포함), 없으면 홈 데이터(30일)로 렌더
+  const item = detailItem ?? baseItem;
   const { direction: dir, name, category, price, change, change_pct, source, as_of, history_90d } = item;
   const s = stats90(history_90d);
 
@@ -68,13 +102,18 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
           </div>
         </div>
 
-        {/* 차트 */}
+        {/* 차트 — 30일 먼저 렌더, 90일 로드되면 교체 */}
         <div className="detail-chart-wrap">
           <Chart item={item} />
         </div>
 
-        {/* 통계 패널 */}
-        {s && (
+        {/* 90일 통계 — 로딩 중 표시 또는 데이터 표시 */}
+        {detailLoading ? (
+          <div className="detail-stats-loading">
+            <div className="pulse-dot" />
+            <span>90일 데이터 로딩 중…</span>
+          </div>
+        ) : s ? (
           <div className="detail-stats">
             <div className="detail-stats-title">90일 통계</div>
             <div className="stat-grid">
@@ -109,7 +148,7 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
               90일 최저 &nbsp;·&nbsp; 현재 {s.pos}% 위치 &nbsp;·&nbsp; 90일 최고
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* 출처 */}
         <div className="detail-footer">

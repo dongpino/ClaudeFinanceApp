@@ -143,7 +143,7 @@ function recalcChange(item) {
   item.direction  = direction(item.change);
 }
 
-export async function collectKR() {
+export async function collectKR({ include90d = true } = {}) {
   const sign  = n => (n >= 0 ? '+' : '') + n.toFixed(2);
   const items = [];
 
@@ -158,10 +158,15 @@ export async function collectKR() {
       category: '지수', history: [], ohlc_available: false, history_90d: [],
     };
 
-    await Promise.allSettled([
+    const kospiTasks = [
       fetchKOSPIHistory(30).then(h => { kospi.history = h; }).catch(e => console.warn(`[kospi] history 실패: ${e.message}`)),
-      fetchKOSPIHistory90d(15).then(h => { kospi.history_90d = h; }).catch(e => console.warn(`[kospi] history_90d 실패: ${e.message}`)),
-    ]);
+    ];
+    if (include90d) {
+      kospiTasks.push(
+        fetchKOSPIHistory90d(15).then(h => { kospi.history_90d = h; }).catch(e => console.warn(`[kospi] history_90d 실패: ${e.message}`))
+      );
+    }
+    await Promise.allSettled(kospiTasks);
 
     recalcChange(kospi);
     console.log(`[kospi] ${kospi.price.toLocaleString()}  ${sign(kospi.change)} (${sign(kospi.change_pct)}%)  hist=${kospi.history.length}  hist_90d=${kospi.history_90d.length}`);
@@ -188,20 +193,25 @@ export async function collectKR() {
       category: '환율', history: [], ohlc_available: false, history_90d: [],
     };
 
-    await Promise.allSettled([
+    const krwTasks = [
       fetchUSDKRWHistory(3)
         .then(h => { if (h.length < 10) throw new Error(`포인트 부족: ${h.length}`); krw.history = h; })
         .catch(async e => {
           console.warn(`[usdkrw] history Naver 실패: ${e.message} → Frankfurter 폴백`);
           krw.history = await fetchFrankfurterHistory(30).catch(e2 => { console.warn(`[usdkrw] history 폴백도 실패: ${e2.message}`); return []; });
         }),
-      fetchUSDKRWHistory(9)
-        .then(h => { if (h.length < 10) throw new Error(`포인트 부족: ${h.length}`); krw.history_90d = h; })
-        .catch(async e => {
-          console.warn(`[usdkrw] history_90d Naver 실패: ${e.message} → Frankfurter 폴백`);
-          krw.history_90d = await fetchFrankfurterHistory(90).catch(e2 => { console.warn(`[usdkrw] history_90d 폴백도 실패: ${e2.message}`); return []; });
-        }),
-    ]);
+    ];
+    if (include90d) {
+      krwTasks.push(
+        fetchUSDKRWHistory(9)
+          .then(h => { if (h.length < 10) throw new Error(`포인트 부족: ${h.length}`); krw.history_90d = h; })
+          .catch(async e => {
+            console.warn(`[usdkrw] history_90d Naver 실패: ${e.message} → Frankfurter 폴백`);
+            krw.history_90d = await fetchFrankfurterHistory(90).catch(e2 => { console.warn(`[usdkrw] history_90d 폴백도 실패: ${e2.message}`); return []; });
+          })
+      );
+    }
+    await Promise.allSettled(krwTasks);
 
     recalcChange(krw);
     console.log(`[usdkrw] ${krw.price.toLocaleString()}  ${sign(krw.change)} (${sign(krw.change_pct)}%)  hist=${krw.history.length}  hist_90d=${krw.history_90d.length}`);

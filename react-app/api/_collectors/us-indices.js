@@ -120,7 +120,7 @@ function recalcChange(item) {
   item.direction  = direction(item.change);
 }
 
-export async function collectUSIndices() {
+export async function collectUSIndices({ include90d = true } = {}) {
   // CNBC bulk (실패 시 3종목 전체 실패 — 같은 API 공유)
   const cnbc   = await fetchCNBCBulk();
   const nasdaq = buildItemFromCNBC(cnbc['.IXIC'], { id: 'nasdaq', name: '나스닥 (^IXIC)', symbol: '^IXIC', category: '지수' });
@@ -134,12 +134,14 @@ export async function collectUSIndices() {
     fetchHistoryFRED('VIXCLS', 30).then(h => { vix.history   = h; }).catch(e => console.warn(`[vix] history 실패: ${e.message}`)),
   ]);
 
-  // history_90d (per-item isolation)
-  await Promise.allSettled([
-    fetchHistoryNaverSise('NAS@IXIC', 9).then(h => { nasdaq.history_90d = h; }).catch(e => console.warn(`[nasdaq] history_90d 실패: ${e.message}`)),
-    fetchHistoryFRED('DJIA',   90).then(h => { dow.history_90d   = h; }).catch(e => console.warn(`[dow] history_90d 실패: ${e.message}`)),
-    fetchHistoryFRED('VIXCLS', 90).then(h => { vix.history_90d   = h; }).catch(e => console.warn(`[vix] history_90d 실패: ${e.message}`)),
-  ]);
+  // history_90d — 상세 요청 시에만 수집
+  if (include90d) {
+    await Promise.allSettled([
+      fetchHistoryNaverSise('NAS@IXIC', 9).then(h => { nasdaq.history_90d = h; }).catch(e => console.warn(`[nasdaq] history_90d 실패: ${e.message}`)),
+      fetchHistoryFRED('DJIA',   90).then(h => { dow.history_90d   = h; }).catch(e => console.warn(`[dow] history_90d 실패: ${e.message}`)),
+      fetchHistoryFRED('VIXCLS', 90).then(h => { vix.history_90d   = h; }).catch(e => console.warn(`[vix] history_90d 실패: ${e.message}`)),
+    ]);
+  }
 
   const sign = n => (n >= 0 ? '+' : '') + n.toFixed(2);
   for (const it of [nasdaq, dow, vix]) {
