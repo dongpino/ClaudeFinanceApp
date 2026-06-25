@@ -60,10 +60,12 @@ async function fetchKOSPIHistory(pageSize = 30) {
 async function fetchKOSPIHistory90d(numPages = 15) {
   const extra = { Accept: 'text/html,*/*', Referer: 'https://finance.naver.com/' };
   const seen  = new Map();
-  for (let page = 1; page <= numPages; page++) {
-    const html = await fetchEucKR(
-      `https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page=${page}`, extra
-    );
+  const pages = await Promise.all(
+    Array.from({ length: numPages }, (_, i) =>
+      fetchEucKR(`https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page=${i + 1}`, extra)
+    )
+  );
+  for (const html of pages) {
     for (const [, tr] of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
       const dm = tr.match(/class="date"[^>]*>\s*(\d{4}\.\d{2}\.\d{2})/);
       if (!dm) continue;
@@ -104,10 +106,12 @@ async function fetchFrankfurterCurrent() {
 async function fetchUSDKRWHistory(numPages = 3) {
   const extra = { Accept: 'text/html,*/*', Referer: 'https://finance.naver.com/' };
   const seen  = new Map();
-  for (let page = 1; page <= numPages; page++) {
-    const html = await fetchEucKR(
-      `https://finance.naver.com/marketindex/exchangeDailyQuote.naver?marketindexCd=FX_USDKRW&page=${page}`, extra
-    );
+  const pages = await Promise.all(
+    Array.from({ length: numPages }, (_, i) =>
+      fetchEucKR(`https://finance.naver.com/marketindex/exchangeDailyQuote.naver?marketindexCd=FX_USDKRW&page=${i + 1}`, extra)
+    )
+  );
+  for (const html of pages) {
     for (const m of html.matchAll(/(\d{4}\.\d{2}\.\d{2})\s*<\/td>\s*<td[^>]*>\s*([\d,]+\.\d{2})/gs)) {
       try { seen.set(m[1].replace(/\./g, '-'), r2(cleanNum(m[2]))); } catch { /* skip */ }
     }

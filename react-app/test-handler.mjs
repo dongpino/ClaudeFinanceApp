@@ -3,7 +3,7 @@
  * 실행: node react-app/api/test-handler.mjs
  *       또는 (react-app/api/ 에서) node test-handler.mjs
  */
-import handler from './market-data.js';
+import handler from './api/market-data.js';
 
 const headers = {};
 const mockRes = {

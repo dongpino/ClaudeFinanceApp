@@ -80,10 +80,13 @@ function buildItemFromCNBC(q, { id, name, symbol, category }) {
 async function fetchHistoryNaverSise(naverSymbol, numPages = 3) {
   const extra = { Accept: 'text/html,application/xhtml+xml,*/*', Referer: 'https://finance.naver.com/' };
   const seen  = new Map();
-  for (let page = 1; page <= numPages; page++) {
-    const url  = `https://finance.naver.com/world/sise.naver?symbol=${encodeURIComponent(naverSymbol)}&page=${page}`;
-    const text = await fetchEucKR(url, extra);
-    const pat  = /<tr[^>]*>\s*<td[^>]*>\s*(\d{4}\.\d{2}\.\d{2})\s*<\/td>\s*<td[^>]*>\s*<span[^>]*>\s*([\d,]+\.?\d*)\s*<\/span>/gs;
+  const pat   = /<tr[^>]*>\s*<td[^>]*>\s*(\d{4}\.\d{2}\.\d{2})\s*<\/td>\s*<td[^>]*>\s*<span[^>]*>\s*([\d,]+\.?\d*)\s*<\/span>/gs;
+  const pages = await Promise.all(
+    Array.from({ length: numPages }, (_, i) =>
+      fetchEucKR(`https://finance.naver.com/world/sise.naver?symbol=${encodeURIComponent(naverSymbol)}&page=${i + 1}`, extra)
+    )
+  );
+  for (const text of pages) {
     for (const m of text.matchAll(pat)) {
       try { seen.set(m[1].replace(/\./g, '-'), r2(cleanNum(m[2]))); } catch { /* skip */ }
     }
