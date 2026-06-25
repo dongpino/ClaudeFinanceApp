@@ -1,4 +1,6 @@
 {
+  "devCommand": "vite --port $PORT",
+  "outputDirectory": "dist",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
