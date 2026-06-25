@@ -106,6 +106,21 @@ async function fetchHistoryFRED(fredId, numRows = 90) {
   return rows;
 }
 
+// Naver World Index API (api.stock.naver.com) — DJI/VIX 히스토리 소스
+// FRED는 Vercel 서버 IP에서 차단될 수 있어 Naver World를 1순위로 사용
+async function fetchHistoryNaverWorld(symbol, numRows = 30) {
+  // API max pageSize=60; 90d 요청도 pageSize=60(≈ 60 거래일 ≈ 84 달력일)으로 충분
+  const pageSize = Math.min(numRows, 60);
+  const rows = await fetchJSON(
+    `https://api.stock.naver.com/index/${encodeURIComponent(symbol)}/price?pageSize=${pageSize}&page=1`
+  );
+  if (!Array.isArray(rows) || rows.length === 0)
+    throw new Error(`Naver world ${symbol} 데이터 없음`);
+  return rows
+    .map(r => ({ date: r.localTradedAt.slice(0, 10), close: r2(cleanNum(r.closePrice)) }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));  // API는 최신순 → 날짜 오름차순 정렬
+}
+
 function recalcChange(item) {
   if (Math.abs(item.change) > 0.01) return;
   const h = item.history;
@@ -128,18 +143,40 @@ export async function collectUSIndices({ include90d = true } = {}) {
   const vix    = buildItemFromCNBC(cnbc['.VIX'],  { id: 'vix',    name: 'VIX 공포지수',    symbol: '^VIX',  category: '지수' });
 
   // history 30일 (per-item isolation)
+  // Dow/VIX: Naver World API 1순위 → FRED 폴백
+  // (FRED는 Vercel 서버 IP에서 차단될 수 있음; Naver는 기존 KOSPI/USD/KRW와 같은 도메인)
   await Promise.allSettled([
-    fetchHistoryNaverSise('NAS@IXIC', 3).then(h => { nasdaq.history = h; }).catch(e => console.warn(`[nasdaq] history 실패: ${e.message}`)),
-    fetchHistoryFRED('DJIA',   30).then(h => { dow.history   = h; }).catch(e => console.warn(`[dow] history 실패: ${e.message}`)),
-    fetchHistoryFRED('VIXCLS', 30).then(h => { vix.history   = h; }).catch(e => console.warn(`[vix] history 실패: ${e.message}`)),
+    fetchHistoryNaverSise('NAS@IXIC', 3)
+      .then(h => { nasdaq.history = h; })
+      .catch(e => console.warn(`[nasdaq] history 실패: ${e.message}`)),
+
+    fetchHistoryNaverWorld('.DJI', 30)
+      .catch(e => { console.warn(`[dow] Naver world 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('DJIA', 30); })
+      .then(h => { dow.history = h; })
+      .catch(e => console.warn(`[dow] history 실패: ${e.message}`)),
+
+    fetchHistoryNaverWorld('.VIX', 30)
+      .catch(e => { console.warn(`[vix] Naver world 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('VIXCLS', 30); })
+      .then(h => { vix.history = h; })
+      .catch(e => console.warn(`[vix] history 실패: ${e.message}`)),
   ]);
 
   // history_90d — 상세 요청 시에만 수집
   if (include90d) {
     await Promise.allSettled([
-      fetchHistoryNaverSise('NAS@IXIC', 9).then(h => { nasdaq.history_90d = h; }).catch(e => console.warn(`[nasdaq] history_90d 실패: ${e.message}`)),
-      fetchHistoryFRED('DJIA',   90).then(h => { dow.history_90d   = h; }).catch(e => console.warn(`[dow] history_90d 실패: ${e.message}`)),
-      fetchHistoryFRED('VIXCLS', 90).then(h => { vix.history_90d   = h; }).catch(e => console.warn(`[vix] history_90d 실패: ${e.message}`)),
+      fetchHistoryNaverSise('NAS@IXIC', 9)
+        .then(h => { nasdaq.history_90d = h; })
+        .catch(e => console.warn(`[nasdaq] history_90d 실패: ${e.message}`)),
+
+      fetchHistoryNaverWorld('.DJI', 90)
+        .catch(e => { console.warn(`[dow] Naver world 90d 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('DJIA', 90); })
+        .then(h => { dow.history_90d = h; })
+        .catch(e => console.warn(`[dow] history_90d 실패: ${e.message}`)),
+
+      fetchHistoryNaverWorld('.VIX', 90)
+        .catch(e => { console.warn(`[vix] Naver world 90d 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('VIXCLS', 90); })
+        .then(h => { vix.history_90d = h; })
+        .catch(e => console.warn(`[vix] history_90d 실패: ${e.message}`)),
     ]);
   }
 
