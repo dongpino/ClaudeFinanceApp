@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import HomePage from './components/HomePage';
 import DetailPage from './components/DetailPage';
+import AnalysisPage from './components/AnalysisPage';
 import BottomNav from './components/BottomNav';
 import Header from './components/Header';
 
@@ -31,18 +32,7 @@ function MainContent({ activePage, onPageChange }) {
   }
 
   if (activePage === 'chart') {
-    return (
-      <ShellPage activePage={activePage} onPageChange={onPageChange}>
-        <PlaceholderPage title="차트" sub="상세 차트 준비 중">
-          <svg width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5"
-               strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-            <line x1="18" y1="20" x2="18" y2="10"/>
-            <line x1="12" y1="20" x2="12" y2="4"/>
-            <line x1="6"  y1="20" x2="6"  y2="14"/>
-          </svg>
-        </PlaceholderPage>
-      </ShellPage>
-    );
+    return <AnalysisPage activePage={activePage} onPageChange={onPageChange} />;
   }
 
   if (activePage === 'search') {

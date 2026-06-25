@@ -452,3 +452,123 @@ body {
 }
 .detail-footer-source { font-weight: 600; color: var(--gold); }
 .detail-footer-time   { font-variant-numeric: tabular-nums; }
+
+/* ── 분석 탭 ──────────────────────────────────── */
+.analysis-content {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+/* 종목 선택 칩 */
+.analysis-selector {
+  flex-shrink: 0;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 10px 16px 6px;
+}
+.analysis-chip {
+  padding: 5px 12px; border-radius: 14px;
+  font-size: 12px; font-weight: 700;
+  cursor: pointer; border: 1.5px solid var(--border);
+  background: transparent; color: var(--text-2);
+  transition: background .15s, border-color .15s, color .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.analysis-chip.active {
+  background: var(--gold); border-color: var(--gold); color: #1a0e00;
+}
+.analysis-chip:not(.active):hover { border-color: var(--gold); color: var(--gold); }
+
+/* 현재가 요약 바 */
+.analysis-price-bar {
+  flex-shrink: 0;
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 4px 16px 6px;
+}
+.apb-name  { font-size: 11px; color: var(--text-2); font-weight: 600; flex-shrink: 0; }
+.apb-price {
+  font-size: 18px; font-weight: 800; color: var(--text-1);
+  letter-spacing: -.5px; font-variant-numeric: tabular-nums;
+}
+.apb-pct {
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.apb-pct.up   { color: var(--up);   }
+.apb-pct.down { color: var(--down);  }
+.apb-pct.flat { color: var(--flat);  }
+.apb-loading-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--gold); opacity: .6;
+  animation: blink 1s ease-in-out infinite;
+  flex-shrink: 0; align-self: center;
+}
+
+/* 지표 토글 버튼 */
+.analysis-toggles {
+  flex-shrink: 0;
+  display: flex; gap: 6px;
+  padding: 0 16px 8px;
+}
+.ind-toggle {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 11px; border-radius: 12px;
+  font-size: 11px; font-weight: 700;
+  cursor: pointer; border: 1.5px solid var(--border);
+  background: transparent; color: var(--text-3);
+  transition: border-color .15s, color .15s, background .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.ind-toggle.on { background: rgba(255,255,255,.05); color: var(--text-1); }
+.ind-toggle.on.ma20 { border-color: #f97316; }
+.ind-toggle.on.ma60 { border-color: #a855f7; }
+.ind-toggle.on.rsi  { border-color: #22d3ee; }
+.ind-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: var(--border);
+}
+.ind-toggle.on .ind-dot.ma20 { background: #f97316; }
+.ind-toggle.on .ind-dot.ma60 { background: #a855f7; }
+.ind-toggle.on .ind-dot.rsi  { background: #22d3ee; }
+
+/* 차트 메인 영역 */
+.analysis-main {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  padding: 0 12px 12px;
+}
+
+/* 로딩/에러 상태 */
+.analysis-state {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px; color: var(--text-2); font-size: 13px;
+}
+.analysis-state.error { color: var(--up); }
+.analysis-state.error small { font-size: 11px; color: var(--text-3); }
+
+/* 차트 레이아웃 */
+.analysis-charts-wrap {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.analysis-price-chart {
+  flex: 1; min-height: 180px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden;
+}
+.analysis-rsi-wrap {
+  flex-shrink: 0; height: 138px;
+  display: flex; flex-direction: column;
+}
+.analysis-rsi-label {
+  font-size: 9px; font-weight: 700; color: #22d3ee;
+  letter-spacing: .04em; padding: 0 4px 3px;
+  opacity: .7;
+}
+.analysis-rsi-chart {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden;
+}

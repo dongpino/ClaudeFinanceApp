@@ -10,7 +10,7 @@ const NAV_ITEMS = [
     ),
   },
   {
-    id: 'chart', label: '차트',
+    id: 'chart', label: '분석',
     icon: (
       <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"
            strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
