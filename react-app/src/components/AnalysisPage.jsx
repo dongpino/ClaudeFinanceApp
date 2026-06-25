@@ -27,7 +27,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
 
   const [showMA20,  setShowMA20]  = useState(true);
   const [showMA60,  setShowMA60]  = useState(true);
-  const [showMA100, setShowMA100] = useState(false);  // 기본 off — 5선 동시 표시 방지
+  const [showMA100, setShowMA100] = useState(true);
   const [showMA200, setShowMA200] = useState(true);
   const [showRSI,   setShowRSI]   = useState(true);
 
