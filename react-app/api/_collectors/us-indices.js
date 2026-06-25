@@ -96,8 +96,12 @@ async function fetchHistoryNaverSise(naverSymbol, numPages = 3) {
 }
 
 async function fetchHistoryFRED(fredId, numRows = 90) {
-  const text = await fetchText(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${fredId}`);
-  const rows  = text.trim().split('\n').slice(1)
+  const today = new Date().toISOString().slice(0, 10);
+  const past  = new Date(Date.now() - Math.round(numRows * 1.8) * 86400_000).toISOString().slice(0, 10);
+  const text  = await fetchText(
+    `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${fredId}&observation_start=${past}&observation_end=${today}`
+  );
+  const rows = text.trim().split('\n').slice(1)
     .map(line => { const [date, val] = line.split(','); return { date: date?.trim(), val: val?.trim() }; })
     .filter(r => r.date && r.val && r.val !== '.' && r.val !== '')
     .slice(-numRows)
@@ -106,8 +110,29 @@ async function fetchHistoryFRED(fredId, numRows = 90) {
   return rows;
 }
 
+// CBOE VIX 공식 CDN CSV — 네이버 장애 시 VIX history 독립 백업
+// CDN 호스팅으로 IP 차단 없음, 오늘자 데이터 제공
+async function fetchHistoryCBOEVIX(numRows = 30) {
+  const text = await fetchText('https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv');
+  const rows = text.trim().split('\n').slice(1)
+    .map(line => {
+      const parts = line.split(',');
+      if (parts.length < 5) return null;
+      const [mm, dd, yyyy] = parts[0].trim().split('/');
+      if (!yyyy) return null;
+      const iso  = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+      const val  = parseFloat(parts[4].trim()); // CLOSE column
+      return isNaN(val) || val <= 0 ? null : { date: iso, close: r2(val) };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .slice(-numRows);
+  if (rows.length < 5) throw new Error(`CBOE VIX CSV 데이터 부족: ${rows.length}행`);
+  return rows;
+}
+
 // Naver World Index API (api.stock.naver.com) — DJI/VIX 히스토리 소스
-// FRED는 Vercel 서버 IP에서 차단될 수 있어 Naver World를 1순위로 사용
+// pageSize 최대 60 제한
 async function fetchHistoryNaverWorld(symbol, numRows = 30) {
   // API max pageSize=60; 90d 요청도 pageSize=60(≈ 60 거래일 ≈ 84 달력일)으로 충분
   const pageSize = Math.min(numRows, 60);
@@ -143,8 +168,8 @@ export async function collectUSIndices({ include90d = true } = {}) {
   const vix    = buildItemFromCNBC(cnbc['.VIX'],  { id: 'vix',    name: 'VIX 공포지수',    symbol: '^VIX',  category: '지수' });
 
   // history 30일 (per-item isolation)
-  // Dow/VIX: Naver World API 1순위 → FRED 폴백
-  // (FRED는 Vercel 서버 IP에서 차단될 수 있음; Naver는 기존 KOSPI/USD/KRW와 같은 도메인)
+  // Dow : Naver World → FRED DJIA (로컬 확인, Vercel 불확실)
+  // VIX : Naver World → CBOE CDN CSV (완전 독립, Vercel 확인됨)
   await Promise.allSettled([
     fetchHistoryNaverSise('NAS@IXIC', 3)
       .then(h => { nasdaq.history = h; })
@@ -156,7 +181,7 @@ export async function collectUSIndices({ include90d = true } = {}) {
       .catch(e => console.warn(`[dow] history 실패: ${e.message}`)),
 
     fetchHistoryNaverWorld('.VIX', 30)
-      .catch(e => { console.warn(`[vix] Naver world 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('VIXCLS', 30); })
+      .catch(e => { console.warn(`[vix] Naver world 실패: ${e.message} → CBOE CSV 폴백`); return fetchHistoryCBOEVIX(30); })
       .then(h => { vix.history = h; })
       .catch(e => console.warn(`[vix] history 실패: ${e.message}`)),
   ]);
@@ -174,7 +199,7 @@ export async function collectUSIndices({ include90d = true } = {}) {
         .catch(e => console.warn(`[dow] history_90d 실패: ${e.message}`)),
 
       fetchHistoryNaverWorld('.VIX', 90)
-        .catch(e => { console.warn(`[vix] Naver world 90d 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('VIXCLS', 90); })
+        .catch(e => { console.warn(`[vix] Naver world 90d 실패: ${e.message} → CBOE CSV 폴백`); return fetchHistoryCBOEVIX(90); })
         .then(h => { vix.history_90d = h; })
         .catch(e => console.warn(`[vix] history_90d 실패: ${e.message}`)),
     ]);
