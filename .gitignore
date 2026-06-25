@@ -15,7 +15,7 @@ env/
 
 # Generated data (run market_check.py to regenerate)
 market_data.json
-react-app/public/market_data.json
+!react-app/public/market_data.json
 
 # Node / React
 react-app/node_modules/

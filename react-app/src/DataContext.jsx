@@ -8,7 +8,7 @@ export function DataProvider({ children }) {
   const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
-    fetch('market_data.json')
+    fetch('/market_data.json')
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
