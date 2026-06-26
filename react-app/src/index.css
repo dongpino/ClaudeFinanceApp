@@ -479,6 +479,34 @@ body {
 }
 .analysis-chip:not(.active):hover { border-color: var(--gold); color: var(--gold); }
 
+/* 타임프레임 선택기 */
+.tf-selector {
+  flex-shrink: 0;
+  display: flex; flex-wrap: wrap; gap: 5px;
+  padding: 0 16px 8px;
+}
+.tf-chip {
+  padding: 3px 9px; border-radius: 10px;
+  font-size: 11px; font-weight: 700;
+  cursor: pointer; border: 1.5px solid var(--border);
+  background: transparent; color: var(--text-3);
+  transition: background .15s, border-color .15s, color .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.tf-chip.active {
+  background: rgba(61,130,239,.15);
+  border-color: #3d82ef;
+  color: #3d82ef;
+}
+.tf-chip:not(.active):not(.tf-chip-disabled):hover {
+  border-color: #3d82ef;
+  color: #3d82ef;
+}
+.tf-chip-disabled {
+  opacity: .28;
+  cursor: not-allowed;
+}
+
 /* 현재가 요약 바 */
 .analysis-price-bar {
   flex-shrink: 0;

@@ -14,21 +14,27 @@ const THEME = {
 
 const UP    = '#e84040';
 const DOWN  = '#3d82ef';
-const MA20  = '#f97316';  // orange
-const MA60  = '#a855f7';  // purple
-const MA100 = '#10b981';  // emerald green
-const MA200 = '#fbbf24';  // amber/gold — 장기 추세 대표선, 두껍게
-const RSI_C = '#22d3ee';  // cyan
+const MA20  = '#f97316';
+const MA60  = '#a855f7';
+const MA100 = '#10b981';
+const MA200 = '#fbbf24';
+const RSI_C = '#22d3ee';
 
-// history_long (250d) > history_90d > history (30d) 우선순위
+// history_long (250d/intraday) > history_90d > history (30d) 우선순위
 function getHistory(item) {
   if (item.history_long?.length) return item.history_long;
   if (item.history_90d?.length)  return item.history_90d;
   return item.history ?? [];
 }
 
+// 일봉/주봉: r.date (문자열), 분봉/시간봉: r.time (Unix seconds)
+// lightweight-charts는 두 형식 모두 지원
+function getTime(r) {
+  return r.time ?? r.date;
+}
+
 export default function AnalysisChart({
-  item,
+  item, tf,
   showMA20, showMA60, showMA100, showMA200,
   showRSI,
 }) {
@@ -40,7 +46,6 @@ export default function AnalysisChart({
   const ma200Ref  = useRef(null);
 
   // ── 가격 차트 + MA 오버레이 ─────────────────────────────
-  // item이 바뀔 때만 재생성. showMAxx는 아래 별도 effect로 처리.
   useEffect(() => {
     if (!item || !priceRef.current) return;
     const el = priceRef.current;
@@ -48,14 +53,14 @@ export default function AnalysisChart({
 
     const chart = createChart(el, { ...THEME, width: el.clientWidth, height: el.clientHeight });
 
-    if (item.ohlc_available && h.length && h[0]?.open !== undefined) {
+    if (item.ohlc_available && h.length && (h[0]?.open !== undefined)) {
       const cs = chart.addCandlestickSeries({
         upColor: UP, downColor: DOWN,
         borderUpColor: UP, borderDownColor: DOWN,
         wickUpColor: UP, wickDownColor: DOWN,
       });
       cs.setData(h.filter(r => r.close > 0).map(r => ({
-        time: r.date, open: r.open, high: r.high, low: r.low, close: r.close,
+        time: getTime(r), open: r.open, high: r.high, low: r.low, close: r.close,
       })));
     } else {
       const color = item.direction === 'up' ? UP : item.direction === 'down' ? DOWN : '#576880';
@@ -63,10 +68,9 @@ export default function AnalysisChart({
         lineColor: color, topColor: color + '33', bottomColor: color + '00',
         lineWidth: 2, priceLineVisible: false,
       });
-      as.setData(h.filter(r => r.close > 0).map(r => ({ time: r.date, value: r.close })));
+      as.setData(h.filter(r => r.close > 0).map(r => ({ time: getTime(r), value: r.close })));
     }
 
-    // MA 시리즈 — 초기 visible은 현재 상태값으로 (클로저 캡처)
     const m20 = chart.addLineSeries({
       color: MA20, lineWidth: 1.5,
       priceLineVisible: false, lastValueVisible: false, visible: showMA20, title: 'MA20',
@@ -88,7 +92,6 @@ export default function AnalysisChart({
     m100.setData(calcMA(h, 100));
     ma100Ref.current = m100;
 
-    // MA200: 장기 추세 대표선 — 1px 두껍게
     const m200 = chart.addLineSeries({
       color: MA200, lineWidth: 2,
       priceLineVisible: false, lastValueVisible: false, visible: showMA200, title: 'MA200',

@@ -76,7 +76,7 @@ export function calcMA(history, period) {
   const closes = history.map(r => r.close);
   const vals   = smaArray(closes, period);
   return vals
-    .map((v, i) => v === null ? null : { time: history[i].date, value: +v.toFixed(4) })
+    .map((v, i) => v === null ? null : { time: history[i].time ?? history[i].date, value: +v.toFixed(4) })
     .filter(Boolean);
 }
 
@@ -90,6 +90,6 @@ export function calcRSI(history, period = 14) {
   const closes = history.map(r => r.close);
   const vals   = rsiArray(closes, period);
   return vals
-    .map((v, i) => v === null ? null : { time: history[i].date, value: +v.toFixed(4) })
+    .map((v, i) => v === null ? null : { time: history[i].time ?? history[i].date, value: +v.toFixed(4) })
     .filter(Boolean);
 }
