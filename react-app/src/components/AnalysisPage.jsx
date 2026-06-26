@@ -73,7 +73,14 @@ export default function AnalysisPage({ activePage, onPageChange }) {
 
     fetch(`/api/analysis?id=${selectedId}&tf=${selectedTF}`, { signal: ctrl.signal })
       .finally(() => clearTimeout(tid))
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(async r => {
+        if (!r.ok) {
+          let msg = `HTTP ${r.status}`;
+          try { const j = await r.json(); msg = j.details || j.error || msg; } catch (_) {}
+          throw new Error(msg);
+        }
+        return r.json();
+      })
       .then(data => {
         if (cancelled) return;
         setDetailItem(data.item);

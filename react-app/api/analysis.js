@@ -178,7 +178,8 @@ export default async function handler(req, res) {
     return res.status(200).json(data);
 
   } catch (e) {
-    console.error(`[analysis/${id}/${tf}] 실패: ${e.message}`);
-    return res.status(500).json({ error: '데이터 수집 실패', details: e.message });
+    const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+    console.error(`[analysis/${id}/${tf}] 실패 (${elapsed}s): ${e.message}`);
+    return res.status(500).json({ error: '데이터 수집 실패', details: e.message, id, tf });
   }
 }
