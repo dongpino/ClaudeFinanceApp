@@ -132,9 +132,16 @@ export default function AnalysisChart({
       if (param.time) rsi.setCrosshairPosition(0, param.time, rs);
     });
 
-    const ro = new ResizeObserver(() =>
-      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight })
-    );
+    const ro = new ResizeObserver(() => {
+      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+      // 리사이즈 후 RSI scale 폭 재동기화
+      requestAnimationFrame(() => {
+        const rsi = rsiChartRef.current;
+        if (!rsi) return;
+        const w = chart.priceScale('right').width();
+        if (w > 0) rsi.applyOptions({ rightPriceScale: { minimumWidth: w } });
+      });
+    });
     ro.observe(el);
 
     return () => {
@@ -174,6 +181,15 @@ export default function AnalysisChart({
     chart.priceScale('right').applyOptions({ minimum: 0, maximum: 100 });
     chart.timeScale().fitContent();
     rsiSeriesRef.current = rsiSeries;
+
+    // ── price scale 폭 동기화 (플롯 영역 x좌표 일치) ─────────
+    // 가격 차트 scale 폭(label 넓이)을 읽어 RSI에 minimumWidth로 강제 적용
+    requestAnimationFrame(() => {
+      const price = priceChartRef.current;
+      if (!price) return;
+      const w = price.priceScale('right').width();
+      if (w > 0) chart.applyOptions({ rightPriceScale: { minimumWidth: w } });
+    });
 
     // ── 시간축 동기화 → 가격 차트 ────────────────────────────
     chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
