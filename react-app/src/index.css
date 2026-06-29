@@ -841,15 +841,22 @@ a.hn-card:hover  { border-color: var(--border-h); }
 a.hn-card:active { border-color: var(--border-h); }
 
 .hn-card-body {
-  padding: 8px 9px;
-  display: flex; flex-direction: column; gap: 4px;
+  flex: 1;
+  padding: 10px 11px;
+  display: flex; flex-direction: column; gap: 5px;
 }
 .hn-card-title {
   font-size: 12px; font-weight: 700;
-  color: var(--text-1); line-height: 1.45;
-  display: -webkit-box; -webkit-line-clamp: 3;
+  color: var(--text-1); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2;
   -webkit-box-orient: vertical; overflow: hidden;
 }
+
+/* 카테고리 플레이스홀더 */
+.hn-img-placeholder {
+  display: flex; align-items: center; justify-content: center;
+}
+.hn-placeholder-symbol { font-size: 36px; opacity: .6; }
 
 /* 스켈레톤 */
 .hn-skeleton-wrap { display: flex; flex-direction: column; gap: 22px; }

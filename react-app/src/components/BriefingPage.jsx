@@ -24,10 +24,48 @@ const FRESH_HOURS    = 24;  // 1차 신선도 기준: 이 시간 이내 기사 =
 const SECTION_TARGET = 8;   // 섹션당 목표 기사 수 (top1 + side3 + card4)
 const MIN_CARDS      = 2;   // 카드 그리드 최소 기사 수 (이 미만이면 그리드 숨김)
 
+// ── 이미지 설정 상수 (여기서 조절) ──────────────────────────
+const USE_CATEGORY_IMAGE_FOR_INDICES = true; // true: 지수/환율 기사에 카테고리 이미지 우선
+const CATEGORY_RULES = [
+  { id: 'index',  keywords: ['코스피','코스닥','나스닥','다우','S&P','환율','원/달러','USD/KRW'], color: '#0a1e38', symbol: '📈' },
+  { id: 'crypto', keywords: ['비트코인','이더리움','가상화폐','가상자산','크립토'],                  color: '#180d00', symbol: '₿'  },
+  { id: 'rate',   keywords: ['금리','연준','Fed','국채','채권','기준금리'],                         color: '#001a12', symbol: '🏦' },
+];
+
 function sourceAccent(name) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = ((h * 31 + name.charCodeAt(i)) >>> 0);
   return SOURCE_PALETTE[h % SOURCE_PALETTE.length];
+}
+
+function detectCategory(title) {
+  const t = title.toLowerCase();
+  for (const cat of CATEGORY_RULES) {
+    if (cat.keywords.some(kw => t.includes(kw.toLowerCase()))) return cat;
+  }
+  return null;
+}
+
+function ArticleImage({ item }) {
+  const cat = detectCategory(item.title);
+  const forceCategory = cat?.id === 'index' && USE_CATEGORY_IMAGE_FOR_INDICES;
+
+  if (!forceCategory && item.image) {
+    return (
+      <div className="hn-img-wrap">
+        <img className="hn-img" src={item.image} alt="" loading="lazy"
+          onError={e => { e.currentTarget.parentElement.style.display = 'none'; }} />
+      </div>
+    );
+  }
+  if (forceCategory || (!item.image && cat)) {
+    return (
+      <div className="hn-img-wrap hn-img-placeholder" style={{ background: cat.color }}>
+        <span className="hn-placeholder-symbol">{cat.symbol}</span>
+      </div>
+    );
+  }
+  return null;
 }
 
 function isRecent(pubDate) {
@@ -91,11 +129,7 @@ function SourceSection({ source, articles }) {
 
       <div className="hn-top-row">
         <ArticleLink item={top} className="hn-top">
-          {top.image && (
-            <div className="hn-img-wrap">
-              <img className="hn-img" src={top.image} alt="" loading="lazy" />
-            </div>
-          )}
+          <ArticleImage item={top} />
           <p className="hn-top-title">{top.title}</p>
           {top.pubDate && <span className="hn-meta-date">{formatPubDate(top.pubDate)}</span>}
         </ArticleLink>
@@ -116,11 +150,7 @@ function SourceSection({ source, articles }) {
         <div className="hn-card-grid">
           {cards.map((item, i) => (
             <ArticleLink key={i} item={item} className="hn-card">
-              {item.image && (
-                <div className="hn-img-wrap">
-                  <img className="hn-img" src={item.image} alt="" loading="lazy" />
-                </div>
-              )}
+              <ArticleImage item={item} />
               <div className="hn-card-body">
                 <p className="hn-card-title">{item.title}</p>
                 {item.pubDate && <span className="hn-meta-date">{formatPubDate(item.pubDate)}</span>}
