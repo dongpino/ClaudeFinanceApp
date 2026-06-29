@@ -750,54 +750,123 @@ body {
 .brf-news-state.error p { color: var(--up); }
 .brf-news-state small { display: block; font-size: 11px; color: var(--text-3); margin-top: 4px; }
 
-.brf-news-list {
-  list-style: none;
+/* ── 헤드라인 뉴스 레이아웃 ─────────────────────────────────── */
+.hn-sections { display: flex; flex-direction: column; gap: 22px; }
+
+.hn-section { display: flex; flex-direction: column; gap: 10px; }
+
+.hn-section-head {
+  display: flex; align-items: center; gap: 8px;
+  padding-bottom: 7px;
+  border-bottom: 2px solid var(--border);
+}
+.hn-source-name {
+  font-size: 10.5px; font-weight: 800;
+  letter-spacing: .05em; text-transform: uppercase;
+}
+.hn-source-count {
+  font-size: 10px; color: var(--text-3);
+  margin-left: auto;
+}
+
+/* 상단 행: 톱 기사 + 사이드 리스트 */
+.hn-top-row {
+  display: flex; gap: 10px; align-items: flex-start;
+}
+
+.hn-top {
+  flex: 3; min-width: 0;
   display: flex; flex-direction: column; gap: 7px;
+  text-decoration: none; color: inherit;
 }
 
-/* 스켈레톤 */
-.brf-news-skeleton {
-  height: 78px; border-radius: 11px;
+/* 이미지 공통 (16:9) */
+.hn-img-wrap {
+  width: 100%; aspect-ratio: 16/9;
+  border-radius: 8px; overflow: hidden;
   background: var(--bg-card);
-  border: 1px solid var(--border);
-  animation: blink 1.6s ease-in-out infinite;
-}
-
-/* 뉴스 아이템 */
-.brf-news-link {
-  display: block; text-decoration: none; color: inherit;
-}
-.brf-news-link:active .brf-news-item { border-color: var(--border-h); }
-
-.brf-news-item {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  padding: 11px 13px;
-  display: flex; flex-direction: column; gap: 5px;
-  transition: border-color .15s;
-}
-.brf-news-link:hover .brf-news-item { border-color: var(--border-h); }
-
-.brf-news-meta {
-  display: flex; align-items: center; gap: 7px;
-}
-.brf-news-src {
-  font-size: 9.5px; font-weight: 700; color: var(--gold);
-  background: var(--gold-dim); border-radius: 3px; padding: 1px 5px;
   flex-shrink: 0;
 }
-.brf-news-date {
+.hn-img { width: 100%; height: 100%; object-fit: cover; }
+
+.hn-top-title {
+  font-size: 14px; font-weight: 800;
+  color: var(--text-1); line-height: 1.5;
+}
+a.hn-top:hover .hn-top-title,
+a.hn-top:active .hn-top-title { color: var(--gold); }
+
+.hn-meta-date {
   font-size: 9.5px; color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-.brf-news-ext {
-  font-size: 10px; color: var(--text-3); margin-left: auto; flex-shrink: 0;
+
+.hn-side-list {
+  flex: 2; min-width: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
 }
-.brf-news-title {
-  font-size: 13.5px; font-weight: 700; color: var(--text-1); line-height: 1.5;
+.hn-side-item {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none; color: inherit;
 }
-.brf-news-summary {
-  font-size: 11.5px; color: var(--text-2); line-height: 1.55;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+.hn-side-item:last-child { border-bottom: none; }
+.hn-side-item:first-child { padding-top: 0; }
+
+.hn-side-title {
+  font-size: 11.5px; font-weight: 700;
+  color: var(--text-1); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+a.hn-side-item:hover .hn-side-title,
+a.hn-side-item:active .hn-side-title { color: var(--gold); }
+
+/* 하단 카드 그리드 */
+.hn-card-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+}
+.hn-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden;
+  display: flex; flex-direction: column;
+  text-decoration: none; color: inherit;
+  transition: border-color .15s;
+}
+a.hn-card:hover  { border-color: var(--border-h); }
+a.hn-card:active { border-color: var(--border-h); }
+
+.hn-card-body {
+  padding: 8px 9px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.hn-card-title {
+  font-size: 12px; font-weight: 700;
+  color: var(--text-1); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* 스켈레톤 */
+.hn-skeleton-wrap { display: flex; flex-direction: column; gap: 22px; }
+.hn-sk-section    { display: flex; flex-direction: column; gap: 10px; }
+.hn-sk-head {
+  height: 18px; width: 100px; border-radius: 4px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  animation: blink 1.6s ease-in-out infinite;
+}
+.hn-sk-top-row { display: flex; gap: 10px; }
+.hn-sk-top {
+  flex: 3; height: 130px; border-radius: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  animation: blink 1.6s ease-in-out infinite;
+}
+.hn-sk-side {
+  flex: 2; height: 130px; border-radius: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  animation: blink 1.6s ease-in-out infinite;
 }

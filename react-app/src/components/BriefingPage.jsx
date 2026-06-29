@@ -16,34 +16,94 @@ function formatPubDate(pubDate) {
   } catch { return ''; }
 }
 
-// ── 뉴스 아이템 (링크 있으면 클릭 가능) ──────────────────────
-function NewsItem({ item }) {
+// ── 헤드라인 뉴스 레이아웃 ────────────────────────────────────
+const SOURCE_PALETTE = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4'];
+
+function sourceAccent(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h * 31 + name.charCodeAt(i)) >>> 0);
+  return SOURCE_PALETTE[h % SOURCE_PALETTE.length];
+}
+
+function groupBySource(items) {
+  const map = new Map();
+  for (const item of items) {
+    if (!map.has(item.source)) map.set(item.source, []);
+    map.get(item.source).push(item);
+  }
+  for (const arr of map.values()) {
+    arr.sort((a, b) => new Date(b.pubDate || 0) - new Date(a.pubDate || 0));
+  }
+  return [...map.entries()].sort((a, b) => b[1].length - a[1].length);
+}
+
+function ArticleLink({ item, className, children }) {
   const hasLink = typeof item.link === 'string' && item.link.startsWith('http');
-  const showSummary = item.summary && item.summary !== item.title && item.summary.length > 10;
-  const date = formatPubDate(item.pubDate);
-
-  const inner = (
-    <div className="brf-news-item">
-      <div className="brf-news-meta">
-        <span className="brf-news-src">{item.source}</span>
-        {date && <span className="brf-news-date">{date}</span>}
-        {hasLink && <span className="brf-news-ext">↗</span>}
-      </div>
-      <p className="brf-news-title">{item.title}</p>
-      {showSummary && <p className="brf-news-summary">{item.summary}</p>}
-    </div>
-  );
-
   if (hasLink) {
     return (
-      <li>
-        <a href={item.link} target="_blank" rel="noopener noreferrer" className="brf-news-link">
-          {inner}
-        </a>
-      </li>
+      <a href={item.link} target="_blank" rel="noopener noreferrer" className={className}>
+        {children}
+      </a>
     );
   }
-  return <li>{inner}</li>;
+  return <div className={className}>{children}</div>;
+}
+
+function SourceSection({ source, articles }) {
+  const accent = sourceAccent(source);
+  const top   = articles[0];
+  const sides = articles.slice(1, 4);
+  const cards = articles.slice(4);
+
+  return (
+    <div className="hn-section">
+      <div className="hn-section-head" style={{ borderBottomColor: accent }}>
+        <span className="hn-source-name" style={{ color: accent }}>{source}</span>
+        <span className="hn-source-count">{articles.length}건</span>
+      </div>
+
+      <div className="hn-top-row">
+        <ArticleLink item={top} className="hn-top">
+          {top.image && (
+            <div className="hn-img-wrap">
+              <img className="hn-img" src={top.image} alt="" loading="lazy" />
+            </div>
+          )}
+          <p className="hn-top-title">{top.title}</p>
+          {top.pubDate && <span className="hn-meta-date">{formatPubDate(top.pubDate)}</span>}
+        </ArticleLink>
+
+        {sides.length > 0 && (
+          <div className="hn-side-list">
+            {sides.map((item, i) => (
+              <ArticleLink key={i} item={item} className="hn-side-item">
+                <p className="hn-side-title">{item.title}</p>
+                {item.pubDate && <span className="hn-meta-date">{formatPubDate(item.pubDate)}</span>}
+              </ArticleLink>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {cards.length > 0 && (
+        <div className="hn-card-grid">
+          {cards.map((item, i) => (
+            <ArticleLink key={i} item={item} className="hn-card">
+              {item.image && (
+                <div className="hn-img-wrap">
+                  <img className="hn-img" src={item.image} alt="" loading="lazy" />
+                </div>
+              )}
+              <div className="hn-card-body">
+                <p className="hn-card-title">{item.title}</p>
+                {item.pubDate && <span className="hn-meta-date">{formatPubDate(item.pubDate)}</span>}
+              </div>
+            </ArticleLink>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── 메인 페이지 ────────────────────────────────────────────────
@@ -162,7 +222,7 @@ export default function BriefingPage({ activePage, onPageChange }) {
               </button>
             </div>
 
-            <NewsBody
+            <HeadlineNewsBody
               phase={newsPhase}
               items={newsItems}
               fetchedAt={newsFetchedAt}
@@ -241,15 +301,21 @@ function AiBody({ phase, briefing, meta, error }) {
   return null;
 }
 
-// ── 뉴스 섹션 본문 ─────────────────────────────────────────────
-function NewsBody({ phase, items, fetchedAt, error }) {
+// ── 헤드라인 뉴스 섹션 본문 ────────────────────────────────────
+function HeadlineNewsBody({ phase, items, fetchedAt, error }) {
   if (phase === 'loading') {
     return (
-      <ul className="brf-news-list">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <li key={i} className="brf-news-skeleton" />
+      <div className="hn-skeleton-wrap">
+        {[0, 1].map(i => (
+          <div key={i} className="hn-sk-section">
+            <div className="hn-sk-head" style={{ animationDelay: `${i * 0.15}s` }} />
+            <div className="hn-sk-top-row">
+              <div className="hn-sk-top" style={{ animationDelay: `${i * 0.15 + 0.1}s` }} />
+              <div className="hn-sk-side" style={{ animationDelay: `${i * 0.15 + 0.2}s` }} />
+            </div>
+          </div>
         ))}
-      </ul>
+      </div>
     );
   }
 
@@ -267,13 +333,14 @@ function NewsBody({ phase, items, fetchedAt, error }) {
   }
 
   if (phase === 'done') {
+    const sections = groupBySource(items);
     return (
-      <>
+      <div className="hn-sections">
         {fetchedAt && <p className="brf-fetched-at">수집: {fetchedAt}</p>}
-        <ul className="brf-news-list">
-          {items.map((item, i) => <NewsItem key={i} item={item} />)}
-        </ul>
-      </>
+        {sections.map(([src, arts]) => (
+          <SourceSection key={src} source={src} articles={arts} />
+        ))}
+      </div>
     );
   }
 

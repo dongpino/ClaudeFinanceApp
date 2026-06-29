@@ -72,6 +72,35 @@ function passesBlacklist(title) {
 
 // ── XML 파싱 유틸 ─────────────────────────────────────────────
 
+function extractImage(block) {
+  // <enclosure url="..." type="image/...">
+  const encTag = /<enclosure\b[^>]*>/i.exec(block);
+  if (encTag) {
+    const t = encTag[0];
+    if (/type=["']image/i.test(t)) {
+      const m = /url=["']([^"']+)["']/i.exec(t);
+      if (m) return m[1];
+    }
+  }
+  // <media:thumbnail url="...">
+  const mtTag = /<media:thumbnail\b[^>]*>/i.exec(block);
+  if (mtTag) {
+    const m = /url=["']([^"']+)["']/i.exec(mtTag[0]);
+    if (m) return m[1];
+  }
+  // <media:content url="..." type="image/...">
+  const mcRe = /<media:content\b[^>]*>/ig;
+  let mc;
+  while ((mc = mcRe.exec(block)) !== null) {
+    const t = mc[0];
+    if (/type=["']image/i.test(t)) {
+      const m = /url=["']([^"']+)["']/i.exec(t);
+      if (m) return m[1];
+    }
+  }
+  return '';
+}
+
 function extractTag(block, tag) {
   const cdataRe = new RegExp(`<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*<\\/${tag}>`, 'i');
   const normalRe = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
@@ -101,8 +130,9 @@ function parseRSSItems(xml, source) {
     const summary = cleanText(extractTag(block, 'description'));
     const pubDate = extractTag(block, 'pubDate');
     const link    = extractTag(block, 'link') || extractTag(block, 'guid');
+    const image   = extractImage(block);
     if (title.length > 3) {
-      items.push({ title, summary, pubDate, link, source });
+      items.push({ title, summary, pubDate, link, source, image });
     }
   }
   return items;
