@@ -18,7 +18,7 @@ const RSS_FEEDS = [
 ];
 
 const FETCH_TIMEOUT_MS  = 6_000;
-const MAX_ITEMS_PER_FEED = 8;   // 피드당 최대 8개 → 필터 전 최대 16개
+const MAX_ITEMS_PER_FEED = 12;  // 피드당 최대 12개 → 폴백 채움용 구기사 확보
 const MIN_AFTER_FILTER  = 8;    // 필터 후 이 수 미만이면 원본 기사로 보충
 
 // ── 방법 B: 시장 키워드 목록 ─────────────────────────────────

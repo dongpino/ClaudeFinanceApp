@@ -19,10 +19,36 @@ function formatPubDate(pubDate) {
 // ── 헤드라인 뉴스 레이아웃 ────────────────────────────────────
 const SOURCE_PALETTE = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4'];
 
+// ── 섹션 채움 임계값 (여기서 조절) ──────────────────────────
+const FRESH_HOURS    = 24;  // 1차 신선도 기준: 이 시간 이내 기사 = "신선"
+const SECTION_TARGET = 8;   // 섹션당 목표 기사 수 (top1 + side3 + card4)
+const MIN_CARDS      = 2;   // 카드 그리드 최소 기사 수 (이 미만이면 그리드 숨김)
+
 function sourceAccent(name) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = ((h * 31 + name.charCodeAt(i)) >>> 0);
   return SOURCE_PALETTE[h % SOURCE_PALETTE.length];
+}
+
+function isRecent(pubDate) {
+  if (!pubDate) return false;
+  const d = new Date(pubDate);
+  return !isNaN(d) && Date.now() - d.getTime() < FRESH_HOURS * 3_600_000;
+}
+
+// 2단계 채움: 1차(신선) → 2차(구기사 보충) → SECTION_TARGET까지
+function buildSectionArticles(articles) {
+  // articles는 이미 최신순 정렬됨 (groupBySource에서)
+  const fresh = articles.filter(a => isRecent(a.pubDate));
+  if (fresh.length >= SECTION_TARGET) return fresh.slice(0, SECTION_TARGET);
+
+  // 2차: 신선 기사 부족분을 구기사로 보충 (링크·제목 기준 중복 제거)
+  const seen = new Set(fresh.map(a => a.link || a.title));
+  const supplement = articles
+    .filter(a => !isRecent(a.pubDate) && !seen.has(a.link || a.title))
+    .slice(0, SECTION_TARGET - fresh.length);
+
+  return [...fresh, ...supplement];
 }
 
 function groupBySource(items) {
@@ -50,16 +76,17 @@ function ArticleLink({ item, className, children }) {
 }
 
 function SourceSection({ source, articles }) {
-  const accent = sourceAccent(source);
-  const top   = articles[0];
-  const sides = articles.slice(1, 4);
-  const cards = articles.slice(4);
+  const accent  = sourceAccent(source);
+  const filled  = buildSectionArticles(articles);  // 2단계 채움 적용
+  const top     = filled[0];
+  const sides   = filled.slice(1, 4);
+  const cards   = filled.slice(4);
 
   return (
     <div className="hn-section">
       <div className="hn-section-head" style={{ borderBottomColor: accent }}>
         <span className="hn-source-name" style={{ color: accent }}>{source}</span>
-        <span className="hn-source-count">{articles.length}건</span>
+        <span className="hn-source-count">{filled.length}건</span>
       </div>
 
       <div className="hn-top-row">
@@ -85,7 +112,7 @@ function SourceSection({ source, articles }) {
         )}
       </div>
 
-      {cards.length > 0 && (
+      {cards.length >= MIN_CARDS && (
         <div className="hn-card-grid">
           {cards.map((item, i) => (
             <ArticleLink key={i} item={item} className="hn-card">
