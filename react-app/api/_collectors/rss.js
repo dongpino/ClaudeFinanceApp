@@ -35,9 +35,39 @@ const MARKET_KEYWORDS = [
   '리포트', '투자의견', '증권사', '자산운용',
 ];
 
+// ── 방법 B-2: 비시장 블랙리스트 (제목만 검사, loose하게 적용) ────
+// "확실히 무관한 것"만 포함 — 애매하면 넣지 않는다.
+const BLACKLIST_KEYWORDS = [
+  // 문화·행사
+  '영화제', '영화펀드', '아시아영화펀드', '축제', '전시회', '박람회',
+  // 사회공헌
+  '상생기금', '상생협력재단', '농어촌상생', '봉사', '기부', '후원',
+  // 공모전 ('공모'/IPO와 구분)
+  '공모전',
+  // 비시장 환경 토픽
+  '탄소크레딧',
+];
+
+// 제목에 이 강한 시장 키워드가 하나라도 있으면 블랙리스트 무시 → 시장 기사 보호 우선
+const STRONG_MARKET_OVERRIDE = [
+  '코스피', '코스닥', '증시', '주가', '목표가', '상장', '상장폐지',
+  '급등', '급락', '급반등', '매수', '매도',
+  '환율', '금리', '연준', 'Fed',
+  '나스닥', '다우', 'S&P',
+];
+
 function passesMarketFilter(title, summary) {
   const text = (title + ' ' + summary).toLowerCase();
   return MARKET_KEYWORDS.some(kw => text.includes(kw.toLowerCase()));
+}
+
+function passesBlacklist(title) {
+  const t = title.toLowerCase();
+  // 강한 시장 키워드 있으면 블랙리스트 무시 (진짜 시장 기사 보호)
+  if (STRONG_MARKET_OVERRIDE.some(kw => t.includes(kw.toLowerCase()))) return true;
+  // 확실히 비시장 신호가 제목에 있으면 제외
+  if (BLACKLIST_KEYWORDS.some(kw => t.includes(kw.toLowerCase()))) return false;
+  return true;
 }
 
 // ── XML 파싱 유틸 ─────────────────────────────────────────────
@@ -119,22 +149,25 @@ export async function collectRSSNews(maxTotal = 15) {
 
   const deduplicated = deduplicateByTitle(all);
 
-  // 방법 B: 키워드 필터 적용
-  const filtered = deduplicated.filter(it => passesMarketFilter(it.title, it.summary));
+  // 방법 B: whitelist 필터
+  const whitelisted = deduplicated.filter(it => passesMarketFilter(it.title, it.summary));
+  // 방법 B-2: blacklist 필터 (제목만, 강한 시장 키워드 있으면 보호)
+  const filtered = whitelisted.filter(it => passesBlacklist(it.title));
 
-  // 안전장치: 필터 후 기사가 너무 적으면 원본으로 보충
+  const dropped = whitelisted.length - filtered.length;
+  console.log(`[rss] whitelist: ${deduplicated.length}건 → ${whitelisted.length}건 / blacklist: -${dropped}건 → ${filtered.length}건`);
+
+  // 안전장치: 필터 후 기사가 너무 적으면 whitelist 통과 기사로 보충
   let final;
   if (filtered.length >= MIN_AFTER_FILTER) {
     final = filtered;
-    console.log(`[rss] 키워드 필터: ${deduplicated.length}건 → ${filtered.length}건 통과`);
   } else {
-    // 필터 통과 기사 + 부족분만큼 원본에서 보충 (중복 제외)
     const filteredTitles = new Set(filtered.map(it => it.title.slice(0, 30)));
-    const supplement = deduplicated
+    const supplement = whitelisted
       .filter(it => !filteredTitles.has(it.title.slice(0, 30)))
       .slice(0, MIN_AFTER_FILTER - filtered.length);
     final = [...filtered, ...supplement];
-    console.log(`[rss] 키워드 필터 fallback: ${filtered.length}건 → 보충 후 ${final.length}건`);
+    console.log(`[rss] blacklist fallback: ${filtered.length}건 → 보충 후 ${final.length}건`);
   }
 
   console.log(`[rss] 최종 ${final.length}건 반환 (피드 ${RSS_FEEDS.length}개)`);
