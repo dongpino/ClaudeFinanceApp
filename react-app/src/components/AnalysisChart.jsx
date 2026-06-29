@@ -182,13 +182,46 @@ export default function AnalysisChart({
     chart.timeScale().fitContent();
     rsiSeriesRef.current = rsiSeries;
 
-    // ── price scale 폭 동기화 (플롯 영역 x좌표 일치) ─────────
-    // 가격 차트 scale 폭(label 넓이)을 읽어 RSI에 minimumWidth로 강제 적용
+    // ── [DIAG] price scale 폭 진단 로그 ─────────────────────
     requestAnimationFrame(() => {
       const price = priceChartRef.current;
-      if (!price) return;
-      const w = price.priceScale('right').width();
-      if (w > 0) chart.applyOptions({ rightPriceScale: { minimumWidth: w } });
+      const priceEl2 = priceRef.current;
+
+      const priceW  = price?.priceScale('right').width()  ?? 'N/A';
+      const rsiW0   = chart.priceScale('right').width();
+      const priceTsOpts = price?.timeScale().options() ?? {};
+      const rsiTsOpts   = chart.timeScale().options();
+      const priceLeftW  = price?.priceScale('left').width()  ?? 'N/A';
+      const rsiLeftW    = chart.priceScale('left').width();
+
+      console.group('[CHART DIAG] rAF 1프레임 후 — minimumWidth 적용 전');
+      console.log('── container clientWidth ──');
+      console.log('  price container :', priceEl2?.clientWidth);
+      console.log('  RSI   container :', el.clientWidth);
+      console.log('── right priceScale.width() ──');
+      console.log('  price right :', priceW, 'px');
+      console.log('  RSI   right :', rsiW0,  'px  ← 적용 전');
+      console.log('── left priceScale.width() (있으면 offset 원인) ──');
+      console.log('  price left  :', priceLeftW, 'px');
+      console.log('  RSI   left  :', rsiLeftW,   'px');
+      console.log('── timeScale options ──');
+      console.log('  price barSpacing:', priceTsOpts.barSpacing, '  rightOffset:', priceTsOpts.rightOffset);
+      console.log('  RSI   barSpacing:', rsiTsOpts.barSpacing,   '  rightOffset:', rsiTsOpts.rightOffset);
+      console.groupEnd();
+
+      // minimumWidth 적용
+      if (price && priceW > 0) {
+        chart.applyOptions({ rightPriceScale: { minimumWidth: priceW } });
+      }
+
+      // 적용 후 한 프레임 더 기다려 실제 반영값 확인
+      requestAnimationFrame(() => {
+        const rsiW1 = chart.priceScale('right').width();
+        console.group('[CHART DIAG] rAF 2프레임 후 — minimumWidth 적용 후');
+        console.log('  RSI right width :', rsiW1, 'px  ← 이 값이 price', priceW, 'px 와 같아야 함');
+        console.log('  일치?', rsiW1 === priceW ? '✅ 같음' : `❌ 다름 (차이 ${Math.abs(rsiW1 - priceW)}px)`);
+        console.groupEnd();
+      });
     });
 
     // ── 시간축 동기화 → 가격 차트 ────────────────────────────
