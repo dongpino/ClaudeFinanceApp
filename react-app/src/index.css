@@ -605,3 +605,199 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px; overflow: hidden;
 }
+
+/* ── 브리핑 페이지 ──────────────────────────────────────────── */
+.briefing-scroll {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 14px 32px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+
+/* 섹션 공통 */
+.brf-section { display: flex; flex-direction: column; gap: 9px; }
+
+.brf-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2px;
+}
+.brf-section-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 800; color: var(--text-2);
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.brf-ai-star { color: var(--gold); font-size: 13px; }
+
+.brf-model-badge {
+  font-size: 9px; font-weight: 700; color: var(--text-3);
+  background: rgba(255,255,255,.04);
+  border: 1px solid var(--border);
+  border-radius: 3px; padding: 1px 5px;
+}
+
+.brf-reload-btn {
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 11px; border-radius: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--text-2); font-size: 11px; font-weight: 600;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.brf-reload-btn:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+.brf-reload-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* AI 카드 */
+.brf-ai-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  padding: 15px 16px 14px;
+  display: flex; flex-direction: column; gap: 13px;
+  position: relative; overflow: hidden;
+}
+.brf-ai-card::before {
+  content: ''; position: absolute;
+  top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--gold) 0%, #f97316 100%);
+  border-radius: 13px 13px 0 0;
+}
+
+.brf-ai-hint {
+  font-size: 13px; color: var(--text-2); line-height: 1.65;
+}
+.brf-ai-hint-sub { font-size: 11.5px; color: var(--text-3); }
+
+.brf-ai-loading {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; color: var(--text-2);
+}
+.brf-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--gold); flex-shrink: 0;
+  animation: blink 1.2s ease-in-out infinite;
+}
+.brf-dot:nth-child(2) { animation-delay: .2s; }
+.brf-dot:nth-child(3) { animation-delay: .4s; }
+
+.brf-ai-nokey {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 7px; padding: 8px 0; text-align: center;
+}
+.brf-nokey-icon { font-size: 28px; }
+.brf-nokey-msg  { font-size: 13.5px; font-weight: 700; color: var(--text-1); }
+.brf-nokey-hint {
+  font-size: 11.5px; color: var(--text-3); line-height: 1.65;
+}
+.brf-nokey-hint code {
+  background: rgba(255,255,255,.07); border-radius: 3px;
+  padding: 1px 5px; font-family: monospace; font-size: 11px;
+  color: var(--gold);
+}
+
+.brf-ai-error { display: flex; flex-direction: column; gap: 4px; }
+.brf-error-title  { font-size: 13px; font-weight: 700; color: var(--up); }
+.brf-error-detail { font-size: 11.5px; color: var(--text-3); }
+
+.brf-ai-result { display: flex; flex-direction: column; gap: 8px; }
+.brf-ai-text {
+  font-size: 14px; color: var(--text-1); line-height: 1.8;
+}
+.brf-ai-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  font-size: 10px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.brf-cached-chip {
+  font-size: 9px; font-weight: 700; color: #22c55e;
+  background: rgba(34,197,94,.12);
+  border: 1px solid rgba(34,197,94,.3);
+  border-radius: 3px; padding: 1px 5px;
+}
+
+/* 생성 버튼 */
+.brf-gen-btn {
+  width: 100%; padding: 13px;
+  border-radius: 10px;
+  background: var(--gold); border: none;
+  color: #1a0e00; font-size: 14px; font-weight: 800;
+  cursor: pointer; letter-spacing: -.2px;
+  transition: opacity .15s, transform .1s;
+  -webkit-tap-highlight-color: transparent;
+}
+.brf-gen-btn:hover:not(:disabled) { opacity: .88; }
+.brf-gen-btn:active:not(:disabled) { transform: scale(.98); }
+.brf-gen-btn:disabled { cursor: not-allowed; }
+.brf-gen-btn.loading {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  opacity: .6;
+}
+
+/* 뉴스 목록 */
+.brf-fetched-at {
+  font-size: 10px; color: var(--text-3);
+  padding: 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.brf-news-state {
+  padding: 28px 0; text-align: center;
+  font-size: 13px; color: var(--text-2); line-height: 1.7;
+}
+.brf-news-state.error p { color: var(--up); }
+.brf-news-state small { display: block; font-size: 11px; color: var(--text-3); margin-top: 4px; }
+
+.brf-news-list {
+  list-style: none;
+  display: flex; flex-direction: column; gap: 7px;
+}
+
+/* 스켈레톤 */
+.brf-news-skeleton {
+  height: 78px; border-radius: 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  animation: blink 1.6s ease-in-out infinite;
+}
+
+/* 뉴스 아이템 */
+.brf-news-link {
+  display: block; text-decoration: none; color: inherit;
+}
+.brf-news-link:active .brf-news-item { border-color: var(--border-h); }
+
+.brf-news-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 11px 13px;
+  display: flex; flex-direction: column; gap: 5px;
+  transition: border-color .15s;
+}
+.brf-news-link:hover .brf-news-item { border-color: var(--border-h); }
+
+.brf-news-meta {
+  display: flex; align-items: center; gap: 7px;
+}
+.brf-news-src {
+  font-size: 9.5px; font-weight: 700; color: var(--gold);
+  background: var(--gold-dim); border-radius: 3px; padding: 1px 5px;
+  flex-shrink: 0;
+}
+.brf-news-date {
+  font-size: 9.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.brf-news-ext {
+  font-size: 10px; color: var(--text-3); margin-left: auto; flex-shrink: 0;
+}
+.brf-news-title {
+  font-size: 13.5px; font-weight: 700; color: var(--text-1); line-height: 1.5;
+}
+.brf-news-summary {
+  font-size: 11.5px; color: var(--text-2); line-height: 1.55;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}

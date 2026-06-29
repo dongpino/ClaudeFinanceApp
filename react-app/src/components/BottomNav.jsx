@@ -31,12 +31,15 @@ const NAV_ITEMS = [
     ),
   },
   {
-    id: 'profile', label: '내 정보',
+    id: 'briefing', label: '브리핑',
     icon: (
       <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"
            strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-        <circle cx="12" cy="7" r="4"/>
+        <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v2"/>
+        <path d="M4 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/>
+        <line x1="10" y1="8"  x2="20" y2="8"/>
+        <line x1="10" y1="12" x2="20" y2="12"/>
+        <line x1="10" y1="16" x2="20" y2="16"/>
       </svg>
     ),
   },

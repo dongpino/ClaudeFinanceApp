@@ -1,3 +1,8 @@
+# 환경변수 (API 키 등 — 절대 커밋 금지)
+.env
+.env.local
+.env.*.local
+
 # Logs
 logs
 *.log
