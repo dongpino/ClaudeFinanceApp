@@ -1,21 +1,48 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:       #070c18;
-  --bg-card:  #0d1528;
-  --border:   #1a2540;
-  --border-h: #2e4470;
-  --text-1:   #e2e8f4;
-  --text-2:   #7a8ba8;
-  --text-3:   #3d5070;
-  --gold:     #f0a500;
-  --gold-dim: rgba(240,165,0,.13);
-  --up:       #e84040;
-  --up-dim:   rgba(232,64,64,.11);
-  --down:     #3d82ef;
-  --down-dim: rgba(61,130,239,.11);
-  --flat:     #576880;
-  --flat-dim: rgba(87,104,128,.11);
+  --bg:           #070c18;
+  --bg-card:      #0d1528;
+  --border:       #1a2540;
+  --border-h:     #2e4470;
+  --text-1:       #e2e8f4;
+  --text-2:       #7a8ba8;
+  --text-3:       #3d5070;
+  --gold:         #f0a500;
+  --gold-dim:     rgba(240,165,0,.13);
+  --up:           #e84040;
+  --up-dim:       rgba(232,64,64,.11);
+  --down:         #3d82ef;
+  --down-dim:     rgba(61,130,239,.11);
+  --flat:         #576880;
+  --flat-dim:     rgba(87,104,128,.11);
+  /* 배경 특수값 — 라이트/다크에서 개별 재정의 */
+  --bg-header:    rgba(7,12,24,.92);
+  --bg-nav:       rgba(13,21,40,.96);
+  --surface-tint: rgba(255,255,255,.04);
+  --surface-code: rgba(255,255,255,.07);
+}
+
+[data-theme="light"] {
+  --bg:           #f0f2f7;
+  --bg-card:      #ffffff;
+  --border:       #dde1ed;
+  --border-h:     #b0bace;
+  --text-1:       #0f1623;
+  --text-2:       #3d5070;
+  --text-3:       #8898b0;
+  --gold:         #b87200;
+  --gold-dim:     rgba(184,114,0,.13);
+  --up:           #c52828;
+  --up-dim:       rgba(197,40,40,.11);
+  --down:         #1a5bbf;
+  --down-dim:     rgba(26,91,191,.11);
+  --flat:         #576880;
+  --flat-dim:     rgba(87,104,128,.11);
+  --bg-header:    rgba(240,242,247,.95);
+  --bg-nav:       rgba(255,255,255,.97);
+  --surface-tint: rgba(0,0,0,.04);
+  --surface-code: rgba(0,0,0,.06);
 }
 
 html { background: var(--bg); }
@@ -43,7 +70,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 11px 16px 9px;
-  background: rgba(7,12,24,.92);
+  background: var(--bg-header);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border);
@@ -174,7 +201,7 @@ body {
 }
 .card-cat {
   font-size: 8.5px; font-weight: 600; color: var(--text-3);
-  background: rgba(255,255,255,.04); border: 1px solid var(--border);
+  background: var(--surface-tint); border: 1px solid var(--border);
   border-radius: 3px; padding: 1px 4px;
   flex-shrink: 0; margin-top: 1px;
 }
@@ -274,7 +301,7 @@ body {
   padding-top: 9px;
   padding-bottom: env(safe-area-inset-bottom, 6px);
   height: calc(60px + env(safe-area-inset-bottom, 0px));
-  background: rgba(13,21,40,.96);
+  background: var(--bg-nav);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border);
@@ -331,7 +358,7 @@ body {
 }
 .detail-cat-badge {
   font-size: 9px; font-weight: 600; color: var(--text-3);
-  background: rgba(255,255,255,.04);
+  background: var(--surface-tint);
   border: 1px solid var(--border);
   border-radius: 3px; padding: 1px 6px;
 }
@@ -546,7 +573,7 @@ body {
   transition: border-color .15s, color .15s, background .15s;
   -webkit-tap-highlight-color: transparent;
 }
-.ind-toggle.on { background: rgba(255,255,255,.05); color: var(--text-1); }
+.ind-toggle.on { background: var(--surface-tint); color: var(--text-1); }
 .ind-toggle.on.ma20  { border-color: #f97316; }
 .ind-toggle.on.ma60  { border-color: #a855f7; }
 .ind-toggle.on.ma100 { border-color: #10b981; }
@@ -631,7 +658,7 @@ body {
 
 .brf-model-badge {
   font-size: 9px; font-weight: 700; color: var(--text-3);
-  background: rgba(255,255,255,.04);
+  background: var(--surface-tint);
   border: 1px solid var(--border);
   border-radius: 3px; padding: 1px 5px;
 }
@@ -691,7 +718,7 @@ body {
   font-size: 11.5px; color: var(--text-3); line-height: 1.65;
 }
 .brf-nokey-hint code {
-  background: rgba(255,255,255,.07); border-radius: 3px;
+  background: var(--surface-code); border-radius: 3px;
   padding: 1px 5px; font-family: monospace; font-size: 11px;
   color: var(--gold);
 }

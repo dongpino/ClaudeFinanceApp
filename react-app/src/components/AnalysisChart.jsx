@@ -1,19 +1,39 @@
 import { useEffect, useRef } from 'react';
 import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { calcMA, calcRSIAligned } from '../indicators';
+import { useTheme } from '../ThemeContext';
 
 // 두 차트의 우측 축 폭을 createChart 시점부터 동일하게 고정 (BTC 등 큰 숫자 기준으로 여유있게)
 const SCALE_WIDTH = 80;
 
-const THEME = {
-  layout:          { background: { color: 'transparent' }, textColor: '#7a8ba8' },
-  grid:            { vertLines: { color: '#1a2540' }, horzLines: { color: '#1a2540' } },
-  crosshair:       { mode: CrosshairMode.Normal },
-  rightPriceScale: { borderColor: '#1a2540', minimumWidth: SCALE_WIDTH },
-  timeScale:       { borderColor: '#1a2540', timeVisible: true, secondsVisible: false },
-  handleScroll: true,
-  handleScale:  true,
+const CHART_COLORS = {
+  dark:  { text: '#7a8ba8', grid: '#1a2540', border: '#1a2540' },
+  light: { text: '#3d5070', grid: '#dde1ed', border: '#dde1ed' },
 };
+
+function buildChartOpts(theme, width, height) {
+  const c = CHART_COLORS[theme] ?? CHART_COLORS.dark;
+  return {
+    width, height,
+    layout:          { background: { color: 'transparent' }, textColor: c.text },
+    grid:            { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+    crosshair:       { mode: CrosshairMode.Normal },
+    rightPriceScale: { borderColor: c.border, minimumWidth: SCALE_WIDTH },
+    timeScale:       { borderColor: c.border, timeVisible: true, secondsVisible: false },
+    handleScroll:    true,
+    handleScale:     true,
+  };
+}
+
+function chartColorOpts(theme) {
+  const c = CHART_COLORS[theme] ?? CHART_COLORS.dark;
+  return {
+    layout:          { background: { color: 'transparent' }, textColor: c.text },
+    grid:            { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+    rightPriceScale: { borderColor: c.border },
+    timeScale:       { borderColor: c.border },
+  };
+}
 
 const UP    = '#e84040';
 const DOWN  = '#3d82ef';
@@ -38,6 +58,7 @@ export default function AnalysisChart({
   showMA20, showMA60, showMA100, showMA200,
   showRSI,
 }) {
+  const { theme } = useTheme();
   const priceRef = useRef(null);
   const rsiRef   = useRef(null);
 
@@ -61,7 +82,7 @@ export default function AnalysisChart({
     const h  = getHistory(item);
     if (!h.length) return;
 
-    const chart = createChart(el, { ...THEME, width: el.clientWidth, height: el.clientHeight });
+    const chart = createChart(el, buildChartOpts(theme, el.clientWidth, el.clientHeight));
     priceChartRef.current = chart;
 
     // 메인 시리즈 (캔들 or 영역)
@@ -170,7 +191,7 @@ export default function AnalysisChart({
     const h  = getHistory(item);
     if (!h.length) return;
 
-    const chart = createChart(el, { ...THEME, width: el.clientWidth, height: el.clientHeight });
+    const chart = createChart(el, buildChartOpts(theme, el.clientWidth, el.clientHeight));
     rsiChartRef.current = chart;
 
     const rsiSeries = chart.addLineSeries({
@@ -238,6 +259,13 @@ export default function AnalysisChart({
       rsiSeriesRef.current = null;
     };
   }, [item, showRSI]);
+
+  // ── 테마 변경 시 차트 색상만 재적용 (barSpacing·minimumWidth 불변) ──
+  useEffect(() => {
+    const opts = chartColorOpts(theme);
+    priceChartRef.current?.applyOptions(opts);
+    rsiChartRef.current?.applyOptions(opts);
+  }, [theme]);
 
   // ── MA 토글 (차트 재생성 없이 visibility만 변경) ─────────────
   useEffect(() => { ma20Ref.current?.applyOptions({ visible: showMA20 });   }, [showMA20]);
