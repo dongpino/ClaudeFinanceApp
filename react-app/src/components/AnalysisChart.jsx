@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
-import { calcMA, calcRSI } from '../indicators';
+import { calcMA, calcRSIAligned } from '../indicators';
 
 const THEME = {
   layout:          { background: { color: 'transparent' }, textColor: '#7a8ba8' },
@@ -56,21 +56,24 @@ export default function AnalysisChart({
     if (!item || !priceRef.current) return;
     const el = priceRef.current;
     const h  = getHistory(item);
+    if (!h.length) return;
 
     const chart = createChart(el, { ...THEME, width: el.clientWidth, height: el.clientHeight });
     priceChartRef.current = chart;
 
     // 메인 시리즈 (캔들 or 영역)
     let mainSeries;
+    let priceData;
     if (item.ohlc_available && h.length && h[0]?.open !== undefined) {
       const cs = chart.addCandlestickSeries({
         upColor: UP, downColor: DOWN,
         borderUpColor: UP, borderDownColor: DOWN,
         wickUpColor: UP, wickDownColor: DOWN,
       });
-      cs.setData(h.filter(r => r.close > 0).map(r => ({
+      priceData = h.filter(r => r.close > 0).map(r => ({
         time: getTime(r), open: r.open, high: r.high, low: r.low, close: r.close,
-      })));
+      }));
+      cs.setData(priceData);
       mainSeries = cs;
     } else {
       const color = item.direction === 'up' ? UP : item.direction === 'down' ? DOWN : '#576880';
@@ -78,10 +81,13 @@ export default function AnalysisChart({
         lineColor: color, topColor: color + '33', bottomColor: color + '00',
         lineWidth: 2, priceLineVisible: false,
       });
-      as.setData(h.filter(r => r.close > 0).map(r => ({ time: getTime(r), value: r.close })));
+      priceData = h.filter(r => r.close > 0).map(r => ({ time: getTime(r), value: r.close }));
+      as.setData(priceData);
       mainSeries = as;
     }
     mainSeriesRef.current = mainSeries;
+    // [CHART DIAG] price series 범위
+    console.log('[CHART DIAG] price data:', priceData.length, 'pts |', priceData[0]?.time, '~', priceData[priceData.length - 1]?.time);
 
     const m20 = chart.addLineSeries({
       color: MA20, lineWidth: 1.5,
@@ -124,22 +130,61 @@ export default function AnalysisChart({
     });
 
     // ── Crosshair 동기화 → RSI 차트 ──────────────────────────
+    let diagLogged = false;
     chart.subscribeCrosshairMove(param => {
       const rsi = rsiChartRef.current;
       const rs  = rsiSeriesRef.current;
       if (!rsi || !rs) return;
       if (!param.point) { rsi.clearCrosshairPosition(); return; }
       if (param.time) rsi.setCrosshairPosition(0, param.time, rs);
+
+      // ── [CHART DIAG] crosshair 첫 이동 시 한 번만 ──────────
+      if (!diagLogged && param.time) {
+        diagLogged = true;
+        const priceRightW = chart.priceScale('right').width();
+        const rsiRightW   = rsi.priceScale('right').width();
+        const priceLeftW  = chart.priceScale('left').width();
+        const rsiLeftW    = rsi.priceScale('left').width();
+        const priceTsOpts = chart.timeScale().options();
+        const rsiTsOpts   = rsi.timeScale().options();
+        const t           = param.time;
+        const priceCoord  = chart.timeScale().timeToCoordinate(t);
+        const rsiCoord    = rsi.timeScale().timeToCoordinate(t);
+        console.group('[CHART DIAG] price crosshair 첫 이동');
+        console.log('── container clientWidth ──');
+        console.log('  price:', el.clientWidth, '  RSI:', rsiRef.current?.clientWidth);
+        console.log('── right priceScale.width() ──');
+        console.log('  price right:', priceRightW, 'px');
+        console.log('  RSI   right:', rsiRightW,   'px');
+        console.log('  차이:', Math.abs(priceRightW - rsiRightW), 'px ', priceRightW === rsiRightW ? '✅ 일치' : '❌ 불일치');
+        console.log('── left priceScale.width() ──');
+        console.log('  price left:', priceLeftW, 'px');
+        console.log('  RSI   left:', rsiLeftW,   'px');
+        console.log('── timeScale options ──');
+        console.log('  price  barSpacing:', priceTsOpts.barSpacing?.toFixed(2), '  rightOffset:', priceTsOpts.rightOffset?.toFixed(2));
+        console.log('  RSI    barSpacing:', rsiTsOpts.barSpacing?.toFixed(2),   '  rightOffset:', rsiTsOpts.rightOffset?.toFixed(2));
+        console.log('── timeToCoordinate (t =', t, ') ──');
+        console.log('  price x:', priceCoord?.toFixed(1));
+        console.log('  RSI   x:', rsiCoord?.toFixed(1));
+        console.log('  차이:', (priceCoord != null && rsiCoord != null)
+          ? Math.abs(priceCoord - rsiCoord).toFixed(1) + 'px  ← 0이어야 정렬됨'
+          : 'N/A');
+        console.groupEnd();
+      }
     });
 
     const ro = new ResizeObserver(() => {
       chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
-      // 리사이즈 후 RSI scale 폭 재동기화
       requestAnimationFrame(() => {
         const rsi = rsiChartRef.current;
         if (!rsi) return;
-        const w = chart.priceScale('right').width();
-        if (w > 0) rsi.applyOptions({ rightPriceScale: { minimumWidth: w } });
+        const priceW  = chart.priceScale('right').width();
+        const rsiW    = rsi.priceScale('right').width();
+        const targetW = Math.max(priceW, rsiW);
+        if (targetW > 0) {
+          chart.applyOptions({ rightPriceScale: { minimumWidth: targetW } });
+          rsi.applyOptions({ rightPriceScale: { minimumWidth: targetW } });
+        }
       });
     });
     ro.observe(el);
@@ -161,6 +206,7 @@ export default function AnalysisChart({
     if (!showRSI || !item || !rsiRef.current) return;
     const el = rsiRef.current;
     const h  = getHistory(item);
+    if (!h.length) return;
 
     const chart = createChart(el, { ...THEME, width: el.clientWidth, height: el.clientHeight });
     rsiChartRef.current = chart;
@@ -169,7 +215,10 @@ export default function AnalysisChart({
       color: RSI_C, lineWidth: 1.5,
       priceLineVisible: false, lastValueVisible: true,
     });
-    rsiSeries.setData(calcRSI(h, 14));
+    const rsiData = calcRSIAligned(h, 14);
+    rsiSeries.setData(rsiData);
+    // [CHART DIAG] RSI series 범위 (whitespace 포함, price와 동일해야 함)
+    console.log('[CHART DIAG] RSI  data:', rsiData.length, 'pts |', rsiData[0]?.time, '~', rsiData[rsiData.length - 1]?.time);
     rsiSeries.createPriceLine({
       price: 70, color: '#ef4444bb', lineWidth: 1,
       lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '과매수',
@@ -182,46 +231,35 @@ export default function AnalysisChart({
     chart.timeScale().fitContent();
     rsiSeriesRef.current = rsiSeries;
 
-    // ── [DIAG] price scale 폭 진단 로그 ─────────────────────
+    // scale 폭 동기화 — 양쪽 차트 모두 max(priceW, rsiW)로 맞춤
     requestAnimationFrame(() => {
       const price = priceChartRef.current;
-      const priceEl2 = priceRef.current;
+      if (!price) return;
 
-      const priceW  = price?.priceScale('right').width()  ?? 'N/A';
-      const rsiW0   = chart.priceScale('right').width();
-      const priceTsOpts = price?.timeScale().options() ?? {};
-      const rsiTsOpts   = chart.timeScale().options();
-      const priceLeftW  = price?.priceScale('left').width()  ?? 'N/A';
-      const rsiLeftW    = chart.priceScale('left').width();
-
-      console.group('[CHART DIAG] rAF 1프레임 후 — minimumWidth 적용 전');
-      console.log('── container clientWidth ──');
-      console.log('  price container :', priceEl2?.clientWidth);
-      console.log('  RSI   container :', el.clientWidth);
-      console.log('── right priceScale.width() ──');
-      console.log('  price right :', priceW, 'px');
-      console.log('  RSI   right :', rsiW0,  'px  ← 적용 전');
-      console.log('── left priceScale.width() (있으면 offset 원인) ──');
-      console.log('  price left  :', priceLeftW, 'px');
-      console.log('  RSI   left  :', rsiLeftW,   'px');
-      console.log('── timeScale options ──');
-      console.log('  price barSpacing:', priceTsOpts.barSpacing, '  rightOffset:', priceTsOpts.rightOffset);
-      console.log('  RSI   barSpacing:', rsiTsOpts.barSpacing,   '  rightOffset:', rsiTsOpts.rightOffset);
+      // [CHART DIAG] visible range 비교
+      const priceLR = price.timeScale().getVisibleLogicalRange();
+      const rsiLR   = chart.timeScale().getVisibleLogicalRange();
+      const priceVR = price.timeScale().getVisibleRange();
+      const rsiVR   = chart.timeScale().getVisibleRange();
+      console.group('[CHART DIAG] visible range (RSI 마운트 후 1프레임)');
+      console.log('price logicalRange:', JSON.stringify(priceLR));
+      console.log('RSI   logicalRange:', JSON.stringify(rsiLR));
+      console.log('price visibleRange:', JSON.stringify(priceVR));
+      console.log('RSI   visibleRange:', JSON.stringify(rsiVR));
+      const lrMatch = priceLR && rsiLR
+        && Math.abs(priceLR.from - rsiLR.from) < 0.1
+        && Math.abs(priceLR.to   - rsiLR.to)   < 0.1;
+      console.log('logicalRange 일치?', lrMatch ? '✅ 일치' : '❌ 불일치 ← 원인 후보');
       console.groupEnd();
 
-      // minimumWidth 적용
-      if (price && priceW > 0) {
-        chart.applyOptions({ rightPriceScale: { minimumWidth: priceW } });
+      // scale 폭 동기화
+      const priceW = price.priceScale('right').width();
+      const rsiW   = chart.priceScale('right').width();
+      const targetW = Math.max(priceW, rsiW);
+      if (targetW > 0) {
+        price.applyOptions({ rightPriceScale: { minimumWidth: targetW } });
+        chart.applyOptions({ rightPriceScale: { minimumWidth: targetW } });
       }
-
-      // 적용 후 한 프레임 더 기다려 실제 반영값 확인
-      requestAnimationFrame(() => {
-        const rsiW1 = chart.priceScale('right').width();
-        console.group('[CHART DIAG] rAF 2프레임 후 — minimumWidth 적용 후');
-        console.log('  RSI right width :', rsiW1, 'px  ← 이 값이 price', priceW, 'px 와 같아야 함');
-        console.log('  일치?', rsiW1 === priceW ? '✅ 같음' : `❌ 다름 (차이 ${Math.abs(rsiW1 - priceW)}px)`);
-        console.groupEnd();
-      });
     });
 
     // ── 시간축 동기화 → 가격 차트 ────────────────────────────

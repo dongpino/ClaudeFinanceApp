@@ -93,3 +93,20 @@ export function calcRSI(history, period = 14) {
     .map((v, i) => v === null ? null : { time: history[i].time ?? history[i].date, value: +v.toFixed(4) })
     .filter(Boolean);
 }
+
+/**
+ * RSI — 가격 series와 길이·time 완전 일치 버전
+ * null 워밍업 구간을 제거하지 않고 { time } whitespace로 채워 반환.
+ * lightweight-charts의 logical index가 가격 차트와 1:1 대응되어 crosshair x좌표가 정렬됨.
+ * @param {Array<{date:string, close:number}>} history
+ * @param {number} period  기본 14
+ * @returns {Array<{time:string} | {time:string, value:number}>}
+ */
+export function calcRSIAligned(history, period = 14) {
+  const closes = history.map(r => r.close);
+  const vals   = rsiArray(closes, period);
+  return vals.map((v, i) => {
+    const time = history[i].time ?? history[i].date;
+    return v === null ? { time } : { time, value: +v.toFixed(4) };
+  });
+}
