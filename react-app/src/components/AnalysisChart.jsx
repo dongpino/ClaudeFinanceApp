@@ -89,8 +89,6 @@ export default function AnalysisChart({
       mainSeries = as;
     }
     mainSeriesRef.current = mainSeries;
-    // [CHART DIAG] price series 범위
-    console.log('[CHART DIAG] price data:', priceData.length, 'pts |', priceData[0]?.time, '~', priceData[priceData.length - 1]?.time);
 
     const m20 = chart.addLineSeries({
       color: MA20, lineWidth: 1.5,
@@ -133,52 +131,12 @@ export default function AnalysisChart({
     });
 
     // ── Crosshair 동기화 → RSI 차트 ──────────────────────────
-    let diagLogged = false;
     chart.subscribeCrosshairMove(param => {
       const rsi = rsiChartRef.current;
       const rs  = rsiSeriesRef.current;
       if (!rsi || !rs) return;
       if (!param.point) { rsi.clearCrosshairPosition(); return; }
       if (param.time) rsi.setCrosshairPosition(0, param.time, rs);
-
-      // ── [CHART DIAG] crosshair 첫 이동 시 한 번만 ──────────
-      if (!diagLogged && param.time) {
-        diagLogged = true;
-        const priceRightW = chart.priceScale('right').width();
-        const rsiRightW   = rsi.priceScale('right').width();
-        const priceLeftW  = chart.priceScale('left').width();
-        const rsiLeftW    = rsi.priceScale('left').width();
-        const priceTsOpts = chart.timeScale().options();
-        const rsiTsOpts   = rsi.timeScale().options();
-        const t           = param.time;
-        const priceCoord  = chart.timeScale().timeToCoordinate(t);
-        const rsiCoord    = rsi.timeScale().timeToCoordinate(t);
-        const priceRect   = el.getBoundingClientRect();
-        const rsiRect     = rsiRef.current?.getBoundingClientRect();
-        console.group('[CHART DIAG] price crosshair 첫 이동');
-        console.log('── container getBoundingClientRect().left ──');
-        console.log('  price left:', priceRect.left.toFixed(1), 'px');
-        console.log('  RSI   left:', rsiRect?.left.toFixed(1),  'px');
-        console.log('  차이:', rsiRect ? Math.abs(priceRect.left - rsiRect.left).toFixed(1) + 'px' : 'N/A',
-          rsiRect && Math.abs(priceRect.left - rsiRect.left) < 1 ? '✅ 일치' : '❌ 컨테이너 위치 어긋남');
-        console.log('── container clientWidth ──');
-        console.log('  price:', el.clientWidth, '  RSI:', rsiRef.current?.clientWidth);
-        console.log('── right priceScale.width() ──');
-        console.log('  price right:', priceRightW, 'px  RSI right:', rsiRightW, 'px',
-          priceRightW === rsiRightW ? '✅' : '❌ 불일치');
-        console.log('── left priceScale.width() ──');
-        console.log('  price left:', priceLeftW, 'px  RSI left:', rsiLeftW, 'px');
-        console.log('── barSpacing / rightOffset ──');
-        console.log('  price  barSpacing:', priceTsOpts.barSpacing?.toFixed(4), '  rightOffset:', priceTsOpts.rightOffset?.toFixed(2));
-        console.log('  RSI    barSpacing:', rsiTsOpts.barSpacing?.toFixed(4),   '  rightOffset:', rsiTsOpts.rightOffset?.toFixed(2));
-        console.log('  barSpacing 차이:', Math.abs((priceTsOpts.barSpacing ?? 0) - (rsiTsOpts.barSpacing ?? 0)).toFixed(4));
-        console.log('── timeToCoordinate (t =', t, ') ──');
-        console.log('  price x:', priceCoord?.toFixed(2), '  RSI x:', rsiCoord?.toFixed(2));
-        console.log('  차이:', (priceCoord != null && rsiCoord != null)
-          ? Math.abs(priceCoord - rsiCoord).toFixed(2) + 'px'
-          : 'N/A');
-        console.groupEnd();
-      }
     });
 
     const ro = new ResizeObserver(() => {
@@ -221,8 +179,6 @@ export default function AnalysisChart({
     });
     const rsiData = calcRSIAligned(h, 14);
     rsiSeries.setData(rsiData);
-    // [CHART DIAG] RSI series 범위 (whitespace 포함, price와 동일해야 함)
-    console.log('[CHART DIAG] RSI  data:', rsiData.length, 'pts |', rsiData[0]?.time, '~', rsiData[rsiData.length - 1]?.time);
     rsiSeries.createPriceLine({
       price: 70, color: '#ef4444bb', lineWidth: 1,
       lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '과매수',
@@ -243,39 +199,6 @@ export default function AnalysisChart({
       // 가격 차트 barSpacing을 RSI에 명시적으로 복사
       const priceBs = price.timeScale().options().barSpacing;
       if (priceBs > 0) chart.timeScale().applyOptions({ barSpacing: priceBs });
-
-      // [CHART DIAG] barSpacing · width · timeToCoordinate 최종 확인
-      requestAnimationFrame(() => {
-        const priceRW = price.priceScale('right').width();
-        const rsiRW   = chart.priceScale('right').width();
-        const pOpts   = price.timeScale().options();
-        const rOpts   = chart.timeScale().options();
-        const pLR     = price.timeScale().getVisibleLogicalRange();
-        const rLR     = chart.timeScale().getVisibleLogicalRange();
-        const t       = rLR?.from != null
-          ? chart.timeScale().coordinateToTime(Math.round((chart.priceScale('right').width() || 100)))
-          : null;
-        const pCoord  = t ? price.timeScale().timeToCoordinate(t) : null;
-        const rCoord  = t ? chart.timeScale().timeToCoordinate(t)  : null;
-
-        console.group('[CHART DIAG] RSI 마운트 후 2프레임 — 최종 상태');
-        console.log('── right scale width ──');
-        console.log('  price:', priceRW, 'px  RSI:', rsiRW, 'px', priceRW === rsiRW ? '✅' : '❌ 불일치');
-        console.log('── barSpacing ──');
-        console.log('  price:', pOpts.barSpacing?.toFixed(4));
-        console.log('  RSI  :', rOpts.barSpacing?.toFixed(4));
-        console.log('  차이 :', Math.abs((pOpts.barSpacing ?? 0) - (rOpts.barSpacing ?? 0)).toFixed(4),
-          pOpts.barSpacing === rOpts.barSpacing ? '✅' : '← 차이있음');
-        console.log('── visibleLogicalRange ──');
-        console.log('  price:', JSON.stringify(pLR));
-        console.log('  RSI  :', JSON.stringify(rLR));
-        if (pCoord != null && rCoord != null) {
-          console.log('── timeToCoordinate(임의 t) ──');
-          console.log('  price x:', pCoord.toFixed(1), '  RSI x:', rCoord.toFixed(1),
-            '  차이:', Math.abs(pCoord - rCoord).toFixed(1) + 'px', Math.abs(pCoord - rCoord) < 1 ? '✅' : '❌');
-        }
-        console.groupEnd();
-      });
     });
 
     // ── 시간축 동기화 → 가격 차트 ────────────────────────────
