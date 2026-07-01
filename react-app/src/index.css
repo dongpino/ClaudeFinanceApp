@@ -1,26 +1,27 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:           #070c18;
-  --bg-card:      #0d1528;
-  --border:       #1a2540;
-  --border-h:     #2e4470;
-  --text-1:       #e2e8f4;
-  --text-2:       #7a8ba8;
-  --text-3:       #3d5070;
-  --gold:         #f0a500;
-  --gold-dim:     rgba(240,165,0,.13);
+  /* ── 다크 모드 기본 (뉴트럴 블랙, 파란 기 제거) ─── */
+  --bg:           #0a0a0b;
+  --bg-card:      #141416;
+  --border:       #26262a;
+  --border-h:     #3a3a42;
+  --text-1:       #f0f0f3;
+  --text-2:       #9a9aa2;
+  --text-3:       #56565e;
+  --gold:         #e09500;
+  --gold-dim:     rgba(224,149,0,.14);
   --up:           #e84040;
-  --up-dim:       rgba(232,64,64,.11);
+  --up-dim:       rgba(232,64,64,.12);
   --down:         #3d82ef;
-  --down-dim:     rgba(61,130,239,.11);
-  --flat:         #576880;
-  --flat-dim:     rgba(87,104,128,.11);
+  --down-dim:     rgba(61,130,239,.12);
+  --flat:         #6a6a76;
+  --flat-dim:     rgba(106,106,118,.12);
   /* 배경 특수값 — 라이트/다크에서 개별 재정의 */
-  --bg-header:    rgba(7,12,24,.92);
-  --bg-nav:       rgba(13,21,40,.96);
-  --surface-tint: rgba(255,255,255,.04);
-  --surface-code: rgba(255,255,255,.07);
+  --bg-header:    rgba(10,10,11,.95);
+  --bg-nav:       rgba(16,16,18,.97);
+  --surface-tint: rgba(255,255,255,.05);
+  --surface-code: rgba(255,255,255,.08);
 }
 
 [data-theme="light"] {

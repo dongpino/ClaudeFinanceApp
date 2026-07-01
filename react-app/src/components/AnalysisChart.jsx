@@ -7,7 +7,7 @@ import { useTheme } from '../ThemeContext';
 const SCALE_WIDTH = 80;
 
 const CHART_COLORS = {
-  dark:  { text: '#7a8ba8', grid: '#1a2540', border: '#1a2540' },
+  dark:  { text: '#9a9aa2', grid: '#26262a', border: '#26262a' },
   light: { text: '#3d5070', grid: '#dde1ed', border: '#dde1ed' },
 };
 
