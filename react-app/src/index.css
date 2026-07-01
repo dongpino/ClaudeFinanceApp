@@ -905,3 +905,173 @@ a.hn-card:active { border-color: var(--border-h); }
   background: var(--bg-card); border: 1px solid var(--border);
   animation: blink 1.6s ease-in-out infinite;
 }
+
+/* ── 검색/워치리스트 탭 ──────────────────────────────────── */
+.search-scroll {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 14px 32px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+
+/* 검색 바 */
+.wl-search-wrap { display: flex; flex-direction: column; gap: 6px; }
+.wl-search-bar {
+  display: flex; align-items: center; gap: 9px;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border);
+  border-radius: 12px; padding: 0 12px;
+  transition: border-color .15s;
+}
+.wl-search-bar:focus-within { border-color: var(--gold); }
+.wl-search-icon { color: var(--text-3); flex-shrink: 0; }
+.wl-search-input {
+  flex: 1; background: none; border: none; outline: none;
+  color: var(--text-1); font-size: 14px; font-family: inherit;
+  padding: 11px 0;
+}
+.wl-search-input::placeholder { color: var(--text-3); }
+.wl-search-clear {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-3); font-size: 18px; line-height: 1;
+  padding: 3px 0; transition: color .15s; flex-shrink: 0;
+}
+.wl-search-clear:hover { color: var(--text-1); }
+
+/* 자동완성 드롭다운 */
+.wl-autocomplete {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  max-height: 270px; overflow-y: auto;
+}
+.wl-ac-state {
+  padding: 14px 16px; text-align: center;
+  font-size: 13px; color: var(--text-3);
+}
+.wl-ac-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  transition: background .1s;
+}
+.wl-ac-item:last-child { border-bottom: none; }
+.wl-ac-item:hover { background: var(--surface-tint); }
+.wl-ac-thumb {
+  width: 28px; height: 28px; border-radius: 50%;
+  object-fit: cover; flex-shrink: 0; background: var(--border);
+}
+.wl-ac-thumb-placeholder {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--border); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: var(--text-2);
+}
+.wl-ac-info {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.wl-ac-name {
+  font-size: 13px; font-weight: 600; color: var(--text-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wl-ac-symbol { font-size: 11px; color: var(--text-3); }
+.wl-ac-rank {
+  font-size: 9px; font-weight: 700; color: var(--text-3);
+  background: var(--surface-tint); border: 1px solid var(--border);
+  border-radius: 3px; padding: 1px 4px; flex-shrink: 0;
+}
+.wl-ac-add-btn {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--bg); border: 1.5px solid var(--border);
+  color: var(--text-2); font-size: 17px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0;
+  transition: border-color .15s, color .15s, background .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.wl-ac-add-btn:hover:not(:disabled):not(.added) {
+  border-color: var(--gold); color: var(--gold);
+}
+.wl-ac-add-btn.added {
+  background: var(--gold-dim); border-color: var(--gold);
+  color: var(--gold); cursor: default; font-size: 13px;
+}
+.wl-ac-add-btn:disabled:not(.added) { opacity: .3; cursor: not-allowed; }
+
+/* 섹션 공통 */
+.wl-section { display: flex; flex-direction: column; gap: 10px; }
+.wl-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2px;
+}
+.wl-section-title {
+  font-size: 11px; font-weight: 800; color: var(--text-2);
+  letter-spacing: .05em; text-transform: uppercase;
+}
+.wl-section-count { font-size: 10px; color: var(--text-3); }
+.wl-section-limit { font-size: 10px; color: var(--gold); font-weight: 700; }
+
+/* 기존 6종목 칩 */
+.wl-index-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.wl-index-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-card); border: 1.5px solid var(--border);
+  border-radius: 12px;
+  transition: border-color .15s;
+}
+.wl-index-chip.watched { border-color: var(--gold); background: var(--gold-dim); }
+.wl-chip-label { font-size: 12px; font-weight: 700; color: var(--text-1); }
+.wl-chip-star {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-3); font-size: 15px; line-height: 1;
+  padding: 0; transition: color .15s, transform .1s;
+  -webkit-tap-highlight-color: transparent;
+}
+.wl-index-chip.watched .wl-chip-star { color: var(--gold); }
+.wl-chip-star:hover { color: var(--gold); }
+.wl-chip-star:active { transform: scale(.82); }
+
+/* 워치리스트 카드 그리드 */
+.wl-cards-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.wl-cards-grid.solo { grid-template-columns: 1fr; }
+
+/* 카드 remove 버튼 */
+.wl-card-remove {
+  width: 18px; height: 18px; border-radius: 5px;
+  background: var(--surface-tint); border: 1px solid var(--border);
+  color: var(--text-3); font-size: 14px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0; margin-top: 1px;
+  padding: 0;
+  transition: border-color .15s, color .15s;
+}
+.wl-card-remove:hover { border-color: var(--up); color: var(--up); }
+
+/* 스켈레톤 카드 */
+.wl-card-skeleton {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 13px; padding: 11px;
+  min-height: 130px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  color: var(--text-3); font-size: 11px; font-weight: 700;
+  animation: blink 1.6s ease-in-out infinite;
+}
+
+/* 빈 상태 */
+.wl-empty {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 8px; padding: 32px 0; text-align: center;
+}
+.wl-empty-icon { font-size: 34px; opacity: .4; }
+.wl-empty-msg  { font-size: 14px; font-weight: 700; color: var(--text-2); }
+.wl-empty-hint { font-size: 12px; color: var(--text-3); line-height: 1.7; }
