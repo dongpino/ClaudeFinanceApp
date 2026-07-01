@@ -2,6 +2,6 @@
   "devCommand": "vite --port $PORT",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/detail/:id", "destination": "/index.html" }
   ]
 }
