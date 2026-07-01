@@ -32,6 +32,21 @@ function r4(n) { return Math.round(n * 10000) / 10000; }
 function direction(pct) { return pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat'; }
 
 /**
+ * 코인 가격 시계열 (Binance 미상장 코인의 분석 차트용)
+ * days<=90은 자동으로 시간봉, interval='daily' 지정 시 일봉 강제(장기 조회용)
+ * @param {string} id — CoinGecko coin id
+ * @param {number} days
+ * @param {'daily'} [interval]
+ * @returns {Promise<[number, number][]>} [timestampMs, price][]
+ */
+export async function fetchCoinMarketChart(id, days, interval) {
+  const q = interval ? `&interval=${interval}` : '';
+  const data = await cgFetch(`/coins/${encodeURIComponent(id)}/market_chart?vs_currency=usd&days=${days}${q}`);
+  if (!Array.isArray(data.prices)) throw new Error(`CoinGecko market_chart 응답 형식 오류 (${id})`);
+  return data.prices;
+}
+
+/**
  * 코인 검색 자동완성
  * @param {string} query — 검색어 (최소 1자)
  * @returns {{ id, symbol, name, thumb, market_cap_rank }[]} 최대 20개

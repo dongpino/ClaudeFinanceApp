@@ -1,13 +1,15 @@
 /**
- * btc-intraday.js — BTC 분봉/시간봉 수집
+ * btc-intraday.js — Binance 심볼 분봉/시간봉 수집 (BTC 전용에서 임의 심볼로 일반화)
  *
  * 소스 우선순위 (Vercel 환경에서 api.binance.com이 차단될 수 있음):
  *   1. data-api.binance.vision  — Binance 공개 데이터 CDN, 지역 제한 없음
  *   2. api.binance.com          — 표준 Binance REST API
- *   3. api.bybit.com            — 최종 폴백 (인터벌 코드 변환 필요)
+ *   3. api.bybit.com            — 최종 폴백 (인터벌 코드 변환 필요, BTC 전용 경로에서만 사용)
  *
  * 반환 history 항목: { time: number(Unix seconds), open, high, low, close }
  * ← lightweight-charts intraday 형식; 일봉/주봉의 { date: 'YYYY-MM-DD' }와 구별
+ *
+ * fetchBTCByTF(tf)는 fetchIntradayKlines('BTCUSDT', tf)의 얇은 wrapper — 기존 동작 100% 동일.
  */
 
 function r2(n) { return Math.round(n * 100) / 100; }
@@ -42,9 +44,9 @@ function parseBinanceKlines(raw) {
   }));
 }
 
-async function fetchFromBinanceVision(tf, limit) {
-  const url = `https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=${tf}&limit=${limit}`;
-  console.log(`[btc-intraday/${tf}] 시도 1: data-api.binance.vision`);
+async function fetchFromBinanceVision(pair, tf, limit) {
+  const url = `https://data-api.binance.vision/api/v3/klines?symbol=${pair}&interval=${tf}&limit=${limit}`;
+  console.log(`[intraday/${pair}/${tf}] 시도 1: data-api.binance.vision`);
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '(body 없음)');
@@ -52,13 +54,13 @@ async function fetchFromBinanceVision(tf, limit) {
   }
   const raw = await res.json();
   const history = parseBinanceKlines(raw);
-  console.log(`[btc-intraday/${tf}] ✅ binance.vision: ${history.length}봉`);
+  console.log(`[intraday/${pair}/${tf}] ✅ binance.vision: ${history.length}봉`);
   return { history, source: `Binance-Vision ${tf}` };
 }
 
-async function fetchFromBinanceCom(tf, limit) {
-  const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${tf}&limit=${limit}`;
-  console.log(`[btc-intraday/${tf}] 시도 2: api.binance.com`);
+async function fetchFromBinanceCom(pair, tf, limit) {
+  const url = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=${tf}&limit=${limit}`;
+  console.log(`[intraday/${pair}/${tf}] 시도 2: api.binance.com`);
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '(body 없음)');
@@ -66,14 +68,14 @@ async function fetchFromBinanceCom(tf, limit) {
   }
   const raw = await res.json();
   const history = parseBinanceKlines(raw);
-  console.log(`[btc-intraday/${tf}] ✅ binance.com: ${history.length}봉`);
+  console.log(`[intraday/${pair}/${tf}] ✅ binance.com: ${history.length}봉`);
   return { history, source: `Binance ${tf}` };
 }
 
-async function fetchFromBybit(tf, limit) {
+async function fetchFromBybit(pair, tf, limit) {
   const interval = BYBIT_INTERVAL[tf];
-  const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=BTCUSDT&interval=${interval}&limit=${limit}`;
-  console.log(`[btc-intraday/${tf}] 시도 3: api.bybit.com (interval=${interval})`);
+  const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${pair}&interval=${interval}&limit=${limit}`;
+  console.log(`[intraday/${pair}/${tf}] 시도 3: api.bybit.com (interval=${interval})`);
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '(body 없음)');
@@ -94,36 +96,50 @@ async function fetchFromBybit(tf, limit) {
     low:   r2(parseFloat(k[3])),
     close: r2(parseFloat(k[4])),
   }));
-  console.log(`[btc-intraday/${tf}] ✅ Bybit: ${history.length}봉`);
+  console.log(`[intraday/${pair}/${tf}] ✅ Bybit: ${history.length}봉`);
   return { history, source: `Bybit ${tf}` };
+}
+
+async function fetchIntradaySources(pair, tf, limit, includeBybit) {
+  const attempts = [
+    ['binance.vision', () => fetchFromBinanceVision(pair, tf, limit)],
+    ['binance.com',    () => fetchFromBinanceCom(pair, tf, limit)],
+  ];
+  if (includeBybit) attempts.push(['bybit', () => fetchFromBybit(pair, tf, limit)]);
+
+  const errors = [];
+  for (const [label, fn] of attempts) {
+    try {
+      const { history, source } = await fn();
+      return { history, ohlc_available: true, source, tf };
+    } catch (e) {
+      console.warn(`[intraday/${pair}/${tf}] ❌ ${label}: ${e.message}`);
+      errors.push(`${label}: ${e.message}`);
+    }
+  }
+
+  throw new Error(`${pair} ${tf} 모든 소스 실패:\n  ${errors.join('\n  ')}`);
 }
 
 // ── 공개 함수 ───────────────────────────────────────────────
 
 /**
- * BTC 분봉/시간봉 수집 — 3단계 소스 폴백
+ * 임의 Binance 심볼(USDT 마켓)의 분봉/시간봉 수집 — 2단계 소스 폴백(vision → binance.com)
+ * @param {string} pair — 예: 'ETHUSDT'
+ * @param {'1m'|'5m'|'15m'|'30m'|'1h'|'4h'} tf
+ * @returns {{ history, ohlc_available: true, source: string, tf: string }}
+ */
+export async function fetchIntradayKlines(pair, tf) {
+  if (!TF_LIMITS[tf]) throw new Error(`지원하지 않는 타임프레임: ${tf}`);
+  return fetchIntradaySources(pair, tf, TF_LIMITS[tf], false);
+}
+
+/**
+ * BTC 분봉/시간봉 수집 — 3단계 소스 폴백(vision → binance.com → bybit)
  * @param {'1m'|'5m'|'15m'|'30m'|'1h'|'4h'} tf
  * @returns {{ history, ohlc_available: true, source: string, tf: string }}
  */
 export async function fetchBTCByTF(tf) {
   if (!TF_LIMITS[tf]) throw new Error(`지원하지 않는 타임프레임: ${tf}`);
-  const limit = TF_LIMITS[tf];
-
-  const errors = [];
-
-  for (const [label, fn] of [
-    ['binance.vision', () => fetchFromBinanceVision(tf, limit)],
-    ['binance.com',    () => fetchFromBinanceCom(tf, limit)],
-    ['bybit',          () => fetchFromBybit(tf, limit)],
-  ]) {
-    try {
-      const { history, source } = await fn();
-      return { history, ohlc_available: true, source, tf };
-    } catch (e) {
-      console.warn(`[btc-intraday/${tf}] ❌ ${label}: ${e.message}`);
-      errors.push(`${label}: ${e.message}`);
-    }
-  }
-
-  throw new Error(`BTC ${tf} 모든 소스 실패:\n  ${errors.join('\n  ')}`);
+  return fetchIntradaySources('BTCUSDT', tf, TF_LIMITS[tf], true);
 }

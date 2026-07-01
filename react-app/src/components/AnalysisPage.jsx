@@ -13,16 +13,6 @@ const STOCKS = [
   { id: 'usdkrw',  label: '원달러' },
 ];
 
-// 종목별 지원 타임프레임 (analysis.js의 SUPPORTED_TF와 동일)
-const SUPPORTED_TF = {
-  btc:    ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'],
-  nasdaq: ['1d', '1w'],
-  dow:    ['1d', '1w'],
-  vix:    ['1d', '1w'],
-  kospi:  ['1d', '1w'],
-  usdkrw: ['1d', '1w'],
-};
-
 const TF_OPTIONS = [
   { value: '1m',  label: '1분'   },
   { value: '5m',  label: '5분'   },
@@ -53,11 +43,11 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const [showMA200, setShowMA200] = useState(true);
   const [showRSI,   setShowRSI]   = useState(true);
 
-  // 종목 전환: 선택 종목이 현재 TF를 지원하지 않으면 일봉으로 리셋
+  // 종목 전환: tf를 항상 일봉으로 리셋.
+  // 지원 tf 목록은 서버 응답(item.supported_tfs, getSupportedTimeframes 단일 소스)에서만 알 수 있어
+  // 전환 시점엔 아직 새 종목의 목록을 모르므로 보수적으로 1d(모든 종목 공통 지원)로 초기화한다.
   function handleStockSelect(newId) {
-    if (!SUPPORTED_TF[newId].includes(selectedTF)) {
-      setSelectedTF('1d');
-    }
+    setSelectedTF('1d');
     setSelectedId(newId);
   }
 
@@ -109,7 +99,9 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const ma100Disabled = candleCount > 0 && candleCount < 100;
   const ma200Disabled = candleCount > 0 && candleCount < 200;
 
-  const supportedTFs = SUPPORTED_TF[selectedId];
+  // 지원 tf 목록은 서버 응답이 단일 소스(getSupportedTimeframes) — 응답 도착 전엔
+  // 전 종목 공통 지원(1d/1w)만 활성화해 미지원 tf 요청이 나가지 않게 한다.
+  const supportedTFs = detailItem?.supported_tfs ?? ['1d', '1w'];
 
   return (
     <>

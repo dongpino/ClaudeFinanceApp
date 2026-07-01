@@ -1,20 +1,24 @@
 /**
- * api/analysis.js — 분석 탭 전용 장기 히스토리 엔드포인트
+ * api/analysis.js — 분석 탭 데이터 엔드포인트 (6종목 고정 + 임의 종목 확장)
  *
- * GET /api/analysis?id={nasdaq|dow|kospi|btc|vix|usdkrw}[&tf={1m|5m|15m|30m|1h|4h|1d|1w}]
+ * GET /api/analysis?id={nasdaq|dow|kospi|btc|vix|usdkrw}[&tf=...]      (기존, type 생략 시 'index')
+ * GET /api/analysis?type=crypto&id={coingeckoId}&symbol={SYM}&tf=...  (신규)
+ * GET /api/analysis?type=stock&symbol={SYM}&tf=...                    (신규)
  *
- * 종목별 지원 타임프레임:
- *   btc    : 1m / 5m / 15m / 30m / 1h / 4h / 1d / 1w  (8개, Binance klines)
- *   나머지  : 1d / 1w  (일봉 250일 + 주봉 변환)
+ * 종목별 지원 타임프레임은 timeframe-capability.js의 getSupportedTimeframes()가 단일 소스.
+ * tf 미지정 시 기본값: 1d. 종목이 지원하지 않는 tf 요청 시: 400 에러.
  *
- * tf 미지정 시 기본값: 1d
- * 종목이 지원하지 않는 tf 요청 시: 400 에러
+ * 소스 분기(어댑터):
+ *   index (기존 6종목) — analysis-long.js + btc-intraday.js (기존 로직 100% 그대로)
+ *   crypto             — crypto-adapter.js (Binance 상장이면 Binance klines, 아니면 CoinGecko)
+ *   stock              — stock-adapter.js (Twelve Data 일봉 → toWeekly 주봉)
+ * 세 어댑터 모두 공통 형식 반환: { history, ohlc_available, source }
  *
  * 반환 history 형식:
- *   intraday (1m~4h, BTC 전용): { time: number(Unix seconds), open, high, low, close }
- *   일봉/주봉              : { date: 'YYYY-MM-DD', open?, high?, low?, close }
+ *   intraday (1m~4h): { time: number(Unix seconds), open?, high?, low?, close }
+ *   일봉/주봉         : { date: 'YYYY-MM-DD', open?, high?, low?, close }
  *
- * 캐시: 타임프레임별 차등 TTL (인메모리 + CDN s-maxage)
+ * 캐시: 인메모리 (type:id:tf 키) + CDN s-maxage. TTL은 tf별 차등(주식은 Twelve Data 한도 보호 위해 더 김).
  */
 
 import {
@@ -27,8 +31,11 @@ import {
 } from './_collectors/analysis-long.js';
 import { fetchBTCByTF, BTC_INTRADAY_TFS } from './_collectors/btc-intraday.js';
 import { toWeekly } from './_collectors/weekly-transform.js';
+import { getSupportedTimeframes } from './_collectors/timeframe-capability.js';
+import { fetchCryptoByTF } from './_collectors/crypto-adapter.js';
+import { fetchStockByTF } from './_collectors/stock-adapter.js';
 
-// ── 종목 정의 ──────────────────────────────────────────────
+// ── 기존 6종목 정의 (index 어댑터, 무변경) ──────────────────
 
 const ITEM_ORDER = ['nasdaq', 'dow', 'kospi', 'btc', 'vix', 'usdkrw'];
 
@@ -39,16 +46,6 @@ const ITEM_META = {
   vix:    { name: 'VIX 공포지수',     dailyFn: fetchLongVIX    },
   kospi:  { name: '코스피 (^KS11)',   dailyFn: fetchLongKOSPI  },
   usdkrw: { name: '원/달러',          dailyFn: fetchLongUSDKRW },
-};
-
-// 종목별 허용 타임프레임
-const SUPPORTED_TF = {
-  btc:    [...BTC_INTRADAY_TFS, '1d', '1w'],  // 1m,5m,15m,30m,1h,4h,1d,1w
-  nasdaq: ['1d', '1w'],
-  dow:    ['1d', '1w'],
-  vix:    ['1d', '1w'],
-  kospi:  ['1d', '1w'],
-  usdkrw: ['1d', '1w'],
 };
 
 // ── 캐시 TTL (인메모리 ms / CDN s-maxage 초) ───────────────
@@ -64,7 +61,17 @@ const TF_TTL = {
   '1w':  { mem:  3_600_000, cdn: 1_800 },
 };
 
-const CACHE = {};   // 키: 'id:tf'
+// 주식(Twelve Data 800req/day, 8req/min)은 더 긴 TTL로 호출량 절약
+const STOCK_TF_TTL = {
+  '1d': { mem: 600_000,   cdn: 300 },   // 10분
+  '1w': { mem: 1_800_000, cdn: 900 },   // 30분
+};
+
+function getTTL(type, tf) {
+  return (type === 'stock' ? STOCK_TF_TTL[tf] : null) ?? TF_TTL[tf];
+}
+
+const CACHE = {};   // 키: 'type:id:tf'
 
 // ── 유틸 ───────────────────────────────────────────────────
 
@@ -84,23 +91,22 @@ function direction(change) { return change > 0 ? 'up' : change < 0 ? 'down' : 'f
 
 // ── 데이터 수집 ────────────────────────────────────────────
 
-async function fetchData(id, tf) {
+// 기존 index 어댑터 (analysis-long.js + btc-intraday.js) — 로직 100% 그대로
+async function fetchIndexData(id, tf) {
   const { dailyFn } = ITEM_META[id];
   const isIntraday  = BTC_INTRADAY_TFS.includes(tf);
 
   if (isIntraday) {
-    // BTC 분봉/시간봉: btc-intraday.js 직접 수집
     return fetchBTCByTF(tf);
   }
 
-  // 일봉 수집 (1d / 주봉의 원본)
   const daily = await dailyFn();
 
   if (tf === '1w') {
     const weeklyHistory = toWeekly(daily.history, daily.ohlc_available);
     return {
       history:        weeklyHistory,
-      ohlc_available: true,   // synthetic OHLC 포함 (weekly-transform.js 참조)
+      ohlc_available: true,
       source:         daily.source + ' → 주봉 변환',
       tf:             '1w',
     };
@@ -109,57 +115,82 @@ async function fetchData(id, tf) {
   return { ...daily, tf: '1d' };
 }
 
+async function fetchData(type, id, symbol, tf) {
+  if (type === 'index')  return fetchIndexData(id, tf);
+  if (type === 'crypto') return fetchCryptoByTF(id, symbol, tf);
+  if (type === 'stock')  return fetchStockByTF(symbol, tf);
+  throw new Error(`알 수 없는 type: ${type}`);
+}
+
 // ── 핸들러 ─────────────────────────────────────────────────
 
 export default async function handler(req, res) {
   if (req.method !== 'GET')
     return res.status(405).json({ error: 'Method Not Allowed' });
 
-  const id = req.query?.id ?? null;
-  if (!id || !ITEM_ORDER.includes(id))
-    return res.status(400).json({ error: `id 파라미터 필요. 허용: ${ITEM_ORDER.join(', ')}` });
+  const type = req.query?.type ?? 'index';   // 생략 시 기존 6종목 경로(하위 호환)
+  const id   = req.query?.id ?? null;
+  const symbol = req.query?.symbol ?? null;
+  const tf   = req.query?.tf ?? '1d';
 
-  const tf = req.query?.tf ?? '1d';
+  let capabilityItem;
+  if (type === 'index') {
+    if (!id || !ITEM_ORDER.includes(id))
+      return res.status(400).json({ error: `id 파라미터 필요. 허용: ${ITEM_ORDER.join(', ')}` });
+    capabilityItem = { type: 'index', id };
+  } else if (type === 'crypto') {
+    if (!id || !symbol)
+      return res.status(400).json({ error: 'crypto는 id(coingecko id), symbol 파라미터가 모두 필요합니다' });
+    capabilityItem = { type: 'crypto', id, symbol };
+  } else if (type === 'stock') {
+    if (!symbol)
+      return res.status(400).json({ error: 'stock은 symbol 파라미터가 필요합니다' });
+    capabilityItem = { type: 'stock', symbol };
+  } else {
+    return res.status(400).json({ error: `알 수 없는 type: ${type} (허용: index, crypto, stock)` });
+  }
 
-  if (!SUPPORTED_TF[id]?.includes(tf)) {
+  const supportedTfs = await getSupportedTimeframes(capabilityItem);
+  if (!supportedTfs.includes(tf)) {
     return res.status(400).json({
-      error: `${id}는 [${SUPPORTED_TF[id].join(', ')}]만 지원합니다. 요청된 tf: ${tf}`,
+      error: `이 종목은 [${supportedTfs.join(', ')}]만 지원합니다. 요청된 tf: ${tf}`,
     });
   }
 
-  const cacheKey = `${id}:${tf}`;
-  const ttl      = TF_TTL[tf];
+  const cacheId  = type === 'stock' ? symbol : id;
+  const cacheKey = `${type}:${cacheId}:${tf}`;
+  const ttl      = getTTL(type, tf);
   const cached   = CACHE[cacheKey];
 
   if (cached && Date.now() - cached.timestamp < ttl.mem) {
-    console.log(`[analysis/${id}/${tf}] Cache HIT`);
+    console.log(`[analysis/${cacheKey}] Cache HIT`);
     res.setHeader('Cache-Control', `s-maxage=${ttl.cdn}, stale-while-revalidate=60`);
     res.setHeader('X-Cache', 'HIT');
     return res.status(200).json(cached.data);
   }
 
   const startMs = Date.now();
-  console.log(`[analysis/${id}/${tf}] Cache MISS — 수집 시작 (${fmtKST()})`);
+  console.log(`[analysis/${cacheKey}] Cache MISS — 수집 시작 (${fmtKST()})`);
 
   try {
-    const { history, ohlc_available, source } = await fetchData(id, tf);
+    const { history, ohlc_available, source } = await fetchData(type, id, symbol, tf);
 
     if (!history || history.length < 2)
       throw new Error(`히스토리 부족: ${history?.length ?? 0}행`);
 
-    const { name } = ITEM_META[id];
-    const latest   = history[history.length - 1];
-    const prev     = history[history.length - 2];
+    const name = type === 'index' ? ITEM_META[id].name : symbol.toUpperCase();
+    const latest = history[history.length - 1];
+    const prev   = history[history.length - 2];
     const change     = r2(latest.close - prev.close);
     const changePct  = prev.close ? r4(change / prev.close * 100) : 0;
 
     const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
     console.log(
-      `[analysis/${id}/${tf}] ${history.length}봉 완료 (${elapsed}s)  source=${source}  ohlc=${ohlc_available}`
+      `[analysis/${cacheKey}] ${history.length}봉 완료 (${elapsed}s)  source=${source}  ohlc=${ohlc_available}`
     );
 
     const item = {
-      id, name, tf,
+      id: cacheId, type, name, tf,
       price:          latest.close,
       prev_close:     prev.close,
       change,
@@ -168,6 +199,7 @@ export default async function handler(req, res) {
       ohlc_available,
       history_long:   history,
       days_available: history.length,
+      supported_tfs:  supportedTfs,
     };
 
     const data = { updated_at: fmtKST(), item };
@@ -179,7 +211,7 @@ export default async function handler(req, res) {
 
   } catch (e) {
     const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
-    console.error(`[analysis/${id}/${tf}] 실패 (${elapsed}s): ${e.message}`);
-    return res.status(500).json({ error: '데이터 수집 실패', details: e.message, id, tf });
+    console.error(`[analysis/${cacheKey}] 실패 (${elapsed}s): ${e.message}`);
+    return res.status(500).json({ error: '데이터 수집 실패', details: e.message, id: cacheId, type, tf });
   }
 }
