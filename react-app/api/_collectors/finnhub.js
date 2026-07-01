@@ -88,10 +88,14 @@ export async function fetchStockPrices(symbols) {
 
 async function fetchOneStock(symbol, from, to) {
   try {
-    const [quote, candle] = await Promise.all([
+    const [quoteResult, candleResult] = await Promise.allSettled([
       fhFetch(`/quote?symbol=${encodeURIComponent(symbol)}`),
       fhFetch(`/stock/candle?symbol=${encodeURIComponent(symbol)}&resolution=D&from=${from}&to=${to}`),
     ]);
+
+    // quote 실패 시 전체 실패
+    if (quoteResult.status === 'rejected') throw quoteResult.reason;
+    const quote = quoteResult.value;
 
     // quote.c === 0 이고 quote.pc === 0 이면 유효하지 않은 심볼
     if (quote.c === 0 && quote.pc === 0) {
@@ -104,8 +108,9 @@ async function fetchOneStock(symbol, from, to) {
     const change   = r2(quote.d  ?? (price - prevClose));
     const changePct = r4(quote.dp ?? 0);
 
-    // 스파크라인: 일봉 종가 배열, 최대 30포인트로 다운샘플
-    const rawClose = (candle.s === 'ok' && Array.isArray(candle.c)) ? candle.c : [];
+    // 스파크라인: 일봉 종가 배열 (무료 티어 미지원 시 빈 배열)
+    const candle   = candleResult.status === 'fulfilled' ? candleResult.value : null;
+    const rawClose = (candle?.s === 'ok' && Array.isArray(candle.c)) ? candle.c : [];
     const step     = Math.max(1, Math.floor(rawClose.length / 30));
     const sparkline = rawClose
       .filter((_, i) => i % step === 0)
