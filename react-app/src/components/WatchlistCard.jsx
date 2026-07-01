@@ -2,9 +2,9 @@ import { useNavigate } from 'react-router-dom';
 import Sparkline from './Sparkline';
 
 const ARROW = { up: '▲', down: '▼', flat: '-' };
-const fp    = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fc    = n => (n > 0 ? '+' : '') + fp(n);
-const fpct  = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
+const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fc   = n => (n > 0 ? '+' : '') + fp(n);
+const fpct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 
 export default function WatchlistCard({ item, onRemove }) {
   const navigate = useNavigate();
@@ -12,6 +12,8 @@ export default function WatchlistCard({ item, onRemove }) {
     id, type, direction: dir, name, category,
     price, change, change_pct, source, as_of, history,
   } = item;
+
+  const isStock = type === 'stock';
 
   return (
     <article
@@ -23,7 +25,7 @@ export default function WatchlistCard({ item, onRemove }) {
         <div className="card-name-row">
           <span className="card-name">{name}</span>
           <div className="card-top-right">
-            <span className="card-cat">{category}</span>
+            <span className="card-cat">{category ?? (isStock ? '미국주식' : '')}</span>
             <button
               className="wl-card-remove"
               title="즐겨찾기 해제"
@@ -38,8 +40,13 @@ export default function WatchlistCard({ item, onRemove }) {
         </div>
       </div>
 
+      {/* 주식: sparkline 없으므로 큰 등락률 표시 / 나머지: Sparkline */}
       <div className="card-spark">
-        <Sparkline history={history || []} dir={dir} />
+        {isStock ? (
+          <div className={`stock-pct-display ${dir}`}>{fpct(change_pct)}</div>
+        ) : (
+          <Sparkline history={history || []} dir={dir} />
+        )}
       </div>
 
       <div className="card-bottom">

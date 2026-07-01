@@ -1075,3 +1075,23 @@ a.hn-card:active { border-color: var(--border-h); }
 .wl-empty-icon { font-size: 34px; opacity: .4; }
 .wl-empty-msg  { font-size: 14px; font-weight: 700; color: var(--text-2); }
 .wl-empty-hint { font-size: 12px; color: var(--text-3); line-height: 1.7; }
+
+/* 검색 결과 종류 뱃지 (코인 / 주식) */
+.wl-ac-badge {
+  font-size: 9px; font-weight: 800; padding: 2px 6px;
+  border-radius: 5px; flex-shrink: 0; letter-spacing: .02em;
+}
+.wl-ac-badge-coin  { background: var(--gold-dim);      color: var(--gold);   }
+.wl-ac-badge-stock { background: var(--surface-tint);  color: var(--text-2);
+                     border: 1px solid var(--border); }
+
+/* 미국 주식 카드 — sparkline 자리를 큰 등락률로 대체 */
+.stock-pct-display {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; width: 100%;
+  font-size: 22px; font-weight: 800;
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+}
+.stock-pct-display.up   { color: var(--up);   }
+.stock-pct-display.down { color: var(--down); }
+.stock-pct-display.flat { color: var(--flat); }
