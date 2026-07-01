@@ -25,12 +25,11 @@ function getKey() {
 
 async function fhFetch(path) {
   const key = getKey();
-  const url  = `${FH_BASE}${path}`;
+  // token을 URL 파라미터로 전달 (헤더 방식과 동일하지만 호환성이 더 넓음)
+  const sep = path.includes('?') ? '&' : '?';
+  const url = `${FH_BASE}${path}${sep}token=${encodeURIComponent(key)}`;
   const res  = await fetch(url, {
-    headers: {
-      'X-Finnhub-Token': key,
-      'Accept':          'application/json',
-    },
+    headers: { 'Accept': 'application/json' },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
