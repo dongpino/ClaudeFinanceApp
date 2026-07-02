@@ -46,7 +46,7 @@
   --surface-code: rgba(0,0,0,.06);
 }
 
-html { background: var(--bg); }
+html { background: var(--bg); touch-action: pan-x pan-y; }
 
 body {
   background: var(--bg);
@@ -54,6 +54,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
                'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
   -webkit-font-smoothing: antialiased;
+  touch-action: pan-x pan-y;
 }
 
 /* React 루트 — 뷰포트 전체를 채우는 세로 flex 컨테이너 */
@@ -398,6 +399,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+  touch-action: pan-y;
 }
 
 .detail-stats-loading {
@@ -617,6 +619,7 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 12px; overflow: hidden;
+  touch-action: pan-y;
 }
 .analysis-rsi-wrap {
   flex-shrink: 0; height: 138px;
@@ -632,6 +635,7 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 10px; overflow: hidden;
+  touch-action: pan-y;
 }
 
 /* ── 브리핑 페이지 ──────────────────────────────────────────── */

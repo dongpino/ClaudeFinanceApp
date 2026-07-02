@@ -20,8 +20,8 @@ function buildChartOpts(theme, width, height) {
     crosshair:       { mode: CrosshairMode.Normal },
     rightPriceScale: { borderColor: c.border, minimumWidth: SCALE_WIDTH },
     timeScale:       { borderColor: c.border, timeVisible: true, secondsVisible: false },
-    handleScroll:    true,
-    handleScale:     true,
+    handleScroll:    { vertTouchDrag: false },
+    handleScale:     { pinch: true },
   };
 }
 

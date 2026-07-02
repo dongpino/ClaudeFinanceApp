@@ -30,8 +30,12 @@ export default function Chart({ item }) {
         timeVisible:     true,
         secondsVisible:  false,
       },
-      handleScroll: true,
-      handleScale:  true,
+      handleScroll: {
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        pinch: true,
+      },
     });
     chartRef.current = chart;
 
