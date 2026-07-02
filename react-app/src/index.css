@@ -489,14 +489,14 @@ body {
   overflow: hidden;
 }
 
-/* 검색 + 즐겨찾기 (상단 스크롤 패널) — wl-* 클래스는 아래 검색/워치리스트 섹션과 공유 */
+/* 검색 + 즐겨찾기 (상단 컴팩트 고정 패널) — 항상 표시, 세로 공간을 최소로 써서 차트에 공간을 양보 */
 .as-top-panel {
   flex-shrink: 0;
   max-height: 42vh;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  display: flex; flex-direction: column; gap: 16px;
-  padding: 10px 16px 10px;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -527,6 +527,11 @@ body {
   opacity: .28;
   cursor: not-allowed;
 }
+.tf-chip-clear {
+  margin-left: auto;
+  color: var(--text-3);
+}
+.tf-chip-clear:hover { border-color: var(--down); color: var(--down); }
 
 /* 현재가 요약 바 */
 .analysis-price-bar {
@@ -599,6 +604,8 @@ body {
 }
 .analysis-state.error { color: var(--up); }
 .analysis-state.error small { font-size: 11px; color: var(--text-3); }
+.analysis-state.empty small { font-size: 11px; color: var(--text-3); }
+.as-empty-icon { font-size: 30px; opacity: .4; }
 
 /* 차트 레이아웃 */
 .analysis-charts-wrap {
@@ -996,36 +1003,46 @@ a.hn-card:active { border-color: var(--border-h); }
 }
 .wl-ac-add-btn:disabled:not(.added) { opacity: .3; cursor: not-allowed; }
 
-/* 섹션 공통 */
-.wl-section { display: flex; flex-direction: column; gap: 10px; }
-.wl-section-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 2px;
+/* 컴팩트 한 줄 칩 로우(기존 종목 / 즐겨찾기) — 항상 표시, 세로 공간 최소화 */
+.as-chip-row {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
 }
-.wl-section-title {
-  font-size: 11px; font-weight: 800; color: var(--text-2);
-  letter-spacing: .05em; text-transform: uppercase;
+.as-chip-row-label {
+  flex-shrink: 0;
+  font-size: 10px; font-weight: 800; color: var(--text-3);
+  letter-spacing: .03em;
 }
-.wl-section-count { font-size: 10px; color: var(--text-3); }
-.wl-section-limit { font-size: 10px; color: var(--gold); font-weight: 700; }
-
-/* 기존 6종목 칩 */
-.wl-index-chips { display: flex; flex-wrap: wrap; gap: 7px; }
-.wl-index-chip {
+.as-chip-scroll {
+  flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 6px;
-  padding: 6px 12px;
+  overflow-x: auto; overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px 1px;
+}
+.as-chip-scroll::-webkit-scrollbar { display: none; }
+.as-chip-empty-hint {
+  flex-shrink: 0;
+  font-size: 11px; color: var(--text-3); white-space: nowrap;
+}
+
+/* 기존 6종목 칩 — 컴팩트 */
+.wl-index-chip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 8px;
   background: var(--bg-card); border: 1.5px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   transition: border-color .15s;
   cursor: pointer;
+  flex-shrink: 0; white-space: nowrap;
 }
 .wl-index-chip.watched { border-color: var(--gold); background: var(--gold-dim); }
 .wl-index-chip.selected { border-color: #3d82ef; }
 .wl-index-chip.selected.watched { border-color: #3d82ef; background: var(--gold-dim); }
-.wl-chip-label { font-size: 12px; font-weight: 700; color: var(--text-1); }
+.wl-chip-label { font-size: 11px; font-weight: 700; color: var(--text-1); }
 .wl-chip-star {
   background: none; border: none; cursor: pointer;
-  color: var(--text-3); font-size: 15px; line-height: 1;
+  color: var(--text-3); font-size: 12px; line-height: 1;
   padding: 0; transition: color .15s, transform .1s;
   -webkit-tap-highlight-color: transparent;
 }
@@ -1033,46 +1050,29 @@ a.hn-card:active { border-color: var(--border-h); }
 .wl-chip-star:hover { color: var(--gold); }
 .wl-chip-star:active { transform: scale(.82); }
 
-/* 워치리스트 카드 그리드 */
-.wl-cards-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+/* 즐겨찾기 미니 칩 — 이름 + 등락률 + 제거 */
+.as-fav-chip {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 8px;
+  background: var(--bg-card); border: 1.5px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer; flex-shrink: 0; white-space: nowrap;
+  transition: border-color .15s;
 }
-.wl-cards-grid.solo { grid-template-columns: 1fr; }
-
-/* 카드 remove 버튼 */
-.wl-card-remove {
-  width: 18px; height: 18px; border-radius: 5px;
-  background: var(--surface-tint); border: 1px solid var(--border);
-  color: var(--text-3); font-size: 14px; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; flex-shrink: 0; margin-top: 1px;
-  padding: 0;
-  transition: border-color .15s, color .15s;
+.as-fav-chip.selected { border-color: #3d82ef; }
+.as-fav-chip.skeleton { opacity: .5; animation: blink 1.6s ease-in-out infinite; }
+.as-fav-name { font-size: 11px; font-weight: 700; color: var(--text-1); }
+.as-fav-pct { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.as-fav-pct.up   { color: var(--up);   }
+.as-fav-pct.down { color: var(--down); }
+.as-fav-pct.flat { color: var(--flat); }
+.as-fav-remove {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-3); font-size: 12px; line-height: 1;
+  padding: 0; transition: color .15s;
+  -webkit-tap-highlight-color: transparent;
 }
-.wl-card-remove:hover { border-color: var(--up); color: var(--up); }
-
-/* 스켈레톤 카드 */
-.wl-card-skeleton {
-  background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: 13px; padding: 11px;
-  min-height: 130px;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 6px;
-  color: var(--text-3); font-size: 11px; font-weight: 700;
-  animation: blink 1.6s ease-in-out infinite;
-}
-
-/* 빈 상태 */
-.wl-empty {
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  gap: 8px; padding: 32px 0; text-align: center;
-}
-.wl-empty-icon { font-size: 34px; opacity: .4; }
-.wl-empty-msg  { font-size: 14px; font-weight: 700; color: var(--text-2); }
-.wl-empty-hint { font-size: 12px; color: var(--text-3); line-height: 1.7; }
+.as-fav-remove:hover { color: var(--up); }
 
 /* 검색 결과 종류 뱃지 (코인 / 주식) */
 .wl-ac-badge {

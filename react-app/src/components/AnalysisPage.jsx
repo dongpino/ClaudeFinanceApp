@@ -4,7 +4,6 @@ import useWatchlist from '../useWatchlist';
 import Header from './Header';
 import BottomNav from './BottomNav';
 import AnalysisChart from './AnalysisChart';
-import WatchlistCard from './WatchlistCard';
 
 const INDEX_ITEMS = [
   { type: 'index', id: 'nasdaq',  symbol: 'NASDAQ', name: '나스닥'  },
@@ -52,7 +51,8 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const { watchlist, add, remove, isWatched, MAX_WATCHLIST } = useWatchlist();
 
   // ── 분석 대상 선택 ───────────────────────────────────────────
-  const [selected,   setSelected]   = useState(INDEX_ITEMS[0]);
+  // 선택 없음이 기본 상태 — 페이지 진입만으로 분석 API를 호출하지 않는다.
+  const [selected,   setSelected]   = useState(null);
   const [selectedTF, setSelectedTF] = useState('1d');
   const [detailItem, setDetailItem] = useState(null);
   const [loading,    setLoading]    = useState(false);
@@ -65,18 +65,27 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const [showRSI,   setShowRSI]   = useState(true);
 
   // 검색 결과/즐겨찾기 카드/기존 종목 칩 클릭 → 하단 차트에 즉시 반영.
+  // 이미 선택된 항목을 다시 클릭하면 선택 해제.
   // 지원 tf 목록은 응답 도착 전까진 알 수 없으므로 보수적으로 1d로 리셋.
   function handleSelect(item) {
+    const isDeselect = selected && selected.type === item.type && selected.id === item.id;
     setSelectedTF('1d');
-    setSelected({ type: item.type, id: item.id, symbol: item.symbol, name: item.name });
+    setSelected(isDeselect ? null : { type: item.type, id: item.id, symbol: item.symbol, name: item.name });
   }
 
   function isSelected(type, id) {
-    return selected.type === type && selected.id === id;
+    return selected != null && selected.type === type && selected.id === id;
   }
 
-  // 종목·타임프레임 전환 시 데이터 fetch
+  // 종목·타임프레임 전환 시 데이터 fetch — 선택된 종목이 없으면 호출하지 않는다.
   useEffect(() => {
+    if (!selected) {
+      setDetailItem(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setDetailItem(null);
     setLoading(true);
@@ -109,7 +118,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   }, [selected, selectedTF]);
 
   // analysis API 데이터가 오면 교체, 그 전엔 홈 데이터로 렌더 (index 일봉만 fallback 대상)
-  const baseItem = (selected.type === 'index' && selectedTF === '1d')
+  const baseItem = (selected?.type === 'index' && selectedTF === '1d')
     ? homeItems.find(it => it.id === selected.id)
     : null;
   const item = detailItem ?? baseItem;
@@ -124,7 +133,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const ma100Disabled = candleCount > 0 && candleCount < 100;
   const ma200Disabled = candleCount > 0 && candleCount < 200;
 
-  const supportedTFs = detailItem?.supported_tfs ?? optimisticTFs(selected.type);
+  const supportedTFs = detailItem?.supported_tfs ?? (selected ? optimisticTFs(selected.type) : []);
 
   // ── 검색 ─────────────────────────────────────────────────────
   const [query,         setQuery]        = useState('');
@@ -353,12 +362,10 @@ export default function AnalysisPage({ activePage, onPageChange }) {
               )}
             </section>
 
-            <section className="wl-section">
-              <div className="wl-section-head">
-                <span className="wl-section-title">기존 종목</span>
-                <span className="wl-section-count">클릭: 분석 · ★: 즐겨찾기</span>
-              </div>
-              <div className="wl-index-chips">
+            {/* 기존 종목 — 항상 표시되는 한 줄 가로 스크롤 칩 */}
+            <div className="as-chip-row">
+              <span className="as-chip-row-label">종목</span>
+              <div className="as-chip-scroll">
                 {INDEX_ITEMS.map(item => {
                   const watched = isWatched(item.id);
                   return (
@@ -379,141 +386,153 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                   );
                 })}
               </div>
-            </section>
+            </div>
 
-            <section className="wl-section">
-              <div className="wl-section-head">
-                <span className="wl-section-title">즐겨찾기</span>
-                <span className={isFull ? 'wl-section-limit' : 'wl-section-count'}>
-                  {watchlist.length} / {MAX_WATCHLIST}
-                  {isFull && ' (상한)'}
-                </span>
-              </div>
-
-              {watchlist.length === 0 ? (
-                <div className="wl-empty">
-                  <div className="wl-empty-icon">☆</div>
-                  <p className="wl-empty-msg">관심 종목을 추가해보세요</p>
-                  <p className="wl-empty-hint">
-                    위 검색창으로 코인·미국주식을 찾거나<br />
-                    기존 6종목의 별표를 눌러 추가하세요
-                  </p>
-                </div>
-              ) : (
-                <div className={`wl-cards-grid${watchlist.length === 1 ? ' solo' : ''}`}>
-                  {watchlist.map(wlItem => {
+            {/* 즐겨찾기 — 항상 표시되는 한 줄 가로 스크롤 미니 칩 (큰 카드 그리드는 이 화면에선 안 씀) */}
+            <div className="as-chip-row">
+              <span className="as-chip-row-label">즐겨찾기</span>
+              <div className="as-chip-scroll">
+                {watchlist.length === 0 ? (
+                  <span className="as-chip-empty-hint">검색하거나 ☆를 눌러 관심 종목 추가</span>
+                ) : (
+                  watchlist.map(wlItem => {
                     const live = getLiveItem(wlItem);
-                    return live ? (
-                      <WatchlistCard
+                    const dir  = live?.direction ?? 'flat';
+                    return (
+                      <div
                         key={wlItem.id}
-                        item={live}
-                        onRemove={remove}
-                        onSelect={() => handleSelect(wlItem)}
-                        selected={isSelected(wlItem.type, wlItem.id)}
-                      />
-                    ) : (
-                      <div key={wlItem.id} className="wl-card-skeleton">
-                        <span>{wlItem.symbol}</span>
+                        className={`as-fav-chip${isSelected(wlItem.type, wlItem.id) ? ' selected' : ''}${!live ? ' skeleton' : ''}`}
+                        onClick={() => handleSelect(wlItem)}
+                      >
+                        <span className="as-fav-name">{wlItem.symbol}</span>
+                        {live && <span className={`as-fav-pct ${dir}`}>{fpct(live.change_pct)}</span>}
+                        <button
+                          className="as-fav-remove"
+                          onClick={e => { e.stopPropagation(); remove(wlItem.id); }}
+                          aria-label={`${wlItem.name} 즐겨찾기 해제`}
+                        >
+                          ×
+                        </button>
                       </div>
                     );
-                  })}
+                  })
+                )}
+              </div>
+            </div>
+
+          </div>
+
+          {selected ? (
+            <>
+              {/* 타임프레임 선택기 */}
+              <div className="tf-selector">
+                {TF_OPTIONS.map(({ value, label }) => {
+                  const supported = supportedTFs.includes(value);
+                  const active    = value === selectedTF;
+                  return (
+                    <button
+                      key={value}
+                      className={`tf-chip${active ? ' active' : ''}${!supported ? ' tf-chip-disabled' : ''}`}
+                      onClick={() => supported && setSelectedTF(value)}
+                      title={!supported ? '이 종목은 지원하지 않는 타임프레임' : undefined}
+                      aria-disabled={!supported}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+                <button
+                  className="tf-chip tf-chip-clear"
+                  onClick={() => setSelected(null)}
+                  title="선택 해제"
+                  aria-label="종목 선택 해제"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* 현재가 요약 바 */}
+              {item && (
+                <div className={`analysis-price-bar ${dir}`}>
+                  <span className="apb-name">{item.name}</span>
+                  <span className="apb-price">{fp(item.price)}</span>
+                  <span className={`apb-pct ${dir}`}>{fpct(item.change_pct)}</span>
+                  {loading && <span className="apb-loading-dot" />}
                 </div>
               )}
-            </section>
 
-          </div>
-
-          {/* 타임프레임 선택기 */}
-          <div className="tf-selector">
-            {TF_OPTIONS.map(({ value, label }) => {
-              const supported = supportedTFs.includes(value);
-              const active    = value === selectedTF;
-              return (
+              {/* 지표 토글 */}
+              <div className="analysis-toggles">
                 <button
-                  key={value}
-                  className={`tf-chip${active ? ' active' : ''}${!supported ? ' tf-chip-disabled' : ''}`}
-                  onClick={() => supported && setSelectedTF(value)}
-                  title={!supported ? '이 종목은 지원하지 않는 타임프레임' : undefined}
-                  aria-disabled={!supported}
+                  className={`ind-toggle${showMA20 ? ' on ma20' : ''}`}
+                  onClick={() => setShowMA20(v => !v)}
                 >
-                  {label}
+                  <span className="ind-dot ma20" />MA20
                 </button>
-              );
-            })}
-          </div>
+                <button
+                  className={`ind-toggle${showMA60 ? ' on ma60' : ''}`}
+                  onClick={() => setShowMA60(v => !v)}
+                >
+                  <span className="ind-dot ma60" />MA60
+                </button>
+                <button
+                  className={`ind-toggle${showMA100 ? ' on ma100' : ''}${ma100Disabled ? ' disabled' : ''}`}
+                  onClick={() => !ma100Disabled && setShowMA100(v => !v)}
+                  title={ma100Disabled ? `데이터 부족 (${candleCount}봉)` : undefined}
+                >
+                  <span className="ind-dot ma100" />MA100
+                </button>
+                <button
+                  className={`ind-toggle${showMA200 ? ' on ma200' : ''}${ma200Disabled ? ' disabled' : ''}`}
+                  onClick={() => !ma200Disabled && setShowMA200(v => !v)}
+                  title={ma200Disabled ? `데이터 부족 (${candleCount}봉)` : undefined}
+                >
+                  <span className="ind-dot ma200" />MA200
+                </button>
+                <button
+                  className={`ind-toggle${showRSI ? ' on rsi' : ''}`}
+                  onClick={() => setShowRSI(v => !v)}
+                >
+                  <span className="ind-dot rsi" />RSI(14)
+                </button>
+              </div>
 
-          {/* 현재가 요약 바 */}
-          {item && (
-            <div className={`analysis-price-bar ${dir}`}>
-              <span className="apb-name">{item.name}</span>
-              <span className="apb-price">{fp(item.price)}</span>
-              <span className={`apb-pct ${dir}`}>{fpct(item.change_pct)}</span>
-              {loading && <span className="apb-loading-dot" />}
+              {/* 차트 영역 */}
+              <div className="analysis-main">
+                {error && (
+                  <div className="analysis-state error">
+                    <p>데이터 로드 실패</p>
+                    <small>{error}</small>
+                  </div>
+                )}
+                {!item && !error && (
+                  <div className="analysis-state">
+                    <div className="pulse-dot" />
+                    <p>데이터 불러오는 중…</p>
+                  </div>
+                )}
+                {item && (
+                  <AnalysisChart
+                    item={item}
+                    tf={selectedTF}
+                    showMA20={showMA20}
+                    showMA60={showMA60}
+                    showMA100={showMA100}
+                    showMA200={showMA200}
+                    showRSI={showRSI}
+                  />
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="analysis-main">
+              <div className="analysis-state empty">
+                <div className="as-empty-icon">📊</div>
+                <p>종목을 선택하면 분석 차트가 표시됩니다</p>
+                <small>위 검색·즐겨찾기·기존 종목에서 클릭해서 선택하세요</small>
+              </div>
             </div>
           )}
-
-          {/* 지표 토글 */}
-          <div className="analysis-toggles">
-            <button
-              className={`ind-toggle${showMA20 ? ' on ma20' : ''}`}
-              onClick={() => setShowMA20(v => !v)}
-            >
-              <span className="ind-dot ma20" />MA20
-            </button>
-            <button
-              className={`ind-toggle${showMA60 ? ' on ma60' : ''}`}
-              onClick={() => setShowMA60(v => !v)}
-            >
-              <span className="ind-dot ma60" />MA60
-            </button>
-            <button
-              className={`ind-toggle${showMA100 ? ' on ma100' : ''}${ma100Disabled ? ' disabled' : ''}`}
-              onClick={() => !ma100Disabled && setShowMA100(v => !v)}
-              title={ma100Disabled ? `데이터 부족 (${candleCount}봉)` : undefined}
-            >
-              <span className="ind-dot ma100" />MA100
-            </button>
-            <button
-              className={`ind-toggle${showMA200 ? ' on ma200' : ''}${ma200Disabled ? ' disabled' : ''}`}
-              onClick={() => !ma200Disabled && setShowMA200(v => !v)}
-              title={ma200Disabled ? `데이터 부족 (${candleCount}봉)` : undefined}
-            >
-              <span className="ind-dot ma200" />MA200
-            </button>
-            <button
-              className={`ind-toggle${showRSI ? ' on rsi' : ''}`}
-              onClick={() => setShowRSI(v => !v)}
-            >
-              <span className="ind-dot rsi" />RSI(14)
-            </button>
-          </div>
-
-          {/* 차트 영역 */}
-          <div className="analysis-main">
-            {error && (
-              <div className="analysis-state error">
-                <p>데이터 로드 실패</p>
-                <small>{error}</small>
-              </div>
-            )}
-            {!item && !error && (
-              <div className="analysis-state">
-                <div className="pulse-dot" />
-                <p>데이터 불러오는 중…</p>
-              </div>
-            )}
-            {item && (
-              <AnalysisChart
-                item={item}
-                tf={selectedTF}
-                showMA20={showMA20}
-                showMA60={showMA60}
-                showMA100={showMA100}
-                showMA200={showMA200}
-                showRSI={showRSI}
-              />
-            )}
-          </div>
 
         </div>
       </div>
