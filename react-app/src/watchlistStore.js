@@ -1,7 +1,9 @@
 /**
  * watchlistStore.js — 즐겨찾기 상태 관리 (영속성 레이어)
  *
- * 저장 형식: { type: 'index'|'crypto', id, symbol, name, addedAt }[]
+ * 저장 형식: { type: 'index'|'crypto'|'stock', id, symbol, name, market?, addedAt }[]
+ *   market: type==='stock'일 때만 의미 있음 ('US'|'KR'). load()가 구버전(market 필드
+ *   도입 이전) 항목을 6자리 숫자 코드 여부로 자동 추론해 채워 넣는다 — migrateMarket() 참고.
  *
  * ── 계정 연동 마이그레이션 가이드 ────────────────────────────────
  * load()  → API GET  /user/watchlist
@@ -29,9 +31,37 @@ export function subscribe(cb) {
 
 // ── 영속성 (localStorage) ─────────────────────────────────────────
 
+// market 필드 도입 이전에 저장된 stock 항목 마이그레이션용 — KR 종목코드는 6자리 숫자.
+// (코인은 type:'crypto', 지수는 type:'index'로 이미 구분되므로 stock에만 적용)
+const KR_STOCK_ID_RE = /^\d{6}$/;
+
+function inferMarket(symbol) {
+  return KR_STOCK_ID_RE.test(symbol ?? '') ? 'KR' : 'US';
+}
+
+/**
+ * market 필드가 없는 구버전 stock 항목에 market을 채워 넣는다.
+ * 변경사항이 없으면 원본 배열을 그대로 반환(불필요한 재저장 방지).
+ */
+function migrateMarket(list) {
+  let changed = false;
+  const next = list.map(it => {
+    if (it.type !== 'stock' || it.market) return it;
+    changed = true;
+    return { ...it, market: inferMarket(it.symbol) };
+  });
+  return changed ? next : list;
+}
+
 export function load() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
+    const migrated = migrateMarket(raw);
+    if (migrated !== raw) {
+      console.info('[watchlist] 구버전 항목 마이그레이션: market 필드 채움');
+      save(migrated);
+    }
+    return migrated;
   } catch {
     return [];
   }
@@ -112,6 +142,24 @@ export function reorder(fromIdx, toIdx) {
  */
 export function has(id) {
   return load().some(it => it.id === id);
+}
+
+/**
+ * 개별 항목 필드 병합 갱신 (예: 구버전 항목의 name을 첫 조회 응답값으로 백필)
+ * @param {string} id
+ * @param {object} fields
+ * @returns {Array|null} 갱신 후 목록 | null (항목 없음)
+ */
+export function patch(id, fields) {
+  const list = load();
+  const idx  = list.findIndex(it => it.id === id);
+  if (idx === -1) return null;
+
+  const next = [...list];
+  next[idx] = { ...next[idx], ...fields };
+  save(next);
+  emit(next);
+  return next;
 }
 
 /**

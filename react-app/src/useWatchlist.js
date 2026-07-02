@@ -10,6 +10,7 @@
  *   remove(id)  — 삭제
  *   reorder(fromIdx, toIdx) — 순서 변경
  *   isWatched(id) — 즐겨찾기 여부
+ *   patchItem(id, fields) — 개별 항목 필드 병합 갱신 (예: 구버전 항목 name 백필)
  *   MAX_WATCHLIST — 상한값 (상수)
  */
 
@@ -41,12 +42,17 @@ export default function useWatchlist() {
     return watchlist.some(it => it.id === id);
   }, [watchlist]);
 
+  const patchItem = useCallback((id, fields) => {
+    return store.patch(id, fields);
+  }, []);
+
   return {
     watchlist,
     add,
     remove,
     reorder,
     isWatched,
+    patchItem,
     MAX_WATCHLIST: store.MAX_WATCHLIST,
   };
 }

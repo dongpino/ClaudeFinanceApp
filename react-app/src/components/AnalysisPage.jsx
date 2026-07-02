@@ -43,14 +43,17 @@ function analysisUrl(item, tf) {
     return `/api/analysis?type=crypto&id=${encodeURIComponent(item.id)}&symbol=${encodeURIComponent(item.symbol)}&tf=${tf}`;
   if (item.type === 'stock') {
     const market = item.market ?? 'US';
-    return `/api/analysis?type=stock&symbol=${encodeURIComponent(item.symbol)}&market=${market}&name=${encodeURIComponent(item.name)}&tf=${tf}`;
+    // name이 없는 구버전 워치리스트 항목: 파라미터 자체를 생략(encodeURIComponent(undefined)로
+    // 문자열 "undefined"가 전송돼 서버 응답 이름이 깨지는 것을 방지) — 서버가 symbol로 폴백.
+    const nameParam = item.name ? `&name=${encodeURIComponent(item.name)}` : '';
+    return `/api/analysis?type=stock&symbol=${encodeURIComponent(item.symbol)}&market=${market}${nameParam}&tf=${tf}`;
   }
   return `/api/analysis?id=${item.id}&tf=${tf}`;   // index (기존 6종목, 하위 호환)
 }
 
 export default function AnalysisPage({ activePage, onPageChange }) {
   const { items: homeItems } = useData();
-  const { watchlist, add, remove, isWatched, MAX_WATCHLIST } = useWatchlist();
+  const { watchlist, add, remove, isWatched, patchItem, MAX_WATCHLIST } = useWatchlist();
 
   // ── 분석 대상 선택 ───────────────────────────────────────────
   // 선택 없음이 기본 상태 — 페이지 진입만으로 분석 API를 호출하지 않는다.
@@ -282,6 +285,20 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     return () => { cancelled = true; };
   }, [krStockKey]);
 
+  // ── 구버전 워치리스트 항목 name 백필 ────────────────────────
+  // market 필드 도입 이전에 담긴 항목은 name도 없어 코드만 표시됨.
+  // 시세 조회가 처음 성공하면 응답의 종목명으로 채워 localStorage에 반영한다.
+  // (US/Finnhub 경로는 name을 의도적으로 symbol과 동일하게 반환하므로 실질적으로 KR에만 적용됨.)
+  useEffect(() => {
+    for (const wlItem of watchlist) {
+      if (wlItem.type !== 'stock' || wlItem.name) continue;
+      const sd = (wlItem.market === 'KR' ? krStockPrices : stockPrices)[wlItem.id];
+      if (sd?.name && sd.name !== wlItem.symbol) {
+        patchItem(wlItem.id, { name: sd.name });
+      }
+    }
+  }, [watchlist, krStockPrices, stockPrices, patchItem]);
+
   // ── 라이브 데이터 병합 (즐겨찾기 카드용) ───────────────────
   function getLiveItem(wlItem) {
     if (wlItem.type === 'index') {
@@ -459,12 +476,12 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                         className={`as-fav-chip${isSelected(wlItem.type, wlItem.id, wlItem.market) ? ' selected' : ''}${!live ? ' skeleton' : ''}`}
                         onClick={() => handleSelect(wlItem)}
                       >
-                        <span className="as-fav-name">{wlItem.symbol}</span>
+                        <span className="as-fav-name">{wlItem.name || wlItem.symbol}</span>
                         {live && <span className={`as-fav-pct ${dir}`}>{fpct(live.change_pct)}</span>}
                         <button
                           className="as-fav-remove"
                           onClick={e => { e.stopPropagation(); remove(wlItem.id); }}
-                          aria-label={`${wlItem.name} 즐겨찾기 해제`}
+                          aria-label={`${wlItem.name || wlItem.symbol} 즐겨찾기 해제`}
                         >
                           ×
                         </button>

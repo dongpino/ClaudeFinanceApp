@@ -12,6 +12,10 @@ import { fetchDailyHistory } from './twelvedata.js';
 import { fetchKRDailyHistory } from './naver-stock.js';
 import { toWeekly } from './weekly-transform.js';
 
+// KRX 종목코드는 6자리 숫자(예: '005930'). market 파라미터가 누락되거나 잘못 전달돼도
+// 이런 심볼이 Twelve Data(KRX 심볼 미지원, 404)로 새는 것을 막기 위한 가드.
+const KR_SYMBOL_RE = /^\d{6}$/;
+
 /**
  * @param {string} symbol
  * @param {'1d'|'1w'} tf
@@ -19,7 +23,8 @@ import { toWeekly } from './weekly-transform.js';
  * @returns {Promise<{ history, ohlc_available, source }>}
  */
 export async function fetchStockByTF(symbol, tf, market = 'US') {
-  const daily = market === 'KR' ? await fetchKRDailyHistory(symbol) : await fetchDailyHistory(symbol);
+  const isKR  = market === 'KR' || KR_SYMBOL_RE.test(symbol);
+  const daily = isKR ? await fetchKRDailyHistory(symbol) : await fetchDailyHistory(symbol);
 
   if (tf === '1w') {
     const weekly = toWeekly(daily.history, true);
