@@ -4,7 +4,6 @@ import HomePage from './components/HomePage';
 import DetailPage from './components/DetailPage';
 import AnalysisPage from './components/AnalysisPage';
 import BriefingPage from './components/BriefingPage';
-import SearchPage from './components/SearchPage';
 
 
 function MainContent({ activePage, onPageChange }) {
@@ -14,10 +13,6 @@ function MainContent({ activePage, onPageChange }) {
 
   if (activePage === 'chart') {
     return <AnalysisPage activePage={activePage} onPageChange={onPageChange} />;
-  }
-
-  if (activePage === 'search') {
-    return <SearchPage activePage={activePage} onPageChange={onPageChange} />;
   }
 
   if (activePage === 'briefing') {

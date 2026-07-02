@@ -6,7 +6,7 @@ const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumF
 const fc   = n => (n > 0 ? '+' : '') + fp(n);
 const fpct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 
-export default function WatchlistCard({ item, onRemove }) {
+export default function WatchlistCard({ item, onRemove, onSelect, selected }) {
   const navigate = useNavigate();
   const {
     id, type, direction: dir, name, category,
@@ -14,12 +14,18 @@ export default function WatchlistCard({ item, onRemove }) {
   } = item;
 
   const isStock = type === 'stock';
+  const clickable = Boolean(onSelect) || type === 'index';
+
+  function handleClick() {
+    if (onSelect) { onSelect(); return; }
+    if (type === 'index') navigate(`/detail/${id}`);
+  }
 
   return (
     <article
-      className={`card ${dir}`}
-      style={{ cursor: type === 'index' ? 'pointer' : 'default' }}
-      onClick={() => type === 'index' && navigate(`/detail/${id}`)}
+      className={`card ${dir}${selected ? ' selected' : ''}`}
+      style={{ cursor: clickable ? 'pointer' : 'default' }}
+      onClick={handleClick}
     >
       <div className="card-top">
         <div className="card-name-row">
