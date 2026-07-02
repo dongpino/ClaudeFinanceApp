@@ -35,12 +35,14 @@ export const BTC_INTRADAY_TFS = Object.keys(TF_LIMITS);
 function parseBinanceKlines(raw) {
   if (!Array.isArray(raw) || raw.length < 2)
     throw new Error(`응답 행 부족: ${raw?.length ?? 0}행`);
+  // k[5] = 거래량(base asset volume)
   return raw.map(k => ({
-    time:  Math.floor(Number(k[0]) / 1000),
-    open:  r2(parseFloat(k[1])),
-    high:  r2(parseFloat(k[2])),
-    low:   r2(parseFloat(k[3])),
-    close: r2(parseFloat(k[4])),
+    time:   Math.floor(Number(k[0]) / 1000),
+    open:   r2(parseFloat(k[1])),
+    high:   r2(parseFloat(k[2])),
+    low:    r2(parseFloat(k[3])),
+    close:  r2(parseFloat(k[4])),
+    volume: r2(parseFloat(k[5])),
   }));
 }
 
@@ -90,11 +92,12 @@ async function fetchFromBybit(pair, tf, limit) {
   // Bybit은 최신 봉이 앞에 옴 → reverse
   // list 항목: [startTimeMs, open, high, low, close, volume, turnover]
   const history = [...list].reverse().map(k => ({
-    time:  Math.floor(Number(k[0]) / 1000),
-    open:  r2(parseFloat(k[1])),
-    high:  r2(parseFloat(k[2])),
-    low:   r2(parseFloat(k[3])),
-    close: r2(parseFloat(k[4])),
+    time:   Math.floor(Number(k[0]) / 1000),
+    open:   r2(parseFloat(k[1])),
+    high:   r2(parseFloat(k[2])),
+    low:    r2(parseFloat(k[3])),
+    close:  r2(parseFloat(k[4])),
+    volume: r2(parseFloat(k[5])),
   }));
   console.log(`[intraday/${pair}/${tf}] ✅ Bybit: ${history.length}봉`);
   return { history, source: `Bybit ${tf}` };

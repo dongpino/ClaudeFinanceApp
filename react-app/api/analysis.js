@@ -191,10 +191,13 @@ export default async function handler(req, res) {
     const prev   = history[history.length - 2];
     const change     = r2(latest.close - prev.close);
     const changePct  = prev.close ? r4(change / prev.close * 100) : 0;
+    // 어댑터·종목별로 volume 제공 여부가 다르므로(예: KOSPI 등 지수 소스는 volume 없음)
+    // 실제 반환된 봉에 유효한 volume이 하나라도 있는지로 클라이언트에 가용성을 알려준다.
+    const volumeAvailable = history.some(r => typeof r.volume === 'number' && r.volume > 0);
 
     const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
     console.log(
-      `[analysis/${cacheKey}] ${history.length}봉 완료 (${elapsed}s)  source=${source}  ohlc=${ohlc_available}`
+      `[analysis/${cacheKey}] ${history.length}봉 완료 (${elapsed}s)  source=${source}  ohlc=${ohlc_available}  volume=${volumeAvailable}`
     );
 
     const item = {
@@ -205,6 +208,7 @@ export default async function handler(req, res) {
       change_pct:     changePct,
       direction:      direction(change),
       ohlc_available,
+      volume_available: volumeAvailable,
       history_long:   history,
       days_available: history.length,
       supported_tfs:  supportedTfs,

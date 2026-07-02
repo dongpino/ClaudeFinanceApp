@@ -12,6 +12,9 @@
  *
  * 반환 history도 { date, open, high, low, close } 형식으로 통일.
  * 호출측에서 ohlc_available=true로 처리해도 무방 (synthetic 여부는 source 필드로 구분).
+ *
+ * volume이 있는 일봉(어댑터가 제공하는 경우)은 주 단위로 합산해 volume 필드로 실어 보낸다.
+ * 없으면 그대로 생략(undefined) — 호출측에서 volume 유무로 표시 여부를 판단.
  */
 
 /**
@@ -41,14 +44,18 @@ export function toWeekly(history, ohlcAvailable) {
     const o = ohlcAvailable ? row.open  : row.close;
     const h = ohlcAvailable ? row.high  : row.close;
     const l = ohlcAvailable ? row.low   : row.close;
+    const v = typeof row.volume === 'number' ? row.volume : undefined;
 
     if (!weeks.has(monday)) {
-      weeks.set(monday, { date: monday, open: o, high: h, low: l, close: row.close });
+      const candle = { date: monday, open: o, high: h, low: l, close: row.close };
+      if (v !== undefined) candle.volume = v;
+      weeks.set(monday, candle);
     } else {
       const w   = weeks.get(monday);
       w.high    = Math.max(w.high, h);
       w.low     = Math.min(w.low,  l);
       w.close   = row.close;             // 마지막 일봉 종가 = 주봉 종가
+      if (v !== undefined) w.volume = (w.volume ?? 0) + v;
     }
   }
 

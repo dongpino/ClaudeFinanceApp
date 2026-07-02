@@ -63,11 +63,12 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState(null);
 
-  const [showMA20,  setShowMA20]  = useState(true);
-  const [showMA60,  setShowMA60]  = useState(true);
-  const [showMA100, setShowMA100] = useState(true);
-  const [showMA200, setShowMA200] = useState(true);
-  const [showRSI,   setShowRSI]   = useState(true);
+  const [showMA20,   setShowMA20]   = useState(true);
+  const [showMA60,   setShowMA60]   = useState(true);
+  const [showMA100,  setShowMA100]  = useState(true);
+  const [showMA200,  setShowMA200]  = useState(true);
+  const [showRSI,    setShowRSI]    = useState(true);
+  const [showVolume, setShowVolume] = useState(true);
 
   // 검색 결과/즐겨찾기 카드/기존 종목 칩 클릭 → 하단 차트에 즉시 반영.
   // 이미 선택된 항목을 다시 클릭하면 선택 해제.
@@ -150,6 +151,8 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     ?? 0;
   const ma100Disabled = candleCount > 0 && candleCount < 100;
   const ma200Disabled = candleCount > 0 && candleCount < 200;
+  // 어댑터가 volume을 안 주는 종목(지수 등)은 토글 비활성화
+  const volumeDisabled = !item?.volume_available;
 
   const supportedTFs = detailItem?.supported_tfs ?? (selected ? optimisticTFs(selected.type) : []);
 
@@ -567,6 +570,13 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                 >
                   <span className="ind-dot rsi" />RSI(14)
                 </button>
+                <button
+                  className={`ind-toggle${showVolume ? ' on vol' : ''}${volumeDisabled ? ' disabled' : ''}`}
+                  onClick={() => !volumeDisabled && setShowVolume(v => !v)}
+                  title={volumeDisabled ? '이 종목은 거래량 데이터를 제공하지 않습니다' : undefined}
+                >
+                  <span className="ind-dot vol" />거래량
+                </button>
               </div>
 
               {/* 차트 영역 */}
@@ -592,6 +602,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                     showMA100={showMA100}
                     showMA200={showMA200}
                     showRSI={showRSI}
+                    showVolume={showVolume && !volumeDisabled}
                   />
                 )}
               </div>

@@ -44,13 +44,18 @@ export async function fetchDailyHistory(symbol) {
     throw new Error(`Twelve Data ${symbol}: 행 부족 (${data.values?.length ?? 0})`);
 
   // Twelve Data는 최신 순으로 내려줌 → 오래된 순으로 정렬
-  const history = [...data.values].reverse().map(v => ({
-    date:  v.datetime,
-    open:  r2(parseFloat(v.open)),
-    high:  r2(parseFloat(v.high)),
-    low:   r2(parseFloat(v.low)),
-    close: r2(parseFloat(v.close)),
-  }));
+  // volume은 종목에 따라 없을 수 있음(예: 일부 지수·ETF) — 없으면 필드 자체를 생략.
+  const history = [...data.values].reverse().map(v => {
+    const vol = parseFloat(v.volume);
+    return {
+      date:  v.datetime,
+      open:  r2(parseFloat(v.open)),
+      high:  r2(parseFloat(v.high)),
+      low:   r2(parseFloat(v.low)),
+      close: r2(parseFloat(v.close)),
+      ...(Number.isFinite(vol) ? { volume: Math.round(vol) } : {}),
+    };
+  });
 
   return { history, ohlc_available: true, source: 'Twelve Data' };
 }

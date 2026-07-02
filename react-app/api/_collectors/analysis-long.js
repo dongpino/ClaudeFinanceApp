@@ -111,11 +111,12 @@ export async function fetchLongBTC() {
     );
     if (!Array.isArray(raw) || raw.length < 10) throw new Error(`Binance 행 부족: ${raw.length}`);
     const history = raw.map(k => ({
-      date:  tsToDate(Number(k[0])),
-      open:  r2(parseFloat(k[1])),
-      high:  r2(parseFloat(k[2])),
-      low:   r2(parseFloat(k[3])),
-      close: r2(parseFloat(k[4])),
+      date:   tsToDate(Number(k[0])),
+      open:   r2(parseFloat(k[1])),
+      high:   r2(parseFloat(k[2])),
+      low:    r2(parseFloat(k[3])),
+      close:  r2(parseFloat(k[4])),
+      volume: r2(parseFloat(k[5])),
     }));
     return { history, ohlc_available: true, source: 'Binance' };
   } catch (e) {

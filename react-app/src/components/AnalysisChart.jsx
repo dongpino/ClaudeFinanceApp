@@ -43,6 +43,13 @@ const MA100 = '#10b981';
 const MA200 = '#fbbf24';
 const RSI_C = '#22d3ee';
 
+// 거래량 히스토그램 — 캔들 상승/하락색을 반투명으로 재사용(고정 색상이라 다크/라이트 모두 대응).
+// 히스토그램 하단 배치 비율(가격 스케일의 아래 20~25% 영역).
+const VOL_UP        = UP   + '80';
+const VOL_DOWN      = DOWN + '80';
+const VOL_TOP_MARGIN = 0.78;   // 볼륨 자체 스케일: 위 78% 여백 → 아래 22% 영역에 그림
+const MAIN_BOTTOM_MARGIN = 0.24;   // 메인 가격 스케일: 아래 24% 비워 볼륨 영역과 겹치지 않게
+
 function getHistory(item) {
   if (item.history_long?.length) return item.history_long;
   if (item.history_90d?.length)  return item.history_90d;
@@ -53,10 +60,21 @@ function getTime(r) {
   return r.time ?? r.date;
 }
 
+// 캔들 OHLC가 있는 봉만 거래량 표시 — 상승/하락 판정에 open이 필요.
+function buildVolumeData(h) {
+  return h
+    .filter(r => typeof r.volume === 'number' && r.volume >= 0 && r.open !== undefined && r.close !== undefined)
+    .map(r => ({
+      time:  getTime(r),
+      value: r.volume,
+      color: r.close >= r.open ? VOL_UP : VOL_DOWN,
+    }));
+}
+
 export default function AnalysisChart({
   item, tf,
   showMA20, showMA60, showMA100, showMA200,
-  showRSI,
+  showRSI, showVolume,
 }) {
   const { theme } = useTheme();
   const priceRef = useRef(null);
@@ -67,6 +85,7 @@ export default function AnalysisChart({
   const ma60Ref  = useRef(null);
   const ma100Ref = useRef(null);
   const ma200Ref = useRef(null);
+  const volumeRef = useRef(null);
 
   // 동기화용 refs — 콜백 실행 시점에 lazy하게 읽음
   const priceChartRef = useRef(null);
@@ -110,6 +129,24 @@ export default function AnalysisChart({
       mainSeries = as;
     }
     mainSeriesRef.current = mainSeries;
+
+    // ── 거래량 히스토그램 (별도 priceScaleId로 캔들 가격축과 분리, 하단 오버레이) ──
+    const volumeData = buildVolumeData(h);
+    if (volumeData.length) {
+      const vs = chart.addHistogramSeries({
+        priceFormat:      { type: 'volume' },
+        priceScaleId:     '',   // 오버레이 스케일 — 우측 캔들 가격축과 별개
+        priceLineVisible: false,
+        lastValueVisible: false,
+        visible:          showVolume,
+      });
+      vs.priceScale().applyOptions({ scaleMargins: { top: VOL_TOP_MARGIN, bottom: 0 } });
+      vs.setData(volumeData);
+      mainSeries.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: MAIN_BOTTOM_MARGIN } });
+      volumeRef.current = vs;
+    } else {
+      volumeRef.current = null;
+    }
 
     const m20 = chart.addLineSeries({
       color: MA20, lineWidth: 1.5,
@@ -181,6 +218,7 @@ export default function AnalysisChart({
       ma60Ref.current  = null;
       ma100Ref.current = null;
       ma200Ref.current = null;
+      volumeRef.current = null;
     };
   }, [item]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -267,11 +305,12 @@ export default function AnalysisChart({
     rsiChartRef.current?.applyOptions(opts);
   }, [theme]);
 
-  // ── MA 토글 (차트 재생성 없이 visibility만 변경) ─────────────
+  // ── MA·거래량 토글 (차트 재생성 없이 visibility만 변경) ──────
   useEffect(() => { ma20Ref.current?.applyOptions({ visible: showMA20 });   }, [showMA20]);
   useEffect(() => { ma60Ref.current?.applyOptions({ visible: showMA60 });   }, [showMA60]);
   useEffect(() => { ma100Ref.current?.applyOptions({ visible: showMA100 }); }, [showMA100]);
   useEffect(() => { ma200Ref.current?.applyOptions({ visible: showMA200 }); }, [showMA200]);
+  useEffect(() => { volumeRef.current?.applyOptions({ visible: showVolume }); }, [showVolume]);
 
   return (
     <div className="analysis-charts-wrap">

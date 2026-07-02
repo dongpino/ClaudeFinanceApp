@@ -128,12 +128,14 @@ export async function fetchKRDailyHistory(code) {
       const date = r.localTradedAt?.slice(0, 10);
       const close = cleanNum(r.closePrice);
       if (!date || isNaN(close) || close <= 0) continue;
+      const vol = Number(r.accumulatedTradingVolume);
       seen.set(date, {
         date,
         open:  r2(cleanNum(r.openPrice)),
         high:  r2(cleanNum(r.highPrice)),
         low:   r2(cleanNum(r.lowPrice)),
         close: r2(close),
+        ...(Number.isFinite(vol) ? { volume: vol } : {}),
       });
     }
   }
