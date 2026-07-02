@@ -81,6 +81,17 @@ export default function AnalysisPage({ activePage, onPageChange }) {
       && (selected.market ?? null) === (market ?? null);
   }
 
+  // 검색 결과 클릭/즐겨찾기 추가 → 항상 선택(토글 아님) + 검색창 닫기(입력값·결과 비우고 포커스 해제).
+  // 이미 선택된 항목이면 재조회를 건너뛰되 검색창은 그대로 닫는다.
+  function selectAndClose(item) {
+    if (!isSelected(item.type, item.id, item.market)) {
+      setSelectedTF('1d');
+      setSelected({ type: item.type, id: item.id, symbol: item.symbol, name: item.name, market: item.market });
+    }
+    clearQuery();
+    searchInputRef.current?.blur();
+  }
+
   // 종목·타임프레임 전환 시 데이터 fetch — 선택된 종목이 없으면 호출하지 않는다.
   useEffect(() => {
     if (!selected) {
@@ -146,8 +157,9 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const [krResults,     setKrResults]    = useState([]);   // 한국주식 (Naver)
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError,   setSearchError]  = useState(null);
-  const debounceRef = useRef(null);
-  const searchIdRef = useRef(0);   // stale-fetch 방지
+  const debounceRef    = useRef(null);
+  const searchIdRef    = useRef(0);     // stale-fetch 방지
+  const searchInputRef = useRef(null);  // 선택 직후 검색창 포커스 해제용
 
   function handleQuery(e) {
     const q = e.target.value;
@@ -337,6 +349,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                   <line x1="21" y1="21" x2="16.65" y2="16.65"/>
                 </svg>
                 <input
+                  ref={searchInputRef}
                   className="wl-search-input"
                   type="text"
                   placeholder="코인·미국주식·한국주식 검색... (BTC, Apple, 삼성전자...)"
@@ -369,7 +382,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                       <div
                         key={`${item._kind}-${item.id}`}
                         className={`wl-ac-item${isSelected(kind, item.id, market) ? ' selected' : ''}`}
-                        onClick={() => handleSelect({ type: kind, id: item.id, symbol: item.symbol, name: item.name, market })}
+                        onClick={() => selectAndClose({ type: kind, id: item.id, symbol: item.symbol, name: item.name, market })}
                       >
                         {isCoin && item.thumb
                           ? <img src={item.thumb} alt={item.symbol} className="wl-ac-thumb" />
@@ -387,9 +400,11 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                           className={`wl-ac-add-btn${watched ? ' added' : ''}`}
                           disabled={!watched && isFull}
                           onClick={e => {
-                            e.stopPropagation();
-                            if (watched || isFull) return;
-                            isCoin ? handleAddCoin(item) : handleAddStock(item, market);
+                            e.stopPropagation();   // 행 클릭(선택)과 중복 트리거 방지
+                            if (!watched) {
+                              isCoin ? handleAddCoin(item) : handleAddStock(item, market);
+                            }
+                            selectAndClose({ type: kind, id: item.id, symbol: item.symbol, name: item.name, market });
                           }}
                           title={watched ? '이미 추가됨' : isFull ? `상한 ${MAX_WATCHLIST}개 초과` : '즐겨찾기 추가'}
                         >
