@@ -1,22 +1,25 @@
 /**
- * stock-adapter.js — 미국 주식 분석 데이터 어댑터
+ * stock-adapter.js — 주식 분석 데이터 어댑터 (미국·한국 공용)
  *
- * 일봉: Twelve Data time_series (Finnhub 무료 티어는 과거 OHLC 미지원)
+ * 일봉: market='US' → Twelve Data time_series (Finnhub 무료 티어는 과거 OHLC 미지원)
+ *       market='KR' → Naver 모바일 API (Twelve Data 무료 티어는 KRX 심볼 미지원 — 404 "Pro/Venture plan")
  * 주봉: 일봉을 weekly-transform.js(toWeekly)로 집계 — 인덱스 어댑터와 동일 방식 재사용
  *
  * 반환 형식은 index/crypto 어댑터와 동일: { history, ohlc_available, source }
  */
 
 import { fetchDailyHistory } from './twelvedata.js';
+import { fetchKRDailyHistory } from './naver-stock.js';
 import { toWeekly } from './weekly-transform.js';
 
 /**
  * @param {string} symbol
  * @param {'1d'|'1w'} tf
+ * @param {'US'|'KR'} [market='US']
  * @returns {Promise<{ history, ohlc_available, source }>}
  */
-export async function fetchStockByTF(symbol, tf) {
-  const daily = await fetchDailyHistory(symbol);
+export async function fetchStockByTF(symbol, tf, market = 'US') {
+  const daily = market === 'KR' ? await fetchKRDailyHistory(symbol) : await fetchDailyHistory(symbol);
 
   if (tf === '1w') {
     const weekly = toWeekly(daily.history, true);

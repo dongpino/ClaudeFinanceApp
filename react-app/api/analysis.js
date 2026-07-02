@@ -115,10 +115,10 @@ async function fetchIndexData(id, tf) {
   return { ...daily, tf: '1d' };
 }
 
-async function fetchData(type, id, symbol, tf) {
+async function fetchData(type, id, symbol, tf, market) {
   if (type === 'index')  return fetchIndexData(id, tf);
   if (type === 'crypto') return fetchCryptoByTF(id, symbol, tf);
-  if (type === 'stock')  return fetchStockByTF(symbol, tf);
+  if (type === 'stock')  return fetchStockByTF(symbol, tf, market);
   throw new Error(`알 수 없는 type: ${type}`);
 }
 
@@ -128,10 +128,16 @@ export default async function handler(req, res) {
   if (req.method !== 'GET')
     return res.status(405).json({ error: 'Method Not Allowed' });
 
-  const type = req.query?.type ?? 'index';   // 생략 시 기존 6종목 경로(하위 호환)
-  const id   = req.query?.id ?? null;
+  const type   = req.query?.type ?? 'index';   // 생략 시 기존 6종목 경로(하위 호환)
+  const id     = req.query?.id ?? null;
   const symbol = req.query?.symbol ?? null;
-  const tf   = req.query?.tf ?? '1d';
+  const tf     = req.query?.tf ?? '1d';
+  // stock 전용: 시장 구분(US/KR) — 생략 시 하위 호환으로 US(Twelve Data) 경로 유지.
+  // 지원 tf는 시장과 무관하게 동일(TF.STOCK)하므로 capability 판정에는 영향 없음.
+  const market = (req.query?.market ?? 'US').toUpperCase();
+  // stock 전용: 표시용 이름(선택) — 없으면 기존처럼 symbol을 대문자로 표시(하위 호환).
+  // KR은 숫자 코드라 이름 없이는 화면에 코드만 뜨므로 프론트에서 워치리스트 name을 실어보낸다.
+  const nameParam = req.query?.name ?? null;
 
   let capabilityItem;
   if (type === 'index') {
@@ -145,6 +151,8 @@ export default async function handler(req, res) {
   } else if (type === 'stock') {
     if (!symbol)
       return res.status(400).json({ error: 'stock은 symbol 파라미터가 필요합니다' });
+    if (market !== 'US' && market !== 'KR')
+      return res.status(400).json({ error: `알 수 없는 market: ${market} (허용: US, KR)` });
     capabilityItem = { type: 'stock', symbol };
   } else {
     return res.status(400).json({ error: `알 수 없는 type: ${type} (허용: index, crypto, stock)` });
@@ -158,7 +166,7 @@ export default async function handler(req, res) {
   }
 
   const cacheId  = type === 'stock' ? symbol : id;
-  const cacheKey = `${type}:${cacheId}:${tf}`;
+  const cacheKey = type === 'stock' ? `${type}:${market}:${cacheId}:${tf}` : `${type}:${cacheId}:${tf}`;
   const ttl      = getTTL(type, tf);
   const cached   = CACHE[cacheKey];
 
@@ -173,12 +181,12 @@ export default async function handler(req, res) {
   console.log(`[analysis/${cacheKey}] Cache MISS — 수집 시작 (${fmtKST()})`);
 
   try {
-    const { history, ohlc_available, source } = await fetchData(type, id, symbol, tf);
+    const { history, ohlc_available, source } = await fetchData(type, id, symbol, tf, market);
 
     if (!history || history.length < 2)
       throw new Error(`히스토리 부족: ${history?.length ?? 0}행`);
 
-    const name = type === 'index' ? ITEM_META[id].name : symbol.toUpperCase();
+    const name = type === 'index' ? ITEM_META[id].name : (nameParam || symbol.toUpperCase());
     const latest = history[history.length - 1];
     const prev   = history[history.length - 2];
     const change     = r2(latest.close - prev.close);

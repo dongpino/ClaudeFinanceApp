@@ -1074,7 +1074,7 @@ a.hn-card:active { border-color: var(--border-h); }
 }
 .as-fav-remove:hover { color: var(--up); }
 
-/* 검색 결과 종류 뱃지 (코인 / 주식) */
+/* 검색 결과 종류 뱃지 (코인 / 미국주식 / 한국주식) */
 .wl-ac-badge {
   font-size: 9px; font-weight: 800; padding: 2px 6px;
   border-radius: 5px; flex-shrink: 0; letter-spacing: .02em;
@@ -1082,6 +1082,7 @@ a.hn-card:active { border-color: var(--border-h); }
 .wl-ac-badge-coin  { background: var(--gold-dim);      color: var(--gold);   }
 .wl-ac-badge-stock { background: var(--surface-tint);  color: var(--text-2);
                      border: 1px solid var(--border); }
+.wl-ac-badge-kr    { background: var(--down-dim);      color: var(--down);   }
 
 /* 미국 주식 카드 — sparkline 자리를 큰 등락률로 대체 */
 .stock-pct-display {

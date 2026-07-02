@@ -41,8 +41,10 @@ function optimisticTFs(type) {
 function analysisUrl(item, tf) {
   if (item.type === 'crypto')
     return `/api/analysis?type=crypto&id=${encodeURIComponent(item.id)}&symbol=${encodeURIComponent(item.symbol)}&tf=${tf}`;
-  if (item.type === 'stock')
-    return `/api/analysis?type=stock&symbol=${encodeURIComponent(item.symbol)}&tf=${tf}`;
+  if (item.type === 'stock') {
+    const market = item.market ?? 'US';
+    return `/api/analysis?type=stock&symbol=${encodeURIComponent(item.symbol)}&market=${market}&name=${encodeURIComponent(item.name)}&tf=${tf}`;
+  }
   return `/api/analysis?id=${item.id}&tf=${tf}`;   // index (기존 6종목, 하위 호환)
 }
 
@@ -67,14 +69,16 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   // 검색 결과/즐겨찾기 카드/기존 종목 칩 클릭 → 하단 차트에 즉시 반영.
   // 이미 선택된 항목을 다시 클릭하면 선택 해제.
   // 지원 tf 목록은 응답 도착 전까진 알 수 없으므로 보수적으로 1d로 리셋.
+  // market은 type==='stock'일 때만 의미 있음(US/KR) — 그 외 타입은 undefined로 취급.
   function handleSelect(item) {
-    const isDeselect = selected && selected.type === item.type && selected.id === item.id;
+    const isDeselect = isSelected(item.type, item.id, item.market);
     setSelectedTF('1d');
-    setSelected(isDeselect ? null : { type: item.type, id: item.id, symbol: item.symbol, name: item.name });
+    setSelected(isDeselect ? null : { type: item.type, id: item.id, symbol: item.symbol, name: item.name, market: item.market });
   }
 
-  function isSelected(type, id) {
-    return selected != null && selected.type === type && selected.id === id;
+  function isSelected(type, id, market) {
+    return selected != null && selected.type === type && selected.id === id
+      && (selected.market ?? null) === (market ?? null);
   }
 
   // 종목·타임프레임 전환 시 데이터 fetch — 선택된 종목이 없으면 호출하지 않는다.
@@ -138,7 +142,8 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   // ── 검색 ─────────────────────────────────────────────────────
   const [query,         setQuery]        = useState('');
   const [coinResults,   setCoinResults]  = useState([]);
-  const [stockResults,  setStockResults] = useState([]);
+  const [stockResults,  setStockResults] = useState([]);   // 미국주식 (Finnhub)
+  const [krResults,     setKrResults]    = useState([]);   // 한국주식 (Naver)
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError,   setSearchError]  = useState(null);
   const debounceRef = useRef(null);
@@ -149,6 +154,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     setQuery(q);
     setCoinResults([]);
     setStockResults([]);
+    setKrResults([]);
     setSearchError(null);
     clearTimeout(debounceRef.current);
 
@@ -158,13 +164,15 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     debounceRef.current = setTimeout(async () => {
       const id = ++searchIdRef.current;
       try {
-        const [coinRes, stockRes] = await Promise.allSettled([
+        const [coinRes, stockRes, krRes] = await Promise.allSettled([
           fetch(`/api/coin-search?q=${encodeURIComponent(q.trim())}`).then(r => r.json()),
           fetch(`/api/stock-search?q=${encodeURIComponent(q.trim())}`).then(r => r.json()),
+          fetch(`/api/stock-search?q=${encodeURIComponent(q.trim())}&market=kr`).then(r => r.json()),
         ]);
         if (id !== searchIdRef.current) return;
         setCoinResults(coinRes.status  === 'fulfilled' ? (coinRes.value.results  ?? []) : []);
         setStockResults(stockRes.status === 'fulfilled' ? (stockRes.value.results ?? []) : []);
+        setKrResults(krRes.status       === 'fulfilled' ? (krRes.value.results   ?? []) : []);
       } catch (err) {
         if (id !== searchIdRef.current) return;
         setSearchError(err.message);
@@ -178,6 +186,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     setQuery('');
     setCoinResults([]);
     setStockResults([]);
+    setKrResults([]);
     setSearchLoading(false);
     setSearchError(null);
     clearTimeout(debounceRef.current);
@@ -214,7 +223,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const [stockFetchedAt, setStockFetchedAt] = useState(null);
 
   const stockKey = watchlist
-    .filter(it => it.type === 'stock')
+    .filter(it => it.type === 'stock' && (it.market ?? 'US') === 'US')
     .map(it => it.id)
     .sort()
     .join(',');
@@ -235,6 +244,32 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     return () => { cancelled = true; };
   }, [stockKey]);
 
+  // ── 한국 주식 시세 (즐겨찾기 카드용) ────────────────────────
+  const [krStockPrices,    setKrStockPrices]    = useState({});
+  const [krStockFetchedAt, setKrStockFetchedAt] = useState(null);
+
+  const krStockKey = watchlist
+    .filter(it => it.type === 'stock' && it.market === 'KR')
+    .map(it => it.id)
+    .sort()
+    .join(',');
+
+  useEffect(() => {
+    if (!krStockKey) { setKrStockPrices({}); return; }
+    let cancelled = false;
+    fetch(`/api/stock-quote?symbols=${krStockKey}&market=kr`)
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        const map = {};
+        for (const it of data.items ?? []) map[it.id] = it;
+        setKrStockPrices(map);
+        setKrStockFetchedAt(data.fetched_at ?? null);
+      })
+      .catch(err => console.error('[AnalysisPage] stock-quote(kr):', err.message));
+    return () => { cancelled = true; };
+  }, [krStockKey]);
+
   // ── 라이브 데이터 병합 (즐겨찾기 카드용) ───────────────────
   function getLiveItem(wlItem) {
     if (wlItem.type === 'index') {
@@ -250,10 +285,12 @@ export default function AnalysisPage({ activePage, onPageChange }) {
       return { ...cd, type: 'crypto', history: (cd.sparkline ?? []).map(v => ({ close: v })), as_of: asOf };
     }
     if (wlItem.type === 'stock') {
-      const sd = stockPrices[wlItem.id];
+      const isKR = wlItem.market === 'KR';
+      const sd = (isKR ? krStockPrices : stockPrices)[wlItem.id];
       if (!sd) return null;
-      const asOf = stockFetchedAt
-        ? new Date(stockFetchedAt).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      const fetchedAt = isKR ? krStockFetchedAt : stockFetchedAt;
+      const asOf = fetchedAt
+        ? new Date(fetchedAt).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
         : '-';
       return { ...sd, name: wlItem.name, type: 'stock', history: [], as_of: asOf };
     }
@@ -265,8 +302,8 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     add({ type: 'crypto', id: coin.id, symbol: coin.symbol, name: coin.name });
   }
 
-  function handleAddStock(stock) {
-    add({ type: 'stock', id: stock.symbol, symbol: stock.symbol, name: stock.name });
+  function handleAddStock(stock, market = 'US') {
+    add({ type: 'stock', market, id: stock.symbol, symbol: stock.symbol, name: stock.name });
   }
 
   function toggleIndex(item) {
@@ -276,10 +313,11 @@ export default function AnalysisPage({ activePage, onPageChange }) {
 
   const isFull = watchlist.length >= MAX_WATCHLIST;
 
-  // 코인 최대 5 + 주식 최대 5 병합 (코인 우선)
+  // 코인 최대 5 + 미국주식 최대 5 + 한국주식 최대 5 병합 (코인 우선)
   const mergedResults = [
     ...coinResults.slice(0, 5).map(c => ({ ...c, _kind: 'coin' })),
-    ...stockResults.slice(0, 5).map(s => ({ ...s, id: s.symbol, _kind: 'stock' })),
+    ...stockResults.slice(0, 5).map(s => ({ ...s, id: s.symbol, _kind: 'us-stock' })),
+    ...krResults.slice(0, 5).map(s => ({ ...s, id: s.symbol, _kind: 'kr-stock' })),
   ];
 
   return (
@@ -301,7 +339,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                 <input
                   className="wl-search-input"
                   type="text"
-                  placeholder="코인·미국주식 검색... (BTC, Apple, AAPL...)"
+                  placeholder="코인·미국주식·한국주식 검색... (BTC, Apple, 삼성전자...)"
                   value={query}
                   onChange={handleQuery}
                   autoComplete="off"
@@ -320,14 +358,18 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                     <p className="wl-ac-state">"{query}" 검색 결과 없음</p>
                   )}
                   {mergedResults.map(item => {
-                    const watched = isWatched(item.id);
-                    const isCoin  = item._kind === 'coin';
-                    const kind    = isCoin ? 'crypto' : 'stock';
+                    const watched  = isWatched(item.id);
+                    const isCoin   = item._kind === 'coin';
+                    const isKR     = item._kind === 'kr-stock';
+                    const kind     = isCoin ? 'crypto' : 'stock';
+                    const market   = isCoin ? undefined : (isKR ? 'KR' : 'US');
+                    const badgeCls = isCoin ? 'wl-ac-badge-coin' : isKR ? 'wl-ac-badge-kr' : 'wl-ac-badge-stock';
+                    const badgeTxt = isCoin ? '코인' : isKR ? '한국' : '미국';
                     return (
                       <div
                         key={`${item._kind}-${item.id}`}
-                        className={`wl-ac-item${isSelected(kind, item.id) ? ' selected' : ''}`}
-                        onClick={() => handleSelect({ type: kind, id: item.id, symbol: item.symbol, name: item.name })}
+                        className={`wl-ac-item${isSelected(kind, item.id, market) ? ' selected' : ''}`}
+                        onClick={() => handleSelect({ type: kind, id: item.id, symbol: item.symbol, name: item.name, market })}
                       >
                         {isCoin && item.thumb
                           ? <img src={item.thumb} alt={item.symbol} className="wl-ac-thumb" />
@@ -340,16 +382,14 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                         {isCoin && item.market_cap_rank && (
                           <span className="wl-ac-rank">#{item.market_cap_rank}</span>
                         )}
-                        <span className={`wl-ac-badge ${isCoin ? 'wl-ac-badge-coin' : 'wl-ac-badge-stock'}`}>
-                          {isCoin ? '코인' : '주식'}
-                        </span>
+                        <span className={`wl-ac-badge ${badgeCls}`}>{badgeTxt}</span>
                         <button
                           className={`wl-ac-add-btn${watched ? ' added' : ''}`}
                           disabled={!watched && isFull}
                           onClick={e => {
                             e.stopPropagation();
                             if (watched || isFull) return;
-                            isCoin ? handleAddCoin(item) : handleAddStock(item);
+                            isCoin ? handleAddCoin(item) : handleAddStock(item, market);
                           }}
                           title={watched ? '이미 추가됨' : isFull ? `상한 ${MAX_WATCHLIST}개 초과` : '즐겨찾기 추가'}
                         >
@@ -401,7 +441,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                     return (
                       <div
                         key={wlItem.id}
-                        className={`as-fav-chip${isSelected(wlItem.type, wlItem.id) ? ' selected' : ''}${!live ? ' skeleton' : ''}`}
+                        className={`as-fav-chip${isSelected(wlItem.type, wlItem.id, wlItem.market) ? ' selected' : ''}${!live ? ' skeleton' : ''}`}
                         onClick={() => handleSelect(wlItem)}
                       >
                         <span className="as-fav-name">{wlItem.symbol}</span>
