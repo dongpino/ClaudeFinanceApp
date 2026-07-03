@@ -7,9 +7,9 @@
  *
  * ───────────────────────── 비용 정보 ──────────────────────────
  *  모델:  claude-haiku-4-5-20251001  (Anthropic 최저가 모델)
- *  입력:  ~1,000~1,500 토큰 (지표 6종 + 뉴스 15개 헤드라인 포함)
- *  출력:  ~200~350 토큰   (3~5문장 한국어 브리핑)
- *  1회:   ~$0.0004~$0.0008  (≈ 0.05~0.1원)  ← 매우 저렴
+ *  입력:  ~700~1,000 토큰 (지표 6종 + 뉴스 8개 헤드라인 + 고정 system 프롬프트)
+ *  출력:  ~350~600 토큰   (마크다운 소제목 구조, 500자 내외 한국어 브리핑)
+ *  1회:   ~$0.001 안팎  ← 매우 저렴
  *  주의:  자동 호출 절대 금지 — 반드시 버튼 클릭 시에만 호출
  * ──────────────────────────────────────────────────────────────
  *
@@ -29,8 +29,11 @@ const ANTHROPIC_API_URL     = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION     = '2023-06-01';
 const MODEL                 = 'claude-haiku-4-5-20251001';
 
-// 비용 통제: 출력 최대 400 토큰 ≈ 3~5문장 (초과 시 강제 종료)
-const MAX_OUTPUT_TOKENS = 400;
+// 비용 통제: 출력 최대 1000 토큰 (마크다운 소제목 구조 + 500자 내외 한국어 본문)
+const MAX_OUTPUT_TOKENS = 1000;
+
+// 프롬프트에 포함할 뉴스 헤드라인 수
+const NEWS_HEADLINES_FOR_PROMPT = 8;
 
 // AI 요청 타임아웃: Vercel 서버리스 최대 실행 시간 고려
 const AI_TIMEOUT_MS = 20_000;
@@ -74,8 +77,40 @@ async function collectMarketSnapshot() {
 }
 
 // ── 프롬프트 생성 ──────────────────────────────────────────────
+// system: 고정된 역할·해석 원칙·출력 형식 (지표 나열이 아니라 지표 간 관계로 해석시킴)
+// user:   그날그날 바뀌는 실제 데이터(지표 수치·뉴스 헤드라인)만 담음
 
-function buildPrompt(items, newsItems) {
+function buildSystemPrompt() {
+  return `당신은 한국 개인 투자자를 위한 시장 브리핑을 작성하는 애널리스트입니다.
+
+[해석 원칙]
+- 지표를 하나씩 개별로 나열하지 말고, 지표들 사이의 관계로 엮어서 해석하십시오.
+  예: VIX 상승과 주가지수 하락이 함께 나타나면 위험회피 심리로, 원/달러 상승과 코스피 하락이 겹치면 외국인 수급 이탈 우려로, 비트코인과 나스닥이 동반 하락하면 위험자산 전반의 회피 심리로 엮어서 설명하십시오.
+- 제시된 수치는 해석의 근거로만 인용하고, 수치 나열 자체가 목적이 되지 않게 하십시오.
+- 뉴스 헤드라인은 지표 움직임과 실제로 연관되는 것 위주로만 언급하고, 무관한 헤드라인은 무시하십시오.
+- 확정적 예측이나 매수·매도 같은 투자 조언은 하지 마십시오.
+
+[출력 형식 — 아래 마크다운 구조를 그대로 따르고, 전체 500자 내외로 간결하게 작성]
+## 오늘의 핵심
+(오늘 시장 분위기를 규정하는 한 줄)
+
+## 지표 해석
+(지표 간 관계 중심의 해석, 2~4문장)
+
+## 뉴스 연결
+- (지표 움직임과 연관된 뉴스 시사점 1)
+- (시사점 2, 필요시 3까지)
+
+## 관전 포인트
+- (오늘 또는 내일 주목할 점 1)
+- (필요시 2까지)
+
+⚠️ (이 브리핑이 투자 권유가 아니라는 점을 한 문장으로 명시)
+
+반드시 한국어로, 위 형식(제목의 ## 표기, 목록의 - 표기, 마지막 줄의 ⚠️ 표기 포함)을 정확히 지켜 작성하십시오.`;
+}
+
+function buildUserPrompt(items, newsItems) {
   const sign = n => (n >= 0 ? '+' : '') + Number(n).toFixed(2);
 
   const marketSection = items.map(it => {
@@ -85,27 +120,21 @@ function buildPrompt(items, newsItems) {
   }).join('\n');
 
   const newsSection = newsItems.length > 0
-    ? `\n최근 경제 뉴스 헤드라인:\n` +
-      newsItems.map((n, i) => `${i + 1}. [${n.source}] ${n.title}`).join('\n')
-    : '\n(※ 뉴스 RSS 수집 실패 — 시장 지표만으로 브리핑)';
+    ? newsItems.map((n, i) => `${i + 1}. [${n.source}] ${n.title}`).join('\n')
+    : '(뉴스 RSS 수집 실패 — 시장 지표만으로 해석)';
 
-  return `당신은 객관적인 금융 시장 분석가입니다. 아래 시장 데이터와 뉴스 헤드라인을 바탕으로 오늘의 시장 브리핑을 한국어로 작성하세요.
-
-[시장 현황]
+  return `[시장 지표]
 ${marketSection}
+
+[경제 뉴스 헤드라인]
 ${newsSection}
 
-[작성 규칙]
-- 3~5문장으로 간결하게 작성
-- 수치를 근거로 사실 위주로 서술 (예: "나스닥은 X% 하락했으며")
-- 투자 권유, 매수/매도 조언, 과도한 단정 금지
-- 독자가 오늘 시장 흐름을 빠르게 파악할 수 있도록 작성
-- 헤더나 목록 없이 자연스러운 문단 형식으로 작성`;
+위 데이터를 바탕으로 오늘의 시장 브리핑을 작성하세요.`;
 }
 
 // ── Anthropic API 호출 ────────────────────────────────────────
 
-async function callAnthropicAPI(apiKey, prompt) {
+async function callAnthropicAPI(apiKey, systemPrompt, userPrompt) {
   const ctrl = new AbortController();
   const tid  = setTimeout(() => ctrl.abort(), AI_TIMEOUT_MS);
 
@@ -121,7 +150,8 @@ async function callAnthropicAPI(apiKey, prompt) {
       body: JSON.stringify({
         model:      MODEL,
         max_tokens: MAX_OUTPUT_TOKENS,
-        messages:   [{ role: 'user', content: prompt }],
+        system:     systemPrompt,
+        messages:   [{ role: 'user', content: userPrompt }],
       }),
     });
 
@@ -153,12 +183,12 @@ export default async function handler(req, res) {
     return res.status(200).json({ ...briefingCache.data, cached: true });
   }
 
-  // ── API 키 확인 ────────────────────────────────────────────
+  // ── API 키 확인 (fail-fast — 없으면 수집·AI 호출 자체를 하지 않음) ──
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey || apiKey.trim() === '') {
     return res.status(500).json({
       error: 'ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.',
-      hint: 'Vercel Dashboard → 프로젝트 → Settings → Environment Variables에서 추가하세요. 로컬 테스트는 react-app/.env 파일을 사용하세요.',
+      hint: 'Vercel Dashboard → 프로젝트 → Settings → Environment Variables에서 추가하세요. 로컬 테스트는 react-app/.env.local 파일을 사용하세요.',
     });
   }
 
@@ -168,7 +198,7 @@ export default async function handler(req, res) {
   // ── 시장 데이터 + RSS 병렬 수집 ────────────────────────────
   const [items, newsItems] = await Promise.all([
     collectMarketSnapshot(),
-    collectRSSNews(15),
+    collectRSSNews(NEWS_HEADLINES_FOR_PROMPT),
   ]);
 
   if (items.length === 0) {
@@ -181,11 +211,12 @@ export default async function handler(req, res) {
   console.log(`[briefing] 데이터 수집 완료 (${(collectMs / 1000).toFixed(1)}s): 지표=${items.length}종 뉴스=${newsItems.length}개`);
 
   // ── AI 호출 ────────────────────────────────────────────────
-  const prompt = buildPrompt(items, newsItems);
+  const systemPrompt = buildSystemPrompt();
+  const userPrompt   = buildUserPrompt(items, newsItems);
 
   let aiData;
   try {
-    aiData = await callAnthropicAPI(apiKey, prompt);
+    aiData = await callAnthropicAPI(apiKey, systemPrompt, userPrompt);
   } catch (e) {
     console.error(`[briefing] Anthropic API 실패: ${e.message}`);
     return res.status(500).json({

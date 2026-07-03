@@ -776,6 +776,26 @@ body {
 .brf-ai-result { display: flex; flex-direction: column; gap: 8px; }
 .brf-ai-text {
   font-size: 14px; color: var(--text-1); line-height: 1.8;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.brf-md-h {
+  font-size: 12px; font-weight: 800; color: var(--gold);
+  letter-spacing: .02em;
+}
+.brf-md-p { font-size: 14px; color: var(--text-1); line-height: 1.7; }
+.brf-md-list {
+  list-style: none; display: flex; flex-direction: column; gap: 4px;
+}
+.brf-md-list li {
+  font-size: 13.5px; color: var(--text-1); line-height: 1.6;
+  padding-left: 13px; position: relative;
+}
+.brf-md-list li::before {
+  content: '·'; position: absolute; left: 0; color: var(--gold); font-weight: 800;
+}
+.brf-md-disclaimer {
+  font-size: 11.5px; color: var(--text-3); line-height: 1.6;
+  padding-top: 4px; border-top: 1px dashed var(--border);
 }
 .brf-ai-meta {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px;

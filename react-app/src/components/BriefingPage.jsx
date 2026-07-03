@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Header from './Header';
 import BottomNav from './BottomNav';
+import { loadBriefing, saveBriefing, kstDateStr } from '../briefingStore';
 
 // ── 날짜 포맷 (RSS pubDate → "6/29 14:30") ───────────────────
 function formatPubDate(pubDate) {
@@ -14,6 +15,61 @@ function formatPubDate(pubDate) {
     const mm = String(d.getMinutes()).padStart(2, '0');
     return `${mo}/${dy} ${hh}:${mm}`;
   } catch { return ''; }
+}
+
+// generated_at("YYYY-MM-DD HH:MM KST") → 오늘 생성분이면 "오늘 HH:MM 생성됨"으로 축약
+function formatBriefingMetaLabel(generatedAt) {
+  if (!generatedAt) return '';
+  const datePart = generatedAt.slice(0, 10);
+  const timePart = generatedAt.slice(11, 16);
+  return datePart === kstDateStr() ? `오늘 ${timePart} 생성됨` : generatedAt;
+}
+
+// ── AI 브리핑 마크다운 렌더링 ──────────────────────────────────
+// 서버 프롬프트가 강제하는 고정 형식(## 소제목 / - 목록 / ⚠️ 로 시작하는 안내 문구)만
+// 다루는 최소 파서 — 범용 마크다운 라이브러리 없이 우리 프롬프트 출력에 맞춰 직접 렌더링.
+function renderInlineBold(str) {
+  return str.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : part
+  );
+}
+
+function renderBriefingMarkdown(text) {
+  if (!text) return null;
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const blocks = [];
+  let listBuf = [];
+
+  const flushList = () => {
+    if (listBuf.length) { blocks.push({ type: 'list', items: listBuf }); listBuf = []; }
+  };
+
+  for (const line of lines) {
+    if (line.startsWith('## ')) {
+      flushList();
+      blocks.push({ type: 'heading', text: line.slice(3).trim() });
+    } else if (line.startsWith('- ') || line.startsWith('* ')) {
+      listBuf.push(line.slice(2).trim());
+    } else if (line.startsWith('⚠️')) {
+      flushList();
+      blocks.push({ type: 'disclaimer', text: line.replace(/^⚠️\s*/, '') });
+    } else if (line === '---') {
+      flushList();
+    } else {
+      flushList();
+      blocks.push({ type: 'p', text: line });
+    }
+  }
+  flushList();
+
+  return blocks.map((b, i) => {
+    if (b.type === 'heading')    return <h3 key={i} className="brf-md-h">{renderInlineBold(b.text)}</h3>;
+    if (b.type === 'list')       return <ul key={i} className="brf-md-list">{b.items.map((it, j) => <li key={j}>{renderInlineBold(it)}</li>)}</ul>;
+    if (b.type === 'disclaimer') return <p key={i} className="brf-md-disclaimer">⚠️ {renderInlineBold(b.text)}</p>;
+    return <p key={i} className="brf-md-p">{renderInlineBold(b.text)}</p>;
+  });
 }
 
 // ── 헤드라인 뉴스 레이아웃 ────────────────────────────────────
@@ -196,6 +252,18 @@ export default function BriefingPage({ activePage, onPageChange }) {
 
   useEffect(() => { loadNews(); }, [loadNews]);
 
+  // ── 마운트 시 localStorage에 오늘자 캐시가 있으면 즉시 복원 ──
+  // (API 호출 없이 바로 보여줘서 재방문 시 불필요한 재생성을 유도하지 않는다)
+  useEffect(() => {
+    const cached = loadBriefing();
+    if (!cached) return;
+    const cachedDate = cached.generated_at?.slice(0, 10);
+    if (cachedDate !== kstDateStr()) return; // 오늘 캐시가 아니면 무시
+    setAiBriefing(cached.briefing);
+    setAiMeta(cached.meta ?? null);
+    setAiPhase('done');
+  }, []);
+
   // ── AI 브리핑 생성 (버튼 클릭 시에만) ────
   async function generateBriefing() {
     setAiPhase('loading');
@@ -211,13 +279,15 @@ export default function BriefingPage({ activePage, onPageChange }) {
         setAiPhase(isNoKey ? 'no-key' : 'error');
         return;
       }
-      setAiBriefing(data.briefing ?? '');
-      setAiMeta({
+      const meta = {
         generated_at: data.generated_at,
         cached:       data.cached,
         usage:        data.usage,
-      });
+      };
+      setAiBriefing(data.briefing ?? '');
+      setAiMeta(meta);
       setAiPhase('done');
+      saveBriefing({ briefing: data.briefing ?? '', generated_at: data.generated_at, meta });
     } catch (e) {
       setAiError(e.message);
       setAiPhase('error');
@@ -254,6 +324,7 @@ export default function BriefingPage({ activePage, onPageChange }) {
               >
                 {aiPhase === 'loading' ? '생성 중…' :
                  aiPhase === 'done'    ? '다시 생성' :
+                 aiPhase === 'error'   ? '다시 시도' :
                  'AI 브리핑 생성'}
               </button>
             </div>
@@ -341,10 +412,10 @@ function AiBody({ phase, briefing, meta, error }) {
   if (phase === 'done') {
     return (
       <div className="brf-ai-result">
-        <p className="brf-ai-text">{briefing}</p>
+        <div className="brf-ai-text">{renderBriefingMarkdown(briefing)}</div>
         {meta && (
           <div className="brf-ai-meta">
-            <span>{meta.generated_at}</span>
+            <span>{formatBriefingMetaLabel(meta.generated_at)}</span>
             {meta.cached && <span className="brf-cached-chip">캐시</span>}
             {meta.usage?.input_tokens && (
               <span>입력 {meta.usage.input_tokens}tok · 출력 {meta.usage.output_tokens}tok</span>
