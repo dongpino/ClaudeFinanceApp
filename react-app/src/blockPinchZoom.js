@@ -5,13 +5,15 @@
  * 페이지 핀치줌을 완전히 막지 못한다(user-scalable=no를 무시하는 알려진 동작).
  * 이 모듈은 document 레벨에서 제스처를 가로채 보강한다.
  *
- * 차트 컨테이너(.detail-chart-wrap / .analysis-price-chart / .analysis-rsi-chart)
+ * 차트 컨테이너(.detail-chart-wrap / .analysis-price-chart-wrap / .analysis-rsi-chart)
  * 내부에서 시작된 터치는 lightweight-charts 자체 핀치줌·더블탭 처리를 위해 통과시킨다.
+ * .analysis-price-chart-wrap을 씀으로써 그 안에 오버레이로 얹힌 지지/저항선 삭제
+ * X 버튼(.sr-line-del-btn, 차트 캔버스의 형제 요소) 탭도 함께 예외 처리된다.
  * gesturestart/change/end(iOS 전용 네이티브 페이지 확대 제스처)는 차트 라이브러리가
  * 쓰지 않는 별도 API라 예외 없이 전역 차단해도 차트 핀치줌엔 영향 없다.
  */
 
-const CHART_SELECTOR = '.detail-chart-wrap, .analysis-price-chart, .analysis-rsi-chart';
+const CHART_SELECTOR = '.detail-chart-wrap, .analysis-price-chart-wrap, .analysis-rsi-chart';
 const DOUBLE_TAP_MS  = 300;
 
 function isInsideChart(target) {

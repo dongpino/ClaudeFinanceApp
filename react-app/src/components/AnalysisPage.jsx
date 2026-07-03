@@ -70,6 +70,11 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const [showRSI,    setShowRSI]    = useState(true);
   const [showVolume, setShowVolume] = useState(true);
 
+  // 수동 지지/저항선 — 실제 상태는 AnalysisChart 내부(localStorage)에 있고,
+  // 여기서는 "선 지우기" 버튼 노출 여부 판단용 개수만 미러링한다.
+  const [srLineCount, setSrLineCount] = useState(0);
+  const chartRef = useRef(null);
+
   // 검색 결과/즐겨찾기 카드/기존 종목 칩 클릭 → 하단 차트에 즉시 반영.
   // 이미 선택된 항목을 다시 클릭하면 선택 해제.
   // 지원 tf 목록은 응답 도착 전까진 알 수 없으므로 보수적으로 1d로 리셋.
@@ -95,6 +100,10 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     clearQuery();
     searchInputRef.current?.blur();
   }
+
+  // 종목 전환 시 "선 지우기" 버튼 상태 리셋 — 새 종목의 실제 개수는
+  // AnalysisChart 복원 완료 후 onLinesChange로 다시 채워진다.
+  useEffect(() => { setSrLineCount(0); }, [selected]);
 
   // 종목·타임프레임 전환 시 데이터 fetch — 선택된 종목이 없으면 호출하지 않는다.
   useEffect(() => {
@@ -142,6 +151,11 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     : null;
   const item = detailItem ?? baseItem;
   const dir  = item?.direction ?? 'flat';
+
+  // 수동 지지/저항선 localStorage 키 — 가격 기준 저장이라 tf는 포함하지 않는다.
+  const symbolKey = selected
+    ? `${selected.type}:${selected.market ?? ''}:${selected.symbol ?? selected.id}`
+    : null;
 
   // 확보 봉 수에 따라 MA 토글 비활성화
   const candleCount = item?.days_available
@@ -577,6 +591,15 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                 >
                   <span className="ind-dot vol" />거래량
                 </button>
+                {srLineCount > 0 && (
+                  <button
+                    className="ind-toggle ind-toggle-clear-lines"
+                    onClick={() => chartRef.current?.clearAllLines()}
+                    title="그려진 지지/저항선을 모두 삭제합니다"
+                  >
+                    선 지우기
+                  </button>
+                )}
               </div>
 
               {/* 차트 영역 */}
@@ -595,6 +618,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                 )}
                 {item && (
                   <AnalysisChart
+                    ref={chartRef}
                     item={item}
                     tf={selectedTF}
                     showMA20={showMA20}
@@ -603,6 +627,8 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                     showMA200={showMA200}
                     showRSI={showRSI}
                     showVolume={showVolume && !volumeDisabled}
+                    symbolKey={symbolKey}
+                    onLinesChange={setSrLineCount}
                   />
                 )}
               </div>

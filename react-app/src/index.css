@@ -592,6 +592,11 @@ body {
 .ind-toggle.on .ind-dot.ma200 { background: #fbbf24; }
 .ind-toggle.on .ind-dot.rsi   { background: #22d3ee; }
 .ind-toggle.on .ind-dot.vol   { background: #64748b; }
+.ind-toggle-clear-lines {
+  margin-left: auto;
+  color: var(--text-3);
+}
+.ind-toggle-clear-lines:hover { border-color: var(--down); color: var(--down); }
 
 /* 차트 메인 영역 */
 .analysis-main {
@@ -616,12 +621,38 @@ body {
   flex: 1; min-height: 0;
   display: flex; flex-direction: column; gap: 8px;
 }
-.analysis-price-chart {
+.analysis-price-chart-wrap {
+  position: relative;
   flex: 1; min-height: 180px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 12px; overflow: hidden;
+}
+.analysis-price-chart {
+  position: absolute; inset: 0;
   touch-action: pan-y;
+}
+
+/* 지지/저항선 삭제 X 버튼 — hover/탭 시 선 옆(가격축 라벨 왼쪽)에 표시 */
+.sr-line-del-btn {
+  position: absolute;
+  right: 84px; /* SCALE_WIDTH(80px) + 여백 — 가격축 라벨과 겹치지 않게 */
+  transform: translateY(-50%);
+  width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px; font-weight: 700; line-height: 1;
+  cursor: pointer;
+  z-index: 5;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.sr-line-del-btn:hover,
+.sr-line-del-btn:active {
+  border-color: var(--down); color: var(--down); background: var(--down-dim);
 }
 .analysis-rsi-wrap {
   flex-shrink: 0; height: 138px;

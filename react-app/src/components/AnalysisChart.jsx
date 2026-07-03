@@ -1,15 +1,23 @@
-import { useEffect, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { calcMA, calcRSIAligned } from '../indicators';
 import { useTheme } from '../ThemeContext';
+import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesStore';
 
 // 두 차트의 우측 축 폭을 createChart 시점부터 동일하게 고정 (BTC 등 큰 숫자 기준으로 여유있게)
 const SCALE_WIDTH = 80;
 
 const CHART_COLORS = {
-  dark:  { text: '#9a9aa2', grid: '#26262a', border: '#26262a' },
-  light: { text: '#3d5070', grid: '#dde1ed', border: '#dde1ed' },
+  dark:  { text: '#9a9aa2', grid: '#26262a', border: '#26262a', srLine: '#e09500' },
+  light: { text: '#3d5070', grid: '#dde1ed', border: '#dde1ed', srLine: '#b87200' },
 };
+
+// 수동 지지/저항선 — 더블클릭 시 기존 선과 너무 가까우면 중복 생성 방지(px)
+const SR_DEDUPE_TOLERANCE_PX = 6;
+// 커서/탭 위치가 선에서 이 거리(px) 이내면 삭제용 X 버튼을 표시
+const SR_HOVER_TOLERANCE_PX = 8;
+const fp = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const roundPrice = n => Math.round(n * 100) / 100;
 
 function buildChartOpts(theme, width, height) {
   const c = CHART_COLORS[theme] ?? CHART_COLORS.dark;
@@ -71,14 +79,25 @@ function buildVolumeData(h) {
     }));
 }
 
-export default function AnalysisChart({
+const AnalysisChart = forwardRef(function AnalysisChart({
   item, tf,
   showMA20, showMA60, showMA100, showMA200,
   showRSI, showVolume,
-}) {
+  symbolKey, onLinesChange,
+}, ref) {
   const { theme } = useTheme();
   const priceRef = useRef(null);
   const rsiRef   = useRef(null);
+
+  // 지지/저항선 hover/탭 상태 — X 삭제 버튼 표시용 (price와 현재 y좌표)
+  const [hoverLine, setHoverLine] = useState(null);
+
+  // 수동 지지/저항선 — 최신 props를 ref에 미러링해 effect/이벤트 콜백에서 항상
+  // 최신 값을 읽는다(콜백은 chart 생성 시점 클로저라 stale closure 위험이 있음).
+  const srPropsRef    = useRef({ symbolKey, onLinesChange, theme });
+  srPropsRef.current = { symbolKey, onLinesChange, theme };
+  const srPricesRef   = useRef([]);            // 현재 차트에 그려진 가격 목록
+  const srLineObjsRef = useRef(new Map());      // price → IPriceLine (현재 mainSeries 소속)
 
   // MA series refs (visibility 토글용)
   const ma20Ref  = useRef(null);
@@ -93,6 +112,61 @@ export default function AnalysisChart({
   const mainSeriesRef = useRef(null); // crosshair sync: setCrosshairPosition 3번째 인자
   const rsiSeriesRef  = useRef(null); // crosshair sync: setCrosshairPosition 3번째 인자
   const syncingRef    = useRef(false); // 무한 루프 방지 플래그
+
+  // ── 수동 지지/저항선 헬퍼 ────────────────────────────────────
+  // ref만 참조하므로 어느 렌더에서 만들어진 함수든 항상 최신 상태를 반영한다.
+  function notifySRCount() {
+    srPropsRef.current.onLinesChange?.(srPricesRef.current.length);
+  }
+
+  function persistSRLines() {
+    saveSRLines(srPropsRef.current.symbolKey, srPricesRef.current);
+    notifySRCount();
+  }
+
+  function createSRLineObj(price) {
+    const ms = mainSeriesRef.current;
+    if (!ms) return;
+    const c = CHART_COLORS[srPropsRef.current.theme] ?? CHART_COLORS.dark;
+    const line = ms.createPriceLine({
+      price,
+      color:            c.srLine,
+      lineWidth:        2,
+      lineStyle:        LineStyle.Dashed,
+      axisLabelVisible: true,
+      title:            fp(price),
+    });
+    srLineObjsRef.current.set(price, line);
+  }
+
+  function addSRLine(price) {
+    if (srLineObjsRef.current.has(price)) return;
+    createSRLineObj(price);
+    srPricesRef.current = [...srPricesRef.current, price];
+    persistSRLines();
+  }
+
+  function removeSRLine(price) {
+    const line = srLineObjsRef.current.get(price);
+    const ms   = mainSeriesRef.current;
+    if (line && ms) ms.removePriceLine(line);
+    srLineObjsRef.current.delete(price);
+    srPricesRef.current = srPricesRef.current.filter(p => p !== price);
+    persistSRLines();
+    setHoverLine(null);
+  }
+
+  function clearAllSRLines() {
+    const ms = mainSeriesRef.current;
+    if (!ms || srPricesRef.current.length === 0) return;
+    for (const line of srLineObjsRef.current.values()) ms.removePriceLine(line);
+    srLineObjsRef.current.clear();
+    srPricesRef.current = [];
+    persistSRLines();
+    setHoverLine(null);
+  }
+
+  useImperativeHandle(ref, () => ({ clearAllLines: clearAllSRLines }));
 
   // ── 가격 차트 + MA 오버레이 ─────────────────────────────────
   useEffect(() => {
@@ -129,6 +203,50 @@ export default function AnalysisChart({
       mainSeries = as;
     }
     mainSeriesRef.current = mainSeries;
+
+    // ── 수동 지지/저항선 복원 (symbol 기준으로 저장 — tf 변경/차트 재생성에 영향 없음) ──
+    srLineObjsRef.current.clear();
+    const restoredPrices = loadSRLines(symbolKey);
+    for (const price of restoredPrices) createSRLineObj(price);
+    srPricesRef.current = restoredPrices;
+    notifySRCount();
+
+    // ── 더블클릭: 생성 전용 — 기존 선과 너무 가까우면(±6px) 중복 생성만 방지 ──
+    chart.subscribeDblClick(param => {
+      const ms = mainSeriesRef.current;
+      if (!ms || !param.point) return;
+      const clickedPrice = ms.coordinateToPrice(param.point.y);
+      if (clickedPrice === null || clickedPrice === undefined) return;
+
+      const tooClose = srPricesRef.current.some(p => {
+        const coord = ms.priceToCoordinate(p);
+        return coord !== null && Math.abs(coord - param.point.y) <= SR_DEDUPE_TOLERANCE_PX;
+      });
+      if (tooClose) return;
+
+      addSRLine(roundPrice(clickedPrice));
+    });
+
+    // ── hover/탭 위치가 선(±8px) 근처면 삭제용 X 버튼 표시 ──
+    // 데스크톱: mousemove 기반 crosshairMove로 계속 갱신, 벗어나면 숨김.
+    // 모바일: 단순 탭은 touchmove가 없어 crosshairMove가 갱신되지 않으므로,
+    // 클릭/탭 모두에서 발생하는 subscribeClick도 같은 로직으로 병행 구독한다
+    // (탭 → 표시, 다른 곳 탭 → 갱신/숨김).
+    function updateHoverLine(param) {
+      const ms = mainSeriesRef.current;
+      if (!ms || !param.point) { setHoverLine(null); return; }
+      let hit = null;
+      for (const p of srPricesRef.current) {
+        const coord = ms.priceToCoordinate(p);
+        if (coord !== null && Math.abs(coord - param.point.y) <= SR_HOVER_TOLERANCE_PX) {
+          hit = { price: p, y: coord };
+          break;
+        }
+      }
+      setHoverLine(hit);
+    }
+    chart.subscribeCrosshairMove(updateHoverLine);
+    chart.subscribeClick(updateHoverLine);
 
     // ── 거래량 히스토그램 (별도 priceScaleId로 캔들 가격축과 분리, 하단 오버레이) ──
     const volumeData = buildVolumeData(h);
@@ -209,6 +327,7 @@ export default function AnalysisChart({
     });
     ro.observe(el);
 
+    const srLineObjs = srLineObjsRef.current; // cleanup에서 참조할 안정적인 스냅샷
     return () => {
       ro.disconnect();
       chart.remove();
@@ -219,6 +338,8 @@ export default function AnalysisChart({
       ma100Ref.current = null;
       ma200Ref.current = null;
       volumeRef.current = null;
+      srLineObjs.clear(); // chart.remove()로 이미 소멸된 IPriceLine 참조 정리
+      setHoverLine(null);
     };
   }, [item]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -303,6 +424,8 @@ export default function AnalysisChart({
     const opts = chartColorOpts(theme);
     priceChartRef.current?.applyOptions(opts);
     rsiChartRef.current?.applyOptions(opts);
+    const c = CHART_COLORS[theme] ?? CHART_COLORS.dark;
+    for (const line of srLineObjsRef.current.values()) line.applyOptions({ color: c.srLine });
   }, [theme]);
 
   // ── MA·거래량 토글 (차트 재생성 없이 visibility만 변경) ──────
@@ -314,7 +437,22 @@ export default function AnalysisChart({
 
   return (
     <div className="analysis-charts-wrap">
-      <div ref={priceRef} className="analysis-price-chart" />
+      <div className="analysis-price-chart-wrap">
+        <div ref={priceRef} className="analysis-price-chart" />
+        {hoverLine && (
+          <button
+            type="button"
+            className="sr-line-del-btn"
+            style={{ top: hoverLine.y }}
+            onClick={e => { e.stopPropagation(); removeSRLine(hoverLine.price); }}
+            onMouseDown={e => e.stopPropagation()}
+            onTouchStart={e => e.stopPropagation()}
+            aria-label={`지지/저항선 ${fp(hoverLine.price)} 삭제`}
+          >
+            ×
+          </button>
+        )}
+      </div>
       {showRSI && (
         <div className="analysis-rsi-wrap">
           <div className="analysis-rsi-label">RSI(14)</div>
@@ -323,4 +461,6 @@ export default function AnalysisChart({
       )}
     </div>
   );
-}
+});
+
+export default AnalysisChart;
