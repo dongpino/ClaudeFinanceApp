@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Header from './Header';
 import BottomNav from './BottomNav';
-import { loadBriefing, saveBriefing, kstDateStr } from '../briefingStore';
+import { loadBriefing, saveBriefing, kstDateStr, kstHourBucket, generatedAtHourBucket } from '../briefingStore';
 
 // ── 날짜 포맷 (RSS pubDate → "6/29 14:30") ───────────────────
 function formatPubDate(pubDate) {
@@ -17,9 +17,15 @@ function formatPubDate(pubDate) {
   } catch { return ''; }
 }
 
-// generated_at("YYYY-MM-DD HH:MM KST") → 오늘 생성분이면 "오늘 HH:MM 생성됨"으로 축약
-function formatBriefingMetaLabel(generatedAt) {
+// meta.generated_at("YYYY-MM-DD HH:MM KST") → 오늘 생성분이면 "오늘 HH:MM 생성됨"으로 축약.
+// meta.limited(일일 생성 상한 도달, 서버가 최신 캐시로 대체)면 별도 안내 문구를 보여준다.
+function formatBriefingMetaLabel(meta) {
+  const generatedAt = meta?.generated_at;
   if (!generatedAt) return '';
+  if (meta.limited) {
+    const hour = generatedAt.slice(11, 13);
+    return `오늘 생성 한도 도달 · ${hour}시 브리핑 표시 중`;
+  }
   const datePart = generatedAt.slice(0, 10);
   const timePart = generatedAt.slice(11, 16);
   return datePart === kstDateStr() ? `오늘 ${timePart} 생성됨` : generatedAt;
@@ -252,13 +258,13 @@ export default function BriefingPage({ activePage, onPageChange }) {
 
   useEffect(() => { loadNews(); }, [loadNews]);
 
-  // ── 마운트 시 localStorage에 오늘자 캐시가 있으면 즉시 복원 ──
+  // ── 마운트 시 localStorage에 같은 시간대 캐시가 있으면 즉시 복원 ──
   // (API 호출 없이 바로 보여줘서 재방문 시 불필요한 재생성을 유도하지 않는다)
+  // 유효기간은 서버 Redis 캐시 버킷(1시간)과 정렬 — 시간이 바뀌면 복원하지 않는다.
   useEffect(() => {
     const cached = loadBriefing();
     if (!cached) return;
-    const cachedDate = cached.generated_at?.slice(0, 10);
-    if (cachedDate !== kstDateStr()) return; // 오늘 캐시가 아니면 무시
+    if (generatedAtHourBucket(cached.generated_at) !== kstHourBucket()) return;
     setAiBriefing(cached.briefing);
     setAiMeta(cached.meta ?? null);
     setAiPhase('done');
@@ -282,6 +288,7 @@ export default function BriefingPage({ activePage, onPageChange }) {
       const meta = {
         generated_at: data.generated_at,
         cached:       data.cached,
+        limited:      data.limited ?? false,
         usage:        data.usage,
       };
       setAiBriefing(data.briefing ?? '');
@@ -415,7 +422,7 @@ function AiBody({ phase, briefing, meta, error }) {
         <div className="brf-ai-text">{renderBriefingMarkdown(briefing)}</div>
         {meta && (
           <div className="brf-ai-meta">
-            <span>{formatBriefingMetaLabel(meta.generated_at)}</span>
+            <span>{formatBriefingMetaLabel(meta)}</span>
             {meta.cached && <span className="brf-cached-chip">캐시</span>}
             {meta.usage?.input_tokens && (
               <span>입력 {meta.usage.input_tokens}tok · 출력 {meta.usage.output_tokens}tok</span>

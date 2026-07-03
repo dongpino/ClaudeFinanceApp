@@ -13,21 +13,24 @@
  *  주의:  자동 호출 절대 금지 — 반드시 버튼 클릭 시에만 호출
  * ──────────────────────────────────────────────────────────────
  *
- * 캐싱: 인메모리 20분 (콜드 스타트 시 초기화됨)
- * 환경변수: ANTHROPIC_API_KEY (필수) — Vercel Dashboard에서 설정
+ * 캐싱: Upstash Redis, KST 시간 단위 버킷(1시간) — 서버리스 콜드 스타트와 무관하게 유지됨.
+ *       Redis 연결·조회 실패 시에는 캐시 없이 기존처럼 매번 생성하는 방식으로 폴백한다.
+ * 일일 상한: 하루 20회 생성 — 초과 시 새로 생성하지 않고 가장 최근 캐시를 반환한다.
+ * 환경변수: ANTHROPIC_API_KEY (필수), KV_REST_API_URL / KV_REST_API_TOKEN (Upstash Redis, 선택 —
+ *           없으면 캐시·상한 기능 없이 매번 생성만 수행)
  */
 
-import { collectBTC }       from './_collectors/btc.js';
-import { collectUSIndices } from './_collectors/us-indices.js';
-import { collectKR }        from './_collectors/kr.js';
-import { collectRSSNews }   from './_collectors/rss.js';
+import { Redis }             from '@upstash/redis';
+import { collectBTC }        from './_collectors/btc.js';
+import { collectUSIndices }  from './_collectors/us-indices.js';
+import { collectKR }         from './_collectors/kr.js';
+import { collectRSSNews }    from './_collectors/rss.js';
 
 // ── 상수 ──────────────────────────────────────────────────────
 
-const BRIEFING_CACHE_TTL_MS = 20 * 60 * 1000;  // 20분 캐시
-const ANTHROPIC_API_URL     = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_VERSION     = '2023-06-01';
-const MODEL                 = 'claude-haiku-4-5-20251001';
+const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_VERSION = '2023-06-01';
+const MODEL             = 'claude-haiku-4-5-20251001';
 
 // 비용 통제: 출력 최대 1000 토큰 (마크다운 소제목 구조 + 500자 내외 한국어 본문)
 const MAX_OUTPUT_TOKENS = 1000;
@@ -38,9 +41,12 @@ const NEWS_HEADLINES_FOR_PROMPT = 8;
 // AI 요청 타임아웃: Vercel 서버리스 최대 실행 시간 고려
 const AI_TIMEOUT_MS = 20_000;
 
-// ── 캐시 ──────────────────────────────────────────────────────
-
-let briefingCache = null;  // { data: {...}, timestamp: number }
+// ── Redis 캐시/상한 설정 ─────────────────────────────────────
+const HOURLY_CACHE_TTL_SEC = 24 * 60 * 60;       // 시간별 캐시 항목 TTL(24시간)
+const DAILY_COUNT_TTL_SEC  = 24 * 60 * 60;       // 일일 카운터 TTL(24시간)
+const LATEST_TTL_SEC       = 7 * 24 * 60 * 60;   // "가장 최근 캐시" 보존 기간(여유있게 7일)
+const DAILY_GENERATION_LIMIT = 20;               // 하루 생성 상한
+const LATEST_KEY             = 'briefing:latest';
 
 // ── 유틸 ──────────────────────────────────────────────────────
 
@@ -52,6 +58,98 @@ function fmtKST(date = new Date()) {
   const h  = String(kst.getUTCHours()).padStart(2, '0');
   const mi = String(kst.getUTCMinutes()).padStart(2, '0');
   return `${y}-${mo}-${dy} ${h}:${mi} KST`;
+}
+
+// "YYYY-MM-DD-HH" (KST) — 시간별 캐시 키 버킷
+function kstHourBucket(date = new Date()) {
+  const kst = new Date(new Date(date).getTime() + 9 * 60 * 60 * 1000);
+  const y  = kst.getUTCFullYear();
+  const mo = String(kst.getUTCMonth() + 1).padStart(2, '0');
+  const dy = String(kst.getUTCDate()).padStart(2, '0');
+  const h  = String(kst.getUTCHours()).padStart(2, '0');
+  return `${y}-${mo}-${dy}-${h}`;
+}
+
+// "YYYY-MM-DD" (KST) — 일일 카운터 키
+function kstDateBucket(date = new Date()) {
+  return kstHourBucket(date).slice(0, 10);
+}
+
+// ── Redis 클라이언트 (지연 생성, 환경변수 없으면 null → 호출부에서 폴백) ──
+let redisClient;   // undefined: 아직 시도 안 함, null: 생성 실패/키 없음, Redis: 정상
+
+function getRedis() {
+  if (redisClient !== undefined) return redisClient;
+  const url   = process.env.KV_REST_API_URL;
+  const token = process.env.KV_REST_API_TOKEN;
+  if (!url || !token) {
+    console.warn('[briefing] KV_REST_API_URL/KV_REST_API_TOKEN 없음 — Redis 캐시 비활성화');
+    redisClient = null;
+  } else {
+    redisClient = new Redis({ url, token });
+  }
+  return redisClient;
+}
+
+// 아래 Redis 헬퍼들은 모두 실패 시 예외를 던지지 않고 로그만 남긴 뒤
+// "캐시가 없는 것처럼" 동작하는 값을 반환한다 — 요구사항 4번(장애 시 기능이 죽지 않게).
+
+async function getCachedBriefing(hourKey) {
+  const r = getRedis();
+  if (!r) return null;
+  try {
+    return await r.get(hourKey);
+  } catch (e) {
+    console.error('[briefing] Redis GET 실패 — 캐시 없이 진행:', e.message);
+    return null;
+  }
+}
+
+async function getLatestBriefing() {
+  const r = getRedis();
+  if (!r) return null;
+  try {
+    return await r.get(LATEST_KEY);
+  } catch (e) {
+    console.error('[briefing] Redis latest 조회 실패:', e.message);
+    return null;
+  }
+}
+
+async function getDailyCount(dayKey) {
+  const r = getRedis();
+  if (!r) return 0;
+  try {
+    const v = await r.get(dayKey);
+    return Number(v) || 0;
+  } catch (e) {
+    console.error('[briefing] Redis 카운터 조회 실패 — 0으로 간주:', e.message);
+    return 0;
+  }
+}
+
+async function persistBriefing(hourKey, data) {
+  const r = getRedis();
+  if (!r) return;
+  try {
+    await Promise.all([
+      r.set(hourKey, data, { ex: HOURLY_CACHE_TTL_SEC }),
+      r.set(LATEST_KEY, data, { ex: LATEST_TTL_SEC }),
+    ]);
+  } catch (e) {
+    console.error('[briefing] Redis 저장 실패(응답 자체는 정상 반환):', e.message);
+  }
+}
+
+async function incrementDailyCount(dayKey) {
+  const r = getRedis();
+  if (!r) return;
+  try {
+    const n = await r.incr(dayKey);
+    if (n === 1) await r.expire(dayKey, DAILY_COUNT_TTL_SEC); // 오늘 첫 생성일 때만 TTL 설정
+  } catch (e) {
+    console.error('[briefing] Redis 카운터 증가 실패:', e.message);
+  }
 }
 
 // ── 시장 데이터 수집 ──────────────────────────────────────────
@@ -174,13 +272,16 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  // ── 캐시 확인 ──────────────────────────────────────────────
-  if (briefingCache && Date.now() - briefingCache.timestamp < BRIEFING_CACHE_TTL_MS) {
-    const ageMin = ((Date.now() - briefingCache.timestamp) / 60_000).toFixed(1);
-    console.log(`[briefing] Cache HIT (age=${ageMin}분)`);
+  const hourKey = `briefing:${kstHourBucket()}`;
+  const dayKey  = `briefing:count:${kstDateBucket()}`;
+
+  // ── 서버 캐시 확인 (KST 시간 단위 버킷) ──────────────────────
+  const cached = await getCachedBriefing(hourKey);
+  if (cached) {
+    console.log(`[briefing] Redis 캐시 HIT (${hourKey}) — Anthropic 호출 없음`);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Cache', 'HIT');
-    return res.status(200).json({ ...briefingCache.data, cached: true });
+    return res.status(200).json({ ...cached, cached: true });
   }
 
   // ── API 키 확인 (fail-fast — 없으면 수집·AI 호출 자체를 하지 않음) ──
@@ -192,7 +293,22 @@ export default async function handler(req, res) {
     });
   }
 
-  console.log(`[briefing] Cache MISS — 브리핑 생성 시작 (${fmtKST()})`);
+  // ── 일일 생성 상한 확인 ──────────────────────────────────────
+  const dailyCount = await getDailyCount(dayKey);
+  if (dailyCount >= DAILY_GENERATION_LIMIT) {
+    console.warn(`[briefing] 일일 생성 상한(${DAILY_GENERATION_LIMIT}) 도달(${dayKey}) — 최신 캐시로 대체, Anthropic 호출 없음`);
+    const latest = await getLatestBriefing();
+    if (latest) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Cache', 'LIMIT');
+      return res.status(200).json({ ...latest, cached: true, limited: true });
+    }
+    return res.status(429).json({
+      error: '오늘 생성 한도에 도달했고, 표시할 캐시된 브리핑도 없습니다. 잠시 후 다시 시도해주세요.',
+    });
+  }
+
+  console.log(`[briefing] Redis 캐시 MISS (${hourKey}) — 브리핑 생성 시작 (${fmtKST()})`);
   const startMs = Date.now();
 
   // ── 시장 데이터 + RSS 병렬 수집 ────────────────────────────
@@ -249,7 +365,9 @@ export default async function handler(req, res) {
     cached: false,
   };
 
-  briefingCache = { data, timestamp: Date.now() };
+  // Redis 저장 + 일일 카운터 증가 — 생성에 성공했을 때만 증가시킨다.
+  await persistBriefing(hourKey, data);
+  await incrementDailyCount(dayKey);
 
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Cache', 'MISS');

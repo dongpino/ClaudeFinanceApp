@@ -2,9 +2,11 @@
  * briefingStore.js — AI 시장 브리핑 결과 localStorage 캐시
  *
  * 저장 형식: { briefing: string, generated_at: string(KST), meta: object }
- * generated_at은 서버 fmtKST() 형식("YYYY-MM-DD HH:MM KST")을 그대로 사용 —
- * 날짜(앞 10자)만 비교해 "오늘 생성된 캐시인지"를 판단한다(재호출 남발 방지용,
- * API 호출 자체를 막는 건 아니고 재방문 시 즉시 보여주기 위한 용도).
+ * generated_at은 서버 fmtKST() 형식("YYYY-MM-DD HH:MM KST")을 그대로 사용.
+ *
+ * 유효기간(복원 가능 여부)은 시간 단위(1시간)로 서버 Redis 캐시 버킷과 정렬돼 있다 —
+ * generatedAtHourBucket(generated_at) === kstHourBucket()일 때만 마운트 시 복원한다.
+ * "오늘 HH:MM 생성됨" 라벨 표시는 이와 별개로 날짜(하루) 단위 비교를 쓴다(kstDateStr).
  */
 
 export const STORAGE_KEY = 'finance_briefing_v1';
@@ -32,4 +34,20 @@ export function saveBriefing(data) {
 export function kstDateStr(d = new Date()) {
   const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
   return kst.toISOString().slice(0, 10);
+}
+
+/** 현재 시각(KST) 시간 단위 버킷 "YYYY-MM-DD-HH" — 서버 kstHourBucket()과 동일한 방식 */
+export function kstHourBucket(d = new Date()) {
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  const y  = kst.getUTCFullYear();
+  const mo = String(kst.getUTCMonth() + 1).padStart(2, '0');
+  const dy = String(kst.getUTCDate()).padStart(2, '0');
+  const h  = String(kst.getUTCHours()).padStart(2, '0');
+  return `${y}-${mo}-${dy}-${h}`;
+}
+
+/** 서버 generated_at("YYYY-MM-DD HH:MM KST") → "YYYY-MM-DD-HH" 버킷으로 변환 */
+export function generatedAtHourBucket(generatedAt) {
+  if (!generatedAt || generatedAt.length < 13) return null;
+  return `${generatedAt.slice(0, 10)}-${generatedAt.slice(11, 13)}`;
 }
