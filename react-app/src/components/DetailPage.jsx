@@ -11,6 +11,11 @@ const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumF
 const fc   = n => (n > 0 ? '+' : '') + fp(n);
 const fpct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 
+// unit==='percent'인 종목(미 10년물 금리 등): 값 자체가 %이므로 "4.25%"로,
+// 등락은 %p로 표시해 다른 종목의 등락률(%)과 헷갈리지 않게 한다(MarketCard와 동일 규칙).
+const fpUnit = (n, unit) => unit === 'percent' ? `${n.toFixed(2)}%` : fp(n);
+const fcUnit = (n, unit) => unit === 'percent' ? `${n > 0 ? '+' : ''}${n.toFixed(2)}%p` : fc(n);
+
 function stats90(h90) {
   if (!h90 || !h90.length) return null;
   const closes = h90.map(r => r.close).filter(v => v > 0);
@@ -74,7 +79,7 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
 
   // 상세 데이터가 오면 교체 (90일 포함), 없으면 홈 데이터(30일)로 렌더
   const item = detailItem ?? baseItem;
-  const { direction: dir, name, category, price, change, change_pct, source, as_of, history_90d } = item;
+  const { direction: dir, name, category, price, change, change_pct, source, as_of, history_90d, unit } = item;
   const s = stats90(history_90d);
 
   return (
@@ -93,12 +98,12 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
 
         {/* 현재가 & 변동 */}
         <div className="detail-price-section">
-          <div className="detail-price">{fp(price)}</div>
+          <div className="detail-price">{fpUnit(price, unit)}</div>
           <div className={`detail-change ${dir}`}>
             <span className="detail-change-chip">
-              {ARROW[dir]} {fc(change)}
+              {ARROW[dir]} {fcUnit(change, unit)}
             </span>
-            <span className="detail-change-pct">{fpct(change_pct)}</span>
+            {unit !== 'percent' && <span className="detail-change-pct">{fpct(change_pct)}</span>}
           </div>
         </div>
 
@@ -119,15 +124,15 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
             <div className="stat-grid">
               <div className="stat-item">
                 <span className="stat-label">최고가</span>
-                <span className="stat-value up">{fp(s.high)}</span>
+                <span className="stat-value up">{fpUnit(s.high, unit)}</span>
               </div>
               <div className="stat-item">
                 <span className="stat-label">최저가</span>
-                <span className="stat-value down">{fp(s.low)}</span>
+                <span className="stat-value down">{fpUnit(s.low, unit)}</span>
               </div>
               <div className="stat-item">
                 <span className="stat-label">평균가</span>
-                <span className="stat-value">{fp(s.avg)}</span>
+                <span className="stat-value">{fpUnit(s.avg, unit)}</span>
               </div>
               <div className="stat-item">
                 <span className="stat-label">현재위치</span>
@@ -137,12 +142,12 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
 
             {/* 범위 바 */}
             <div className="range-wrap">
-              <span className="range-edge">{fp(s.low)}</span>
+              <span className="range-edge">{fpUnit(s.low, unit)}</span>
               <div className="range-track">
                 <div className="range-fill" style={{ width: `${s.pos}%` }} />
                 <div className="range-thumb" style={{ left: `${s.pos}%` }} />
               </div>
-              <span className="range-edge">{fp(s.high)}</span>
+              <span className="range-edge">{fpUnit(s.high, unit)}</span>
             </div>
             <div className="range-label">
               90일 최저 &nbsp;·&nbsp; 현재 {s.pos}% 위치 &nbsp;·&nbsp; 90일 최고

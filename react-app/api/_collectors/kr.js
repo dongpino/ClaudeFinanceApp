@@ -1,6 +1,5 @@
 /**
- * _collectors/kr.js — 코스피/원달러 수집 (Vercel 서버리스 전용)
- * data-collector-js/fetch-kr.js의 collectKR 로직과 동일.
+ * _collectors/kr.js — 코스피/코스닥/원달러 수집 (Vercel 서버리스 전용)
  */
 
 const HEADERS = {
@@ -38,10 +37,10 @@ async function fetchEucKR(url, extraHeaders = {}) {
   return new TextDecoder('euc-kr').decode(await res.arrayBuffer());
 }
 
-// ── 코스피 ────────────────────────────────────────────
-async function fetchKOSPICurrent() {
-  const rows = await fetchJSON('https://m.stock.naver.com/api/index/KOSPI/price');
-  if (rows.length < 2) throw new Error(`Naver 응답 행 부족: ${rows.length}`);
+// ── 코스피/코스닥 공통 (Naver 지수 코드로 파라미터화: KOSPI | KOSDAQ) ──
+async function fetchIndexCurrent(naverCode) {
+  const rows = await fetchJSON(`https://m.stock.naver.com/api/index/${naverCode}/price`);
+  if (rows.length < 2) throw new Error(`Naver 응답 행 부족(${naverCode}): ${rows.length}`);
   const current   = cleanNum(rows[0].closePrice);
   const prevClose = cleanNum(rows[1].closePrice);
   return { current, prevClose, change: current - prevClose,
@@ -49,20 +48,20 @@ async function fetchKOSPICurrent() {
            asOf: rows[0].localTradedAt + ' (Naver 종가)', source: 'Naver' };
 }
 
-async function fetchKOSPIHistory(pageSize = 30) {
-  const rows = await fetchJSON(`https://m.stock.naver.com/api/index/KOSPI/price?pageSize=${pageSize}`);
+async function fetchIndexHistory(naverCode, pageSize = 30) {
+  const rows = await fetchJSON(`https://m.stock.naver.com/api/index/${naverCode}/price?pageSize=${pageSize}`);
   const result = rows.filter(r => r.localTradedAt && r.closePrice)
     .map(r => ({ date: r.localTradedAt, close: r2(cleanNum(r.closePrice)) }));
-  if (result.length < 5) throw new Error(`KOSPI history 부족: ${result.length}행`);
+  if (result.length < 5) throw new Error(`${naverCode} history 부족: ${result.length}행`);
   return result.sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
-async function fetchKOSPIHistory90d(numPages = 15) {
+async function fetchIndexHistory90d(naverCode, numPages = 15) {
   const extra = { Accept: 'text/html,*/*', Referer: 'https://finance.naver.com/' };
   const seen  = new Map();
   const pages = await Promise.all(
     Array.from({ length: numPages }, (_, i) =>
-      fetchEucKR(`https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page=${i + 1}`, extra)
+      fetchEucKR(`https://finance.naver.com/sise/sise_index_day.naver?code=${naverCode}&page=${i + 1}`, extra)
     )
   );
   for (const html of pages) {
@@ -75,8 +74,32 @@ async function fetchKOSPIHistory90d(numPages = 15) {
       catch { /* skip */ }
     }
   }
-  if (seen.size < 5) throw new Error(`sise_index_day 파싱 실패: ${seen.size}행`);
+  if (seen.size < 5) throw new Error(`sise_index_day 파싱 실패(${naverCode}): ${seen.size}행`);
   return [...seen.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).slice(-90).map(([date, close]) => ({ date, close }));
+}
+
+// 코스피/코스닥 공통 조립 — id/name/symbol/naverCode만 다르고 나머지 로직은 동일.
+async function buildIndexItem({ id, name, symbol, naverCode }, include90d, sign) {
+  const kc = await fetchIndexCurrent(naverCode);
+  const item = {
+    id, name, symbol,
+    price: r2(kc.current), prev_close: r2(kc.prevClose),
+    change: r2(kc.change), change_pct: r4(kc.changePct),
+    direction: direction(kc.change), source: kc.source, as_of: kc.asOf,
+    category: '지수', history: [], ohlc_available: false, history_90d: [],
+  };
+  const tasks = [
+    fetchIndexHistory(naverCode, 30).then(h => { item.history = h; }).catch(e => console.warn(`[${id}] history 실패: ${e.message}`)),
+  ];
+  if (include90d) {
+    tasks.push(
+      fetchIndexHistory90d(naverCode, 15).then(h => { item.history_90d = h; }).catch(e => console.warn(`[${id}] history_90d 실패: ${e.message}`))
+    );
+  }
+  await Promise.allSettled(tasks);
+  recalcChange(item);
+  console.log(`[${id}] ${item.price.toLocaleString()}  ${sign(item.change)} (${sign(item.change_pct)}%)  hist=${item.history.length}  hist_90d=${item.history_90d.length}`);
+  return item;
 }
 
 // ── 원/달러 ──────────────────────────────────────────
@@ -146,32 +169,14 @@ function recalcChange(item) {
 export async function collectKR({ include90d = true } = {}) {
   const sign = n => (n >= 0 ? '+' : '') + n.toFixed(2);
 
-  // 코스피와 원/달러를 병렬로 수집 (순차 → 병렬: ~8-12s → ~4-6s)
-  const [kospiResult, krwResult] = await Promise.allSettled([
+  // 코스피·코스닥·원/달러를 병렬로 수집 (순차 → 병렬: ~8-12s → ~4-6s)
+  const [kospiResult, kosdaqResult, krwResult] = await Promise.allSettled([
 
     // ── 코스피 ───────────────────────────────────────
-    (async () => {
-      const kc    = await fetchKOSPICurrent();
-      const kospi = {
-        id: 'kospi', name: '코스피 (^KS11)', symbol: '^KS11',
-        price: r2(kc.current), prev_close: r2(kc.prevClose),
-        change: r2(kc.change), change_pct: r4(kc.changePct),
-        direction: direction(kc.change), source: kc.source, as_of: kc.asOf,
-        category: '지수', history: [], ohlc_available: false, history_90d: [],
-      };
-      const kospiTasks = [
-        fetchKOSPIHistory(30).then(h => { kospi.history = h; }).catch(e => console.warn(`[kospi] history 실패: ${e.message}`)),
-      ];
-      if (include90d) {
-        kospiTasks.push(
-          fetchKOSPIHistory90d(15).then(h => { kospi.history_90d = h; }).catch(e => console.warn(`[kospi] history_90d 실패: ${e.message}`))
-        );
-      }
-      await Promise.allSettled(kospiTasks);
-      recalcChange(kospi);
-      console.log(`[kospi] ${kospi.price.toLocaleString()}  ${sign(kospi.change)} (${sign(kospi.change_pct)}%)  hist=${kospi.history.length}  hist_90d=${kospi.history_90d.length}`);
-      return kospi;
-    })(),
+    buildIndexItem({ id: 'kospi', name: '코스피 (^KS11)', symbol: '^KS11', naverCode: 'KOSPI' }, include90d, sign),
+
+    // ── 코스닥 ───────────────────────────────────────
+    buildIndexItem({ id: 'kosdaq', name: '코스닥 (^KQ11)', symbol: '^KQ11', naverCode: 'KOSDAQ' }, include90d, sign),
 
     // ── 원/달러 ──────────────────────────────────────
     (async () => {
@@ -218,6 +223,8 @@ export async function collectKR({ include90d = true } = {}) {
   const items = [];
   if (kospiResult.status === 'fulfilled') items.push(kospiResult.value);
   else console.error(`[kospi] 수집 실패: ${kospiResult.reason?.message}`);
+  if (kosdaqResult.status === 'fulfilled') items.push(kosdaqResult.value);
+  else console.error(`[kosdaq] 수집 실패: ${kosdaqResult.reason?.message}`);
   if (krwResult.status === 'fulfilled') items.push(krwResult.value);
   else console.error(`[usdkrw] 수집 실패: ${krwResult.reason?.message}`);
 

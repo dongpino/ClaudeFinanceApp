@@ -1,5 +1,5 @@
 /**
- * _collectors/us-indices.js — 나스닥/다우/VIX 수집 (Vercel 서버리스 전용)
+ * _collectors/us-indices.js — 나스닥/다우/VIX/미국채10년/DXY 수집 (Vercel 서버리스 전용)
  * data-collector-js/fetch-us-indices.js의 collectUSIndices 로직과 동일.
  */
 
@@ -44,7 +44,7 @@ async function fetchText(url) {
 
 async function fetchCNBCBulk() {
   const params = new URLSearchParams({
-    symbols: '.IXIC|.DJI|.VIX', requestMethod: 'itv',
+    symbols: '.IXIC|.DJI|.VIX|US10Y|.DXY', requestMethod: 'itv',
     noform: '1', partnerId: '2', fund: '1', exthrs: '1', output: 'json', events: '0',
   });
   const data = await fetchJSON(`https://quote.cnbc.com/quote-html-webservice/quote.htm?${params}`);
@@ -56,7 +56,9 @@ async function fetchCNBCBulk() {
   return bySymbol;
 }
 
-function buildItemFromCNBC(q, { id, name, symbol, category }) {
+// unit: 'percent'면 값 자체가 %(예: 국채 금리) — 카드에서 "4.25%" / 등락 "+0.02%p"로 표시,
+// 다른 카드의 등락률(%)과 혼동되지 않도록 change_pct는 표시하지 않는다(MarketCard/DetailPage 참고).
+function buildItemFromCNBC(q, { id, name, symbol, category, unit }) {
   const current   = cleanNum(q.last);
   const prevClose = cleanNum(q.previous_day_closing);
   const change    = current - prevClose;
@@ -71,6 +73,7 @@ function buildItemFromCNBC(q, { id, name, symbol, category }) {
     source:         'CNBC',
     as_of:          fmtKST(),
     category,
+    unit,
     history:        [],
     ohlc_available: false,
     history_90d:    [],
@@ -146,6 +149,23 @@ async function fetchHistoryNaverWorld(symbol, numRows = 30) {
     .sort((a, b) => (a.date < b.date ? -1 : 1));  // API는 최신순 → 날짜 오름차순 정렬
 }
 
+// Naver Market Index API(m.stock.naver.com) — 환율/채권 등 category+reutersCode 기반 시세.
+// 미 10년물 금리(category=bond, reutersCode=US10YT=RR)와 DXY(category=exchange,
+// reutersCode=FX_USDX) 히스토리 소스. pageSize 10~60 제한(60 초과 요청 시 400 응답).
+async function fetchHistoryNaverMarketIndex(category, reutersCode, numRows = 30) {
+  const pageSize = Math.max(10, Math.min(numRows, 60));
+  const data = await fetchJSON(
+    `https://m.stock.naver.com/front-api/marketIndex/prices?page=1&pageSize=${pageSize}` +
+    `&category=${category}&reutersCode=${encodeURIComponent(reutersCode)}`
+  );
+  const rows = data?.result;
+  if (!Array.isArray(rows) || rows.length === 0)
+    throw new Error(`Naver marketIndex ${category}/${reutersCode} 데이터 없음`);
+  return rows
+    .map(r => ({ date: r.localTradedAt.slice(0, 10), close: r2(cleanNum(r.closePrice)) }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
 function recalcChange(item) {
   if (Math.abs(item.change) > 0.01) return;
   const h = item.history;
@@ -161,15 +181,18 @@ function recalcChange(item) {
 }
 
 export async function collectUSIndices({ include90d = true } = {}) {
-  // CNBC bulk (실패 시 3종목 전체 실패 — 같은 API 공유)
+  // CNBC bulk (실패 시 5종목 전체 실패 — 같은 API 공유)
   const cnbc   = await fetchCNBCBulk();
-  const nasdaq = buildItemFromCNBC(cnbc['.IXIC'], { id: 'nasdaq', name: '나스닥 (^IXIC)', symbol: '^IXIC', category: '지수' });
-  const dow    = buildItemFromCNBC(cnbc['.DJI'],  { id: 'dow',    name: '다우존스 (^DJI)', symbol: '^DJI',  category: '지수' });
-  const vix    = buildItemFromCNBC(cnbc['.VIX'],  { id: 'vix',    name: 'VIX 공포지수',    symbol: '^VIX',  category: '지수' });
+  const nasdaq = buildItemFromCNBC(cnbc['.IXIC'],  { id: 'nasdaq', name: '나스닥 (^IXIC)',        symbol: '^IXIC', category: '지수' });
+  const dow    = buildItemFromCNBC(cnbc['.DJI'],   { id: 'dow',    name: '다우존스 (^DJI)',        symbol: '^DJI',  category: '지수' });
+  const vix    = buildItemFromCNBC(cnbc['.VIX'],   { id: 'vix',    name: 'VIX 공포지수',           symbol: '^VIX',  category: '지수' });
+  const us10y  = buildItemFromCNBC(cnbc['US10Y'],  { id: 'us10y',  name: '미국 10년물 국채금리',   symbol: 'US10Y', category: '매크로', unit: 'percent' });
+  const dxy    = buildItemFromCNBC(cnbc['.DXY'],   { id: 'dxy',    name: '달러인덱스 (DXY)',       symbol: '.DXY',  category: '매크로' });
 
   // history 30일 (per-item isolation)
-  // Dow : Naver World → FRED DJIA (로컬 확인, Vercel 불확실)
-  // VIX : Naver World → CBOE CDN CSV (완전 독립, Vercel 확인됨)
+  // Dow  : Naver World → FRED DJIA (로컬 확인, Vercel 불확실)
+  // VIX  : Naver World → CBOE CDN CSV (완전 독립, Vercel 확인됨)
+  // US10Y/DXY : Naver Market Index API(m.stock.naver.com) — 단일 소스, 폴백 없음(다른 지표와 동일 수준)
   await Promise.allSettled([
     fetchHistoryNaverSise('NAS@IXIC', 3)
       .then(h => { nasdaq.history = h; })
@@ -184,9 +207,17 @@ export async function collectUSIndices({ include90d = true } = {}) {
       .catch(e => { console.warn(`[vix] Naver world 실패: ${e.message} → CBOE CSV 폴백`); return fetchHistoryCBOEVIX(30); })
       .then(h => { vix.history = h; })
       .catch(e => console.warn(`[vix] history 실패: ${e.message}`)),
+
+    fetchHistoryNaverMarketIndex('bond', 'US10YT=RR', 30)
+      .then(h => { us10y.history = h; })
+      .catch(e => console.warn(`[us10y] history 실패: ${e.message}`)),
+
+    fetchHistoryNaverMarketIndex('exchange', 'FX_USDX', 30)
+      .then(h => { dxy.history = h; })
+      .catch(e => console.warn(`[dxy] history 실패: ${e.message}`)),
   ]);
 
-  // history_90d — 상세 요청 시에만 수집
+  // history_90d — 상세 요청 시에만 수집 (US10Y/DXY는 Naver marketIndex pageSize 상한 60으로 대체)
   if (include90d) {
     await Promise.allSettled([
       fetchHistoryNaverSise('NAS@IXIC', 9)
@@ -202,14 +233,22 @@ export async function collectUSIndices({ include90d = true } = {}) {
         .catch(e => { console.warn(`[vix] Naver world 90d 실패: ${e.message} → CBOE CSV 폴백`); return fetchHistoryCBOEVIX(90); })
         .then(h => { vix.history_90d = h; })
         .catch(e => console.warn(`[vix] history_90d 실패: ${e.message}`)),
+
+      fetchHistoryNaverMarketIndex('bond', 'US10YT=RR', 60)
+        .then(h => { us10y.history_90d = h; })
+        .catch(e => console.warn(`[us10y] history_90d 실패: ${e.message}`)),
+
+      fetchHistoryNaverMarketIndex('exchange', 'FX_USDX', 60)
+        .then(h => { dxy.history_90d = h; })
+        .catch(e => console.warn(`[dxy] history_90d 실패: ${e.message}`)),
     ]);
   }
 
   const sign = n => (n >= 0 ? '+' : '') + n.toFixed(2);
-  for (const it of [nasdaq, dow, vix]) {
+  for (const it of [nasdaq, dow, vix, us10y, dxy]) {
     recalcChange(it);
     console.log(`[${it.id}] ${it.price.toLocaleString()}  ${sign(it.change)} (${sign(it.change_pct)}%)  hist=${it.history.length}  hist_90d=${it.history_90d.length}`);
   }
 
-  return [nasdaq, dow, vix];
+  return [nasdaq, dow, vix, us10y, dxy];
 }

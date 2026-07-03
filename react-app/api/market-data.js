@@ -2,9 +2,9 @@
  * api/market-data.js — Vercel 서버리스 함수
  *
  * GET /api/market-data
- *   → 6종목 현재가 + 30일 history (history_90d 없음, 홈 화면용 경량)
+ *   → 9종목 현재가 + 30일 history (history_90d 없음, 홈 화면용 경량)
  *
- * GET /api/market-data?id=btc  (또는 nasdaq / dow / kospi / vix / usdkrw)
+ * GET /api/market-data?id=btc  (또는 nasdaq / dow / kospi / kosdaq / vix / usdkrw / us10y / dxy)
  *   → 해당 1종목의 전체 데이터 (history_90d 포함, 상세 화면용)
  *
  * 캐싱: 인메모리 5분 + CDN s-maxage=300
@@ -18,7 +18,8 @@ import { collectKR }        from './_collectors/kr.js';
 let   cacheHome   = null;   // { data: { updated_at, items }, timestamp }
 const cacheDetail = {};     // { [id]: { data: { updated_at, item }, timestamp } }
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const ITEM_ORDER   = ['nasdaq', 'dow', 'kospi', 'btc', 'vix', 'usdkrw'];
+const ITEM_ORDER   = ['nasdaq', 'dow', 'kospi', 'kosdaq', 'btc', 'vix', 'usdkrw', 'us10y', 'dxy'];
+const US_INDICES_IDS = ['nasdaq', 'dow', 'vix', 'us10y', 'dxy'];
 
 function fmtKST(date = new Date()) {
   const kst = new Date(new Date(date).getTime() + 9 * 60 * 60 * 1000);
@@ -42,7 +43,7 @@ export default async function handler(req, res) {
   return id ? handleDetail(req, res, id) : handleHome(req, res);
 }
 
-// ── 홈 (6종목, 30일만) ────────────────────────────────────
+// ── 홈 (9종목, 30일만) ────────────────────────────────────
 async function handleHome(req, res) {
   if (cacheHome && Date.now() - cacheHome.timestamp < CACHE_TTL_MS) {
     const ageS = Math.floor((Date.now() - cacheHome.timestamp) / 1000);
@@ -80,7 +81,7 @@ async function handleHome(req, res) {
     return res.status(500).json({ error: '데이터 수집 실패' });
   }
 
-  console.log(`[market-data/home] ${items.length}/6 종목 완료 (${elapsed}s)`);
+  console.log(`[market-data/home] ${items.length}/${ITEM_ORDER.length} 종목 완료 (${elapsed}s)`);
   const data = { updated_at: fmtKST(), items };
   cacheHome = { data, timestamp: Date.now() };
 
@@ -108,7 +109,7 @@ async function handleDetail(req, res, id) {
     let collected;
     if (id === 'btc') {
       collected = [await collectBTC({ include90d: true })];
-    } else if (['nasdaq', 'dow', 'vix'].includes(id)) {
+    } else if (US_INDICES_IDS.includes(id)) {
       collected = await collectUSIndices({ include90d: true });
     } else {
       collected = await collectKR({ include90d: true });

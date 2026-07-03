@@ -7,6 +7,11 @@ const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumF
 const fc   = n => (n > 0 ? '+' : '') + fp(n);
 const fpct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 
+// unit==='percent'인 카드(미 10년물 금리 등): 값 자체가 %이므로 "4.25%"로,
+// 등락은 %p로 표시해 다른 카드의 등락률(%)과 헷갈리지 않게 한다.
+const fpUnit = (n, unit) => unit === 'percent' ? `${n.toFixed(2)}%` : fp(n);
+const fcUnit = (n, unit) => unit === 'percent' ? `${n > 0 ? '+' : ''}${n.toFixed(2)}%p` : fc(n);
+
 export function detectIssues(item) {
   const issues = [];
   if (!item.price || item.price === 0)
@@ -20,7 +25,7 @@ export function detectIssues(item) {
 
 export default function MarketCard({ item }) {
   const navigate = useNavigate();
-  const { direction: dir, name, category, price, change, change_pct, source, as_of, history } = item;
+  const { direction: dir, name, category, price, change, change_pct, source, as_of, history, unit } = item;
   const issues = detectIssues(item);
 
   return (
@@ -45,10 +50,10 @@ export default function MarketCard({ item }) {
             <span className="card-cat">{category}</span>
           </div>
         </div>
-        <div className="card-price">{fp(price)}</div>
+        <div className="card-price">{fpUnit(price, unit)}</div>
         <div className={`card-change ${dir}`}>
-          <span className="change-chip">{ARROW[dir]} {fc(change)}</span>
-          <span className="change-pct">{fpct(change_pct)}</span>
+          <span className="change-chip">{ARROW[dir]} {fcUnit(change, unit)}</span>
+          {unit !== 'percent' && <span className="change-pct">{fpct(change_pct)}</span>}
         </div>
       </div>
 
