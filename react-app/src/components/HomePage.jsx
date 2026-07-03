@@ -1,18 +1,32 @@
 import { useState } from 'react';
 import Header from './Header';
 import CategoryTabs from './CategoryTabs';
+import MajorEditPanel from './MajorEditPanel';
 import MarketCard, { detectIssues } from './MarketCard';
 import BottomNav from './BottomNav';
 import { useData } from '../DataContext';
-import { itemsInCategory, DEFAULT_CATEGORY } from '../itemCategories';
+import { itemsInCategory, DEFAULT_CATEGORY, ITEM_CATEGORIES } from '../itemCategories';
+import { loadMajorIds, saveMajorIds } from '../homeMajorStore';
 
-const EXPECTED_IDS = ['nasdaq', 'dow', 'kospi', 'btc', 'vix', 'usdkrw'];
+// 경고 배지 시스템이 검사할 전체 종목 — itemCategories.js가 단일 정의 소스이므로
+// 여기서 별도로 유지하지 않고 그대로 파생시킨다(새 종목 추가 시 이 목록도 자동 반영).
+const EXPECTED_IDS = ITEM_CATEGORIES.map(c => c.id);
 
 export default function HomePage({ activePage, onPageChange }) {
   const { items, updatedAt, loadError, source } = useData();
   const [activeCat, setActiveCat] = useState(DEFAULT_CATEGORY);
 
-  const list      = itemsInCategory(items, activeCat);
+  // "주요" 탭 사용자 선택(최대 4개) — 없으면 loadMajorIds()가 기본값으로 폴백.
+  const [majorIds, setMajorIds]         = useState(loadMajorIds);
+  const [editingMajor, setEditingMajor] = useState(false);
+
+  function handleSaveMajor(ids) {
+    setMajorIds(ids);
+    saveMajorIds(ids);
+    setEditingMajor(false);
+  }
+
+  const list      = itemsInCategory(items, activeCat, majorIds);
   const isSolo    = list.length === 1;
   const cols      = isSolo ? 1 : 2;
   const rowCount  = list.length ? Math.ceil(list.length / cols) : 1;
@@ -52,7 +66,11 @@ export default function HomePage({ activePage, onPageChange }) {
           </div>
         )}
 
-        <CategoryTabs activeCat={activeCat} onChange={setActiveCat} />
+        <CategoryTabs
+          activeCat={activeCat}
+          onChange={setActiveCat}
+          onEditMajor={() => setEditingMajor(true)}
+        />
         <main
           className={`grid${isSolo ? ' solo' : ''}`}
           style={gridStyle}
@@ -76,6 +94,9 @@ export default function HomePage({ activePage, onPageChange }) {
           )}
         </main>
       </div>
+      {editingMajor && (
+        <MajorEditPanel selectedIds={majorIds} onSave={handleSaveMajor} />
+      )}
       <BottomNav activePage={activePage} onPageChange={onPageChange} />
     </>
   );

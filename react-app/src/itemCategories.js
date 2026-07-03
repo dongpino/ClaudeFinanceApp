@@ -35,10 +35,22 @@ export const CATEGORY_TABS = [
 
 export const DEFAULT_CATEGORY = 'major';
 
-/** 서버에서 받은 items 중 categoryKey 탭에 속하는 것만, 원래 순서를 유지해 반환 */
-export function itemsInCategory(items, categoryKey) {
-  const idsInCat = new Set(
-    ITEM_CATEGORIES.filter(c => c.categories.includes(categoryKey)).map(c => c.id)
-  );
+// 'major'(주요) 탭의 기본값 — ITEM_CATEGORIES에 categories:['major']로 태그된 종목들.
+// 사용자가 홈 탭에서 직접 선택을 저장하면(homeMajorStore.js) 이 기본값 대신 그 선택을
+// 쓰게 되므로, 여기 하드코딩된 'major' 태그는 "저장된 선택이 없을 때의 기본값 정의"로만
+// 쓰인다 — 실제 필터링은 itemsInCategory()에 넘기는 majorIds가 담당한다.
+export const DEFAULT_MAJOR_IDS = ITEM_CATEGORIES
+  .filter(c => c.categories.includes('major'))
+  .map(c => c.id);
+
+/**
+ * 서버에서 받은 items 중 categoryKey 탭에 속하는 것만, 원래 순서를 유지해 반환.
+ * categoryKey==='major'일 때만 고정된 categories 태그 대신 majorIds(사용자 선택,
+ * 없으면 DEFAULT_MAJOR_IDS)를 기준으로 필터링한다.
+ */
+export function itemsInCategory(items, categoryKey, majorIds = DEFAULT_MAJOR_IDS) {
+  const idsInCat = categoryKey === 'major'
+    ? new Set(majorIds)
+    : new Set(ITEM_CATEGORIES.filter(c => c.categories.includes(categoryKey)).map(c => c.id));
   return items.filter(it => idsInCat.has(it.id));
 }

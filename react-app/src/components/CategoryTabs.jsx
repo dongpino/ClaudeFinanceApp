@@ -1,6 +1,6 @@
 import { CATEGORY_TABS } from '../itemCategories';
 
-export default function CategoryTabs({ activeCat, onChange }) {
+export default function CategoryTabs({ activeCat, onChange, onEditMajor }) {
   return (
     <div className="tabs" role="tablist">
       {CATEGORY_TABS.map(({ key, label }) => (
@@ -14,6 +14,11 @@ export default function CategoryTabs({ activeCat, onChange }) {
           {label}
         </button>
       ))}
+      {activeCat === 'major' && onEditMajor && (
+        <button className="major-edit-trigger" onClick={onEditMajor}>
+          편집
+        </button>
+      )}
     </div>
   );
 }
