@@ -78,6 +78,12 @@ function renderBriefingMarkdown(text) {
   });
 }
 
+// "YYYY-MM-DD" → 칩에 표시할 짧은 "M/D" 형식
+function formatHistoryChipDate(dateStr) {
+  const [, mo, dy] = dateStr.split('-');
+  return `${Number(mo)}/${Number(dy)}`;
+}
+
 // ── 헤드라인 뉴스 레이아웃 ────────────────────────────────────
 const SOURCE_PALETTE = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4'];
 
@@ -239,6 +245,15 @@ export default function BriefingPage({ activePage, onPageChange }) {
   const [aiMeta, setAiMeta]             = useState(null);   // { generated_at, usage, cached }
   const [aiError, setAiError]           = useState(null);
 
+  // ── 지난 브리핑(히스토리) 상태 ──────────────
+  const [historyPhase, setHistoryPhase]   = useState('loading'); // loading | done | error
+  const [historyDates, setHistoryDates]   = useState([]);        // ["YYYY-MM-DD", ...] 최신순
+  const [historyShowAll, setHistoryShowAll] = useState(false);   // false: 최근 7일만, true: 최대 30일
+  const [selectedDate, setSelectedDate]   = useState(null);      // null이면 오늘 브리핑 표시 중
+  const [historyDetail, setHistoryDetail] = useState(null);      // 선택한 날짜의 브리핑 데이터
+  const [historyDetailPhase, setHistoryDetailPhase] = useState('idle'); // idle | loading | done | error
+  const [historyDetailError, setHistoryDetailError] = useState(null);
+
   // ── 뉴스 로드 ─────────────────────────────
   const loadNews = useCallback(async () => {
     setNewsPhase('loading');
@@ -301,6 +316,42 @@ export default function BriefingPage({ activePage, onPageChange }) {
     }
   }
 
+  // ── 지난 브리핑 목록 로드 (탭 진입 시 1회) ──
+  // 실패해도 오늘의 AI 브리핑·뉴스 기능과는 완전히 분리된 상태이므로 영향 없음.
+  useEffect(() => {
+    fetch('/api/briefing-history?list=true')
+      .then(res => res.json())
+      .then(data => {
+        setHistoryDates(Array.isArray(data.dates) ? data.dates : []);
+        setHistoryPhase('done');
+      })
+      .catch(() => setHistoryPhase('error'));
+  }, []);
+
+  // ── 지난 브리핑 날짜 선택 ────────────────────
+  async function selectHistoryDate(date) {
+    setSelectedDate(date);
+    setHistoryDetailPhase('loading');
+    setHistoryDetailError(null);
+    try {
+      const res = await fetch(`/api/briefing-history?date=${encodeURIComponent(date)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setHistoryDetail(data);
+      setHistoryDetailPhase('done');
+    } catch (e) {
+      setHistoryDetailError(e.message);
+      setHistoryDetailPhase('error');
+    }
+  }
+
+  function backToTodayBriefing() {
+    setSelectedDate(null);
+    setHistoryDetail(null);
+    setHistoryDetailPhase('idle');
+    setHistoryDetailError(null);
+  }
+
   return (
     <>
       <Header />
@@ -318,24 +369,50 @@ export default function BriefingPage({ activePage, onPageChange }) {
             </div>
 
             <div className="brf-ai-card">
-              <AiBody
-                phase={aiPhase}
-                briefing={aiBriefing}
-                meta={aiMeta}
-                error={aiError}
-              />
-              <button
-                className={`brf-gen-btn${aiPhase === 'loading' ? ' loading' : ''}`}
-                onClick={generateBriefing}
-                disabled={aiPhase === 'loading'}
-              >
-                {aiPhase === 'loading' ? '생성 중…' :
-                 aiPhase === 'done'    ? '다시 생성' :
-                 aiPhase === 'error'   ? '다시 시도' :
-                 'AI 브리핑 생성'}
-              </button>
+              {selectedDate ? (
+                <HistoryDetailBody
+                  phase={historyDetailPhase}
+                  date={selectedDate}
+                  briefing={historyDetail}
+                  error={historyDetailError}
+                />
+              ) : (
+                <AiBody
+                  phase={aiPhase}
+                  briefing={aiBriefing}
+                  meta={aiMeta}
+                  error={aiError}
+                />
+              )}
+
+              {selectedDate ? (
+                <button className="brf-gen-btn brf-gen-btn-secondary" onClick={backToTodayBriefing}>
+                  오늘 브리핑으로 돌아가기
+                </button>
+              ) : (
+                <button
+                  className={`brf-gen-btn${aiPhase === 'loading' ? ' loading' : ''}`}
+                  onClick={generateBriefing}
+                  disabled={aiPhase === 'loading'}
+                >
+                  {aiPhase === 'loading' ? '생성 중…' :
+                   aiPhase === 'done'    ? '다시 생성' :
+                   aiPhase === 'error'   ? '다시 시도' :
+                   'AI 브리핑 생성'}
+                </button>
+              )}
             </div>
           </section>
+
+          {/* ── 지난 브리핑 섹션 ───────────────────── */}
+          <HistorySection
+            phase={historyPhase}
+            dates={historyDates}
+            selectedDate={selectedDate}
+            showAll={historyShowAll}
+            onToggleShowAll={() => setHistoryShowAll(v => !v)}
+            onSelectDate={selectHistoryDate}
+          />
 
           {/* ── RSS 뉴스 섹션 ──────────────────────── */}
           <section className="brf-section">
@@ -429,6 +506,77 @@ function AiBody({ phase, briefing, meta, error }) {
             )}
           </div>
         )}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ── 지난 브리핑 섹션 ────────────────────────────────────────────
+// 목록 로딩 중이거나(깜빡임 방지 위해 조용히 비표시) 실패/빈 목록이면 섹션 자체를 숨긴다 —
+// 요구사항 4번대로 오늘의 AI 브리핑·뉴스 기능에는 전혀 영향을 주지 않는다.
+function HistorySection({ phase, dates, selectedDate, showAll, onToggleShowAll, onSelectDate }) {
+  if (phase !== 'done' || dates.length === 0) return null;
+
+  const visible  = dates.slice(0, showAll ? 30 : 7);
+  const hasMore  = !showAll && dates.length > 7;
+
+  return (
+    <section className="brf-section">
+      <div className="brf-section-head">
+        <span className="brf-section-title">지난 브리핑</span>
+      </div>
+      <div className="brf-history-scroll">
+        {visible.map(date => (
+          <button
+            key={date}
+            className={`brf-history-chip${selectedDate === date ? ' active' : ''}`}
+            onClick={() => onSelectDate(date)}
+          >
+            {formatHistoryChipDate(date)}
+          </button>
+        ))}
+        {hasMore && (
+          <button className="brf-history-chip brf-history-more" onClick={onToggleShowAll}>
+            더보기
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── 지난 브리핑 상세(선택한 날짜) 본문 ─────────────────────────
+function HistoryDetailBody({ phase, date, briefing, error }) {
+  if (phase === 'loading') {
+    return (
+      <div className="brf-ai-loading">
+        <span className="brf-dot" />
+        <span className="brf-dot" />
+        <span className="brf-dot" />
+        <span>{date} 브리핑을 불러오는 중…</span>
+      </div>
+    );
+  }
+
+  if (phase === 'error') {
+    return (
+      <div className="brf-ai-error">
+        <p className="brf-error-title">{date} 브리핑을 불러올 수 없습니다</p>
+        <p className="brf-error-detail">{error}</p>
+      </div>
+    );
+  }
+
+  if (phase === 'done' && briefing) {
+    return (
+      <div className="brf-ai-result">
+        <div className="brf-history-label">{date} 브리핑</div>
+        <div className="brf-ai-text">{renderBriefingMarkdown(briefing.briefing)}</div>
+        <div className="brf-ai-meta">
+          <span>{briefing.generated_at}</span>
+        </div>
       </div>
     );
   }
