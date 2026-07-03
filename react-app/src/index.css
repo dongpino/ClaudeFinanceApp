@@ -633,11 +633,22 @@ body {
   touch-action: pan-y;
 }
 
-/* 지지/저항선 삭제 X 버튼 — hover/탭 시 선 옆(가격축 라벨 왼쪽)에 표시 */
+/* 지지/저항선 삭제 X 버튼 — hover/탭 시 선 옆(가격축 라벨 왼쪽)에 표시.
+   버튼 자체(hit box)는 크게 잡고 안쪽 .sr-line-del-btn-dot만 작게 그려서,
+   보이는 크기는 그대로 두면서 클릭/hover 판정 영역만 넓힌다(마우스가 선→버튼
+   이동 중 판정이 빠지는 구간이 없도록). */
 .sr-line-del-btn {
   position: absolute;
-  right: 84px; /* SCALE_WIDTH(80px) + 여백 — 가격축 라벨과 겹치지 않게 */
+  right: 78px; /* 안쪽 dot 중심이 예전 20px 버튼과 같은 위치에 오도록(94px) 맞춘 값 */
   transform: translateY(-50%);
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; padding: 0;
+  cursor: pointer;
+  z-index: 5;
+  -webkit-tap-highlight-color: transparent;
+}
+.sr-line-del-btn-dot {
   width: 20px; height: 20px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 50%;
@@ -645,13 +656,10 @@ body {
   border: 1px solid var(--border);
   color: var(--text-2);
   font-size: 13px; font-weight: 700; line-height: 1;
-  cursor: pointer;
-  z-index: 5;
-  -webkit-tap-highlight-color: transparent;
   transition: border-color .15s, color .15s, background .15s;
 }
-.sr-line-del-btn:hover,
-.sr-line-del-btn:active {
+.sr-line-del-btn:hover .sr-line-del-btn-dot,
+.sr-line-del-btn:active .sr-line-del-btn-dot {
   border-color: var(--down); color: var(--down); background: var(--down-dim);
 }
 .analysis-rsi-wrap {

@@ -15,7 +15,10 @@ const CHART_COLORS = {
 // 수동 지지/저항선 — 더블클릭 시 기존 선과 너무 가까우면 중복 생성 방지(px)
 const SR_DEDUPE_TOLERANCE_PX = 6;
 // 커서/탭 위치가 선에서 이 거리(px) 이내면 삭제용 X 버튼을 표시
-const SR_HOVER_TOLERANCE_PX = 8;
+const SR_HOVER_TOLERANCE_PX = 12;
+// 선에서 벗어나도 즉시 숨기지 않고 이 시간(ms) 동안 대기 — 그 사이 X 버튼에 도달하면 유지되어
+// hover 판정이 버튼 표시/숨김을 빠르게 반복하는 깜빡임을 막는다.
+const SR_HOVER_HIDE_DELAY_MS = 180;
 const fp = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const roundPrice = n => Math.round(n * 100) / 100;
 
@@ -91,6 +94,11 @@ const AnalysisChart = forwardRef(function AnalysisChart({
 
   // 지지/저항선 hover/탭 상태 — X 삭제 버튼 표시용 (price와 현재 y좌표)
   const [hoverLine, setHoverLine] = useState(null);
+  // X 버튼(차트 캔버스 밖의 HTML 오버레이) 위에 마우스가 있는 동안은 hit-test 결과와
+  // 무관하게 숨기지 않는다 — 버튼으로 이동하는 순간 차트 쪽 hover가 벗어난 것으로 판정돼
+  // 표시/숨김이 반복되는 깜빡임을 막기 위함.
+  const isHoveringDelBtnRef = useRef(false);
+  const hoverHideTimerRef   = useRef(null);
 
   // 수동 지지/저항선 — 최신 props를 ref에 미러링해 effect/이벤트 콜백에서 항상
   // 최신 값을 읽는다(콜백은 chart 생성 시점 클로저라 stale closure 위험이 있음).
@@ -153,7 +161,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     srLineObjsRef.current.delete(price);
     srPricesRef.current = srPricesRef.current.filter(p => p !== price);
     persistSRLines();
-    setHoverLine(null);
+    forceHideHoverLine();
   }
 
   function clearAllSRLines() {
@@ -163,10 +171,42 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     srLineObjsRef.current.clear();
     srPricesRef.current = [];
     persistSRLines();
-    setHoverLine(null);
+    forceHideHoverLine();
   }
 
   useImperativeHandle(ref, () => ({ clearAllLines: clearAllSRLines }));
+
+  // ── X 버튼 hover 깜빡임 방지 ─────────────────────────────────
+  // ref만 참조하므로 정의 시점에 상관없이 항상 최신 상태로 동작한다.
+  function clearHoverHideTimer() {
+    if (hoverHideTimerRef.current) {
+      clearTimeout(hoverHideTimerRef.current);
+      hoverHideTimerRef.current = null;
+    }
+  }
+
+  function showHoverLine(hit) {
+    clearHoverHideTimer();
+    setHoverLine(hit);
+  }
+
+  // 즉시 숨기지 않고 디바운스 — 버튼에 마우스가 있으면 아예 예약하지 않는다.
+  function scheduleHoverLineHide() {
+    if (isHoveringDelBtnRef.current) return;
+    clearHoverHideTimer();
+    hoverHideTimerRef.current = setTimeout(() => {
+      hoverHideTimerRef.current = null;
+      if (!isHoveringDelBtnRef.current) setHoverLine(null);
+    }, SR_HOVER_HIDE_DELAY_MS);
+  }
+
+  // 선 삭제/전체 삭제/차트 재생성 등 "무조건 즉시 숨김"이 필요한 경로용 —
+  // 버튼이 DOM에서 사라지면 mouseleave가 안 fire될 수 있어 플래그도 함께 리셋한다.
+  function forceHideHoverLine() {
+    clearHoverHideTimer();
+    isHoveringDelBtnRef.current = false;
+    setHoverLine(null);
+  }
 
   // ── 가격 차트 + MA 오버레이 ─────────────────────────────────
   useEffect(() => {
@@ -234,7 +274,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     // (탭 → 표시, 다른 곳 탭 → 갱신/숨김).
     function updateHoverLine(param) {
       const ms = mainSeriesRef.current;
-      if (!ms || !param.point) { setHoverLine(null); return; }
+      if (!ms || !param.point) { scheduleHoverLineHide(); return; }
       let hit = null;
       for (const p of srPricesRef.current) {
         const coord = ms.priceToCoordinate(p);
@@ -243,7 +283,8 @@ const AnalysisChart = forwardRef(function AnalysisChart({
           break;
         }
       }
-      setHoverLine(hit);
+      if (hit) showHoverLine(hit);
+      else scheduleHoverLineHide();
     }
     chart.subscribeCrosshairMove(updateHoverLine);
     chart.subscribeClick(updateHoverLine);
@@ -339,7 +380,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       ma200Ref.current = null;
       volumeRef.current = null;
       srLineObjs.clear(); // chart.remove()로 이미 소멸된 IPriceLine 참조 정리
-      setHoverLine(null);
+      forceHideHoverLine();
     };
   }, [item]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -447,9 +488,11 @@ const AnalysisChart = forwardRef(function AnalysisChart({
             onClick={e => { e.stopPropagation(); removeSRLine(hoverLine.price); }}
             onMouseDown={e => e.stopPropagation()}
             onTouchStart={e => e.stopPropagation()}
+            onMouseEnter={() => { isHoveringDelBtnRef.current = true; clearHoverHideTimer(); }}
+            onMouseLeave={() => { isHoveringDelBtnRef.current = false; scheduleHoverLineHide(); }}
             aria-label={`지지/저항선 ${fp(hoverLine.price)} 삭제`}
           >
-            ×
+            <span className="sr-line-del-btn-dot">×</span>
           </button>
         )}
       </div>
