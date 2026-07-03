@@ -4,14 +4,15 @@ import CategoryTabs from './CategoryTabs';
 import MarketCard, { detectIssues } from './MarketCard';
 import BottomNav from './BottomNav';
 import { useData } from '../DataContext';
+import { itemsInCategory, DEFAULT_CATEGORY } from '../itemCategories';
 
 const EXPECTED_IDS = ['nasdaq', 'dow', 'kospi', 'btc', 'vix', 'usdkrw'];
 
 export default function HomePage({ activePage, onPageChange }) {
   const { items, updatedAt, loadError, source } = useData();
-  const [activeCat, setActiveCat] = useState('전체');
+  const [activeCat, setActiveCat] = useState(DEFAULT_CATEGORY);
 
-  const list      = activeCat === '전체' ? items : items.filter(it => it.category === activeCat);
+  const list      = itemsInCategory(items, activeCat);
   const isSolo    = list.length === 1;
   const cols      = isSolo ? 1 : 2;
   const rowCount  = list.length ? Math.ceil(list.length / cols) : 1;

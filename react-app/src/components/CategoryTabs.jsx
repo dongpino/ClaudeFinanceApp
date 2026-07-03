@@ -1,17 +1,17 @@
-const CATS = ['전체', '지수', '환율', '크립토'];
+import { CATEGORY_TABS } from '../itemCategories';
 
 export default function CategoryTabs({ activeCat, onChange }) {
   return (
     <div className="tabs" role="tablist">
-      {CATS.map(cat => (
+      {CATEGORY_TABS.map(({ key, label }) => (
         <button
-          key={cat}
-          className={`tab${cat === activeCat ? ' active' : ''}`}
+          key={key}
+          className={`tab${key === activeCat ? ' active' : ''}`}
           role="tab"
-          aria-selected={cat === activeCat}
-          onClick={() => onChange(cat)}
+          aria-selected={key === activeCat}
+          onClick={() => onChange(key)}
         >
-          {cat}
+          {label}
         </button>
       ))}
     </div>
