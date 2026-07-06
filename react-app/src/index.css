@@ -1024,6 +1024,66 @@ body {
 .brf-news-state.error p { color: var(--up); }
 .brf-news-state small { display: block; font-size: 11px; color: var(--text-3); margin-top: 4px; }
 
+/* ── 매크로 현황 ──────────────────────────────────────────────── */
+.brf-macro-banner {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 12px; border-radius: 10px;
+  background: var(--gold-dim); border: 1px solid var(--gold);
+  color: var(--gold); font-size: 12px; font-weight: 700;
+  white-space: nowrap; overflow-x: auto;
+}
+
+.brf-macro-cards {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.brf-macro-card {
+  flex: 1 1 220px; min-width: 220px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 13px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.brf-macro-card-label {
+  font-size: 10.5px; font-weight: 700; color: var(--text-3);
+  white-space: nowrap;
+}
+.brf-macro-card-main {
+  font-size: 21px; font-weight: 800; color: var(--text-1);
+  letter-spacing: -.5px; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.brf-macro-card-main.brf-macro-up   { color: var(--up); }
+.brf-macro-card-main.brf-macro-down { color: var(--down); }
+.brf-macro-yoy-label {
+  font-size: 11px; font-weight: 700; color: var(--text-3);
+  margin-left: 4px;
+}
+.brf-macro-card-sub {
+  font-size: 10.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.brf-macro-spark { height: 34px; margin: 2px 0; }
+.brf-macro-next {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; color: var(--text-2); font-weight: 600;
+  white-space: nowrap; margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.brf-macro-dday {
+  font-size: 9.5px; font-weight: 800; color: var(--gold);
+  background: var(--gold-dim); border-radius: 3px; padding: 1px 5px;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .brf-macro-cards {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .brf-macro-card { flex: 0 0 240px; }
+}
+
 /* ── 헤드라인 뉴스 레이아웃 ─────────────────────────────────── */
 .hn-sections { display: flex; flex-direction: column; gap: 22px; }
 

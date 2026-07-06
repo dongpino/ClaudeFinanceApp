@@ -45,3 +45,8 @@ react-app/.vite/
 
 .vercel
 .env*
+
+.env*
+
+# .env.example은 실제 키 값 없이 변수명·플레이스홀더만 담은 템플릿이라 예외적으로 커밋
+!react-app/.env.example

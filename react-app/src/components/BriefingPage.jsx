@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Header from './Header';
 import BottomNav from './BottomNav';
+import Sparkline from './Sparkline';
 import { loadBriefing, saveBriefing, kstDateStr, kstHourBucket, generatedAtHourBucket } from '../briefingStore';
 
 // ── 날짜 포맷 (RSS pubDate → "6/29 14:30") ───────────────────
@@ -245,6 +246,11 @@ export default function BriefingPage({ activePage, onPageChange }) {
   const [aiMeta, setAiMeta]             = useState(null);   // { generated_at, usage, cached }
   const [aiError, setAiError]           = useState(null);
 
+  // ── 매크로 현황(FOMC 금리·CPI) 상태 ─────────
+  // 실패해도 조용히 섹션을 숨길 뿐 브리핑 본 기능(AI 브리핑·뉴스)에는 영향 없다.
+  const [macroPhase, setMacroPhase] = useState('loading'); // loading | done | error
+  const [macro,      setMacro]      = useState(null);
+
   // ── 지난 브리핑(히스토리) 상태 ──────────────
   const [historyPhase, setHistoryPhase]   = useState('loading'); // loading | done | error
   const [historyDates, setHistoryDates]   = useState([]);        // ["YYYY-MM-DD", ...] 최신순
@@ -315,6 +321,21 @@ export default function BriefingPage({ activePage, onPageChange }) {
       setAiPhase('error');
     }
   }
+
+  // ── 매크로 현황 로드 (탭 진입 시 1회) ────────
+  // 실패해도 오늘의 AI 브리핑·뉴스 기능과는 완전히 분리된 상태이므로 영향 없음.
+  useEffect(() => {
+    fetch('/api/macro')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        setMacro(data);
+        setMacroPhase('done');
+      })
+      .catch(() => setMacroPhase('error'));
+  }, []);
 
   // ── 지난 브리핑 목록 로드 (탭 진입 시 1회) ──
   // 실패해도 오늘의 AI 브리핑·뉴스 기능과는 완전히 분리된 상태이므로 영향 없음.
@@ -403,6 +424,9 @@ export default function BriefingPage({ activePage, onPageChange }) {
               )}
             </div>
           </section>
+
+          {/* ── 매크로 현황 섹션 ───────────────────── */}
+          <MacroSection phase={macroPhase} macro={macro} />
 
           {/* ── 지난 브리핑 섹션 ───────────────────── */}
           <HistorySection
@@ -511,6 +535,107 @@ function AiBody({ phase, briefing, meta, error }) {
   }
 
   return null;
+}
+
+// ── 매크로 현황 섹션 ────────────────────────────────────────────
+// FRED 조회 실패 시(또는 로딩 중) 섹션 자체를 조용히 숨긴다 — AI 브리핑·뉴스와
+// 완전히 분리된 상태라 이 섹션 실패가 브리핑 본 기능에 영향을 주지 않는다.
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+
+function koreanWeekday(dateStr) {
+  return WEEKDAY_KO[new Date(`${dateStr}T00:00:00Z`).getUTCDay()];
+}
+
+function formatMMDD(dateStr) {
+  const [, mo, dy] = dateStr.split('-');
+  return `${Number(mo)}/${Number(dy)}`;
+}
+
+function formatDDay(n) {
+  if (n < 0) return '진행중';
+  if (n === 0) return 'D-DAY';
+  return `D-${n}`;
+}
+
+function MacroSection({ phase, macro }) {
+  if (phase !== 'done' || !macro || (!macro.fomc?.rate && !macro.cpi)) return null;
+
+  const { fomc, cpi, unemployment } = macro;
+
+  // 임박 배너 — 다음 FOMC 회의 또는 CPI 발표가 D-3 이내면 상단에 강조 라인 표시
+  const banners = [];
+  if (fomc?.next && fomc.next.dDay <= 3) {
+    banners.push(`이번 주 ${koreanWeekday(fomc.next.start)} FOMC 회의 시작`);
+  }
+  if (cpi?.next && cpi.next.dDay <= 3) {
+    banners.push(`이번 주 ${koreanWeekday(cpi.next.date)} ${cpi.next.kstTime} 미국 CPI 발표`);
+  }
+
+  const cpiDir = cpi?.trend?.length >= 2
+    ? (cpi.trend.at(-1).yoy >= cpi.trend[0].yoy ? 'up' : 'down')
+    : 'flat';
+  const cpiSparkHistory = cpi?.trend?.map(t => ({ close: t.yoy })) ?? [];
+
+  return (
+    <section className="brf-section">
+      <div className="brf-section-head">
+        <span className="brf-section-title">매크로 현황</span>
+      </div>
+
+      {banners.length > 0 && (
+        <div className="brf-macro-banner">
+          {banners.map((line, i) => <div key={i}>⚡ {line}</div>)}
+        </div>
+      )}
+
+      <div className="brf-macro-cards">
+        {fomc?.rate && (
+          <div className="brf-macro-card">
+            <div className="brf-macro-card-label">FOMC 기준금리</div>
+            <div className="brf-macro-card-main">
+              {fomc.rate.lower.toFixed(2)}–{fomc.rate.upper.toFixed(2)}%
+            </div>
+            <div className="brf-macro-card-sub">목표범위 · {fomc.rate.asOf} 기준</div>
+            {fomc.next && (
+              <div className="brf-macro-next">
+                다음 회의: {formatMMDD(fomc.next.start)}–{formatMMDD(fomc.next.end)}
+                <span className="brf-macro-dday">{formatDDay(fomc.next.dDay)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {cpi && (
+          <div className="brf-macro-card">
+            <div className="brf-macro-card-label">CPI (소비자물가)</div>
+            <div className={`brf-macro-card-main brf-macro-${cpiDir}`}>
+              {cpi.yoy.toFixed(1)}%<span className="brf-macro-yoy-label">YoY</span>
+            </div>
+            <div className="brf-macro-card-sub">
+              전월비 {cpi.mom > 0 ? '+' : ''}{cpi.mom.toFixed(1)}% · {cpi.refMonth} 기준
+            </div>
+            {cpiSparkHistory.length >= 2 && (
+              <div className="brf-macro-spark"><Sparkline history={cpiSparkHistory} dir={cpiDir} /></div>
+            )}
+            {cpi.next && (
+              <div className="brf-macro-next">
+                다음 발표: {formatMMDD(cpi.next.date)} {cpi.next.kstTime}
+                <span className="brf-macro-dday">{formatDDay(cpi.next.dDay)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {unemployment && (
+          <div className="brf-macro-card">
+            <div className="brf-macro-card-label">실업률</div>
+            <div className="brf-macro-card-main">{unemployment.rate.toFixed(1)}%</div>
+            <div className="brf-macro-card-sub">{unemployment.refMonth} 기준</div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 // ── 지난 브리핑 섹션 ────────────────────────────────────────────
