@@ -446,7 +446,7 @@ export default function BriefingPage({ activePage, onPageChange }) {
           </section>
 
           {/* ── 매크로 현황 섹션 ───────────────────── */}
-          <MacroSection phase={macroPhase} macro={macro} />
+          <MacroSection phase={macroPhase} macro={macro} onPageChange={onPageChange} />
 
           {/* ── 주요 이슈 섹션 ─────────────────────── */}
           <IssueSection phase={issuesPhase} issues={issues} />
@@ -580,34 +580,20 @@ function formatDDay(n) {
   return `D-${n}`;
 }
 
-// 카테고리별 아이콘 — "다가오는 이벤트" 리스트에서 라벨을 대신하는 짧은 시각 표식
-const CATEGORY_ICON = { fomc: '🏦', cpi: '📊', expiry: '🎯', msci: '🌐', earnings: '📈' };
-
 function EventBanner({ event }) {
   const weekday = koreanWeekday(event.date);
   const time = event.time ? ` ${event.time}` : '';
   return <div>⚡ 이번 주 {weekday}{time} {event.title}</div>;
 }
 
-function EventRow({ event }) {
-  return (
-    <div className="brf-event-row">
-      <span className="brf-event-icon">{CATEGORY_ICON[event.category] ?? '🔔'}</span>
-      <span className="brf-event-title">{event.title}</span>
-      <span className={`brf-event-region brf-event-${event.region}`}>{event.region}</span>
-      <span className="brf-macro-dday">{formatDDay(event.dDay)}</span>
-    </div>
-  );
-}
-
-function MacroSection({ phase, macro }) {
+function MacroSection({ phase, macro, onPageChange }) {
   if (phase !== 'done' || !macro || (!macro.fomc?.rate && !macro.cpi)) return null;
 
   const { fomc, cpi, unemployment, upcoming } = macro;
 
-  // 임박 배너 — "다가오는 이벤트"(FOMC/CPI/만기/MSCI/실적 통합) 중 D-3 이내인 것 전부 표시
+  // 임박 배너 — "다가오는 이벤트"(FOMC/CPI/만기/MSCI/실적 통합) 중 D-3 이내인 것 전부 표시.
+  // 이벤트 상세 목록 자체는 캘린더 탭으로 이사했으므로, 배너를 탭하면 그쪽으로 이동한다.
   const urgentEvents = (upcoming ?? []).filter(e => e.dDay <= 3);
-  const visibleUpcoming = (upcoming ?? []).slice(0, 7);
 
   const cpiDir = cpi?.trend?.length >= 2
     ? (cpi.trend.at(-1).yoy >= cpi.trend[0].yoy ? 'up' : 'down')
@@ -621,7 +607,12 @@ function MacroSection({ phase, macro }) {
       </div>
 
       {urgentEvents.length > 0 && (
-        <div className="brf-macro-banner">
+        <div
+          className="brf-macro-banner"
+          role="button"
+          tabIndex={0}
+          onClick={() => onPageChange('calendar')}
+        >
           {urgentEvents.map((e, i) => <EventBanner key={i} event={e} />)}
         </div>
       )}
@@ -672,13 +663,6 @@ function MacroSection({ phase, macro }) {
           </div>
         )}
       </div>
-
-      {visibleUpcoming.length > 0 && (
-        <div className="brf-event-list">
-          <div className="brf-event-list-label">다가오는 이벤트 (30일 이내)</div>
-          {visibleUpcoming.map((e, i) => <EventRow key={i} event={e} />)}
-        </div>
-      )}
     </section>
   );
 }

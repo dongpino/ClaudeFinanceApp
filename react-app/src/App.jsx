@@ -3,6 +3,7 @@ import { Routes, Route, useNavigate } from 'react-router-dom';
 import HomePage from './components/HomePage';
 import DetailPage from './components/DetailPage';
 import AnalysisPage from './components/AnalysisPage';
+import CalendarPage from './components/CalendarPage';
 import BriefingPage from './components/BriefingPage';
 import { installPinchZoomBlock } from './blockPinchZoom';
 
@@ -14,6 +15,10 @@ function MainContent({ activePage, onPageChange }) {
 
   if (activePage === 'chart') {
     return <AnalysisPage activePage={activePage} onPageChange={onPageChange} />;
+  }
+
+  if (activePage === 'calendar') {
+    return <CalendarPage activePage={activePage} onPageChange={onPageChange} />;
   }
 
   if (activePage === 'briefing') {

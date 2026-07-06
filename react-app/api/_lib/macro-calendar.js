@@ -140,6 +140,20 @@ export function getExpiryEvents(year) {
   return events;
 }
 
+// CPI 발표 하나를 통합 이벤트 형태로 (getUpcomingEvents/getEventsForMonth 공용)
+function cpiEvent(release) {
+  const utc = nyWallTimeToUTC(release.date, CPI_RELEASE_HOUR_ET, CPI_RELEASE_MIN_ET);
+  return { date: release.date, title: '미국 CPI 발표', category: 'cpi', region: 'US', time: formatKSTHM(utc) };
+}
+
+// MSCI 리뷰 하나(발표+시행)를 통합 이벤트 2개로 (getUpcomingEvents/getEventsForMonth 공용)
+function msciEventsFor(rev) {
+  return [
+    { date: rev.announce,  title: `MSCI ${rev.label} 리뷰 발표`, category: 'msci', region: 'KR' },
+    { date: rev.effective, title: `MSCI ${rev.label} 리뷰 시행`, category: 'msci', region: 'KR' },
+  ];
+}
+
 // ── 공개 함수 ────────────────────────────────────────────────
 
 /** 다음(또는 진행 중인) FOMC 회의 — KST 기준 오늘 날짜로 D-day 계산 */
@@ -187,8 +201,7 @@ export function getUpcomingEvents(days = 30) {
   for (const r of CPI_RELEASES_2026) {
     const dDay = daysBetween(today, r.date);
     if (dDay < 0 || dDay > days) continue;
-    const utc = nyWallTimeToUTC(r.date, CPI_RELEASE_HOUR_ET, CPI_RELEASE_MIN_ET);
-    events.push({ date: r.date, title: '미국 CPI 발표', category: 'cpi', region: 'US', time: formatKSTHM(utc), dDay });
+    events.push({ ...cpiEvent(r), dDay });
   }
 
   // 선물옵션 만기 — 조회 범위가 연말/연초를 걸칠 수 있어 올해+내년 둘 다 계산
@@ -201,13 +214,10 @@ export function getUpcomingEvents(days = 30) {
 
   // MSCI 리뷰 — 발표일/시행일을 각각 별개 이벤트로
   for (const rev of MSCI_REVIEWS_2026) {
-    const announceDDay = daysBetween(today, rev.announce);
-    if (announceDDay >= 0 && announceDDay <= days) {
-      events.push({ date: rev.announce, title: `MSCI ${rev.label} 리뷰 발표`, category: 'msci', region: 'KR', dDay: announceDDay });
-    }
-    const effectiveDDay = daysBetween(today, rev.effective);
-    if (effectiveDDay >= 0 && effectiveDDay <= days) {
-      events.push({ date: rev.effective, title: `MSCI ${rev.label} 리뷰 시행`, category: 'msci', region: 'KR', dDay: effectiveDDay });
+    for (const ev of msciEventsFor(rev)) {
+      const dDay = daysBetween(today, ev.date);
+      if (dDay < 0 || dDay > days) continue;
+      events.push({ ...ev, dDay });
     }
   }
 
@@ -216,6 +226,40 @@ export function getUpcomingEvents(days = 30) {
     const dDay = daysBetween(today, e.date);
     if (dDay < 0 || dDay > days) continue;
     events.push({ ...e, dDay });
+  }
+
+  return events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+/**
+ * 특정 연·월(캘린더 탭 월 그리드용)에 속하는 이벤트 전부 — 과거·미래 무관하게
+ * 그 달에 날짜가 걸치는 것만 반환(dDay 없음, D-day는 getUpcomingEvents 전용).
+ * FOMC처럼 endDate가 있는 이벤트는 시작·종료 중 하나라도 해당 월에 걸리면 포함.
+ * @param {number} year
+ * @param {number} month 1~12 (사람이 읽는 월, 0-indexed 아님)
+ */
+export function getEventsForMonth(year, month) {
+  const prefix = `${year}-${String(month).padStart(2, '0')}`;
+  const events = [];
+
+  for (const m of FOMC_MEETINGS_2026) {
+    if (m.start.startsWith(prefix) || m.end.startsWith(prefix)) {
+      events.push({ date: m.start, endDate: m.end, title: 'FOMC 회의', category: 'fomc', region: 'US' });
+    }
+  }
+  for (const r of CPI_RELEASES_2026) {
+    if (r.date.startsWith(prefix)) events.push(cpiEvent(r));
+  }
+  for (const expiry of getExpiryEvents(year)) {
+    if (expiry.date.startsWith(prefix)) events.push(expiry);
+  }
+  for (const rev of MSCI_REVIEWS_2026) {
+    for (const ev of msciEventsFor(rev)) {
+      if (ev.date.startsWith(prefix)) events.push(ev);
+    }
+  }
+  for (const e of EARNINGS_EVENTS_2026) {
+    if (e.date.startsWith(prefix)) events.push(e);
   }
 
   return events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
