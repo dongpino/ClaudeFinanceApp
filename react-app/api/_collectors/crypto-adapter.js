@@ -13,6 +13,7 @@ import { isBinanceListed } from './timeframe-capability.js';
 import { fetchIntradayKlines, BTC_INTRADAY_TFS } from './btc-intraday.js';
 import { fetchCoinMarketChart } from './coingecko.js';
 import { toWeekly } from './weekly-transform.js';
+import { toKstChartTime } from './chart-time.js';
 
 function r2(n) { return Math.round(n * 100) / 100; }
 function tsToDate(tsMs) { return new Date(tsMs).toISOString().slice(0, 10); }
@@ -53,7 +54,7 @@ async function fetchCoinGeckoHourly(id) {
   const prices  = await fetchCoinMarketChart(id, 12);   // 2~90일 구간 → 자동 시간봉
   const history = prices
     .slice(-300)
-    .map(([tsMs, price]) => ({ time: Math.floor(tsMs / 1000), close: r2(price) }));
+    .map(([tsMs, price]) => ({ time: toKstChartTime(tsMs), close: r2(price) }));
   if (history.length < 10) throw new Error(`CoinGecko ${id} 시간봉 부족: ${history.length}행`);
   return { history, ohlc_available: false, source: 'CoinGecko(hourly)' };
 }
@@ -64,7 +65,7 @@ async function fetchCoinGecko4h(id) {
   for (let i = 3; i < prices.length; i += 4) downsampled.push(prices[i]);   // 4개씩 묶어 마지막 값 대표
   const history = downsampled
     .slice(-250)
-    .map(([tsMs, price]) => ({ time: Math.floor(tsMs / 1000), close: r2(price) }));
+    .map(([tsMs, price]) => ({ time: toKstChartTime(tsMs), close: r2(price) }));
   if (history.length < 10) throw new Error(`CoinGecko ${id} 4시간봉 부족: ${history.length}행`);
   return { history, ohlc_available: false, source: 'CoinGecko(4h 다운샘플)' };
 }

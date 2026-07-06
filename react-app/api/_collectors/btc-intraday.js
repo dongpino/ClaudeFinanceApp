@@ -6,11 +6,15 @@
  *   2. api.binance.com          — 표준 Binance REST API
  *   3. api.bybit.com            — 최종 폴백 (인터벌 코드 변환 필요, BTC 전용 경로에서만 사용)
  *
- * 반환 history 항목: { time: number(Unix seconds), open, high, low, close }
+ * 반환 history 항목: { time: number(Unix seconds, KST로 렌더링되도록 시프트됨), open, high, low, close }
  * ← lightweight-charts intraday 형식; 일봉/주봉의 { date: 'YYYY-MM-DD' }와 구별
+ * time은 chart-time.js의 toKstChartTime()으로 변환한 값 — 차트 레이어에 전달하는 시간은
+ * 항상 "KST로 표시될 값"이어야 한다는 규약(원본 UTC 값이 아님에 주의).
  *
  * fetchBTCByTF(tf)는 fetchIntradayKlines('BTCUSDT', tf)의 얇은 wrapper — 기존 동작 100% 동일.
  */
+
+import { toKstChartTime } from './chart-time.js';
 
 function r2(n) { return Math.round(n * 100) / 100; }
 
@@ -37,7 +41,7 @@ function parseBinanceKlines(raw) {
     throw new Error(`응답 행 부족: ${raw?.length ?? 0}행`);
   // k[5] = 거래량(base asset volume)
   return raw.map(k => ({
-    time:   Math.floor(Number(k[0]) / 1000),
+    time:   toKstChartTime(Number(k[0])),
     open:   r2(parseFloat(k[1])),
     high:   r2(parseFloat(k[2])),
     low:    r2(parseFloat(k[3])),
@@ -92,7 +96,7 @@ async function fetchFromBybit(pair, tf, limit) {
   // Bybit은 최신 봉이 앞에 옴 → reverse
   // list 항목: [startTimeMs, open, high, low, close, volume, turnover]
   const history = [...list].reverse().map(k => ({
-    time:   Math.floor(Number(k[0]) / 1000),
+    time:   toKstChartTime(Number(k[0])),
     open:   r2(parseFloat(k[1])),
     high:   r2(parseFloat(k[2])),
     low:    r2(parseFloat(k[3])),
