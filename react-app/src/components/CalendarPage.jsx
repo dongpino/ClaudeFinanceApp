@@ -162,12 +162,28 @@ export default function CalendarPage({ activePage, onPageChange }) {
                 >
                   <span className="cal-cell-day">{d}</span>
                   {dayEvents.length > 0 && (
-                    <span className="cal-cell-dots">
-                      {dayEvents.slice(0, 3).map((e, j) => (
-                        <span key={j} className="cal-dot" style={{ background: CATEGORY_COLOR[e.category] ?? '#999' }} />
-                      ))}
-                      {dayEvents.length > 3 && <span className="cal-dot-more">+{dayEvents.length - 3}</span>}
-                    </span>
+                    <>
+                      {/* 데스크톱(>768px) — 라벨 칩. CSS 미디어쿼리로 모바일에선 숨김 */}
+                      <span className="cal-cell-chips">
+                        {dayEvents.slice(0, 2).map((e, j) => (
+                          <span
+                            key={j}
+                            className={`cal-chip cal-chip-${e.category}`}
+                            style={{ background: CATEGORY_COLOR[e.category] ?? '#999' }}
+                          >
+                            {e.shortLabel || e.title.slice(0, 5)}
+                          </span>
+                        ))}
+                        {dayEvents.length > 2 && <span className="cal-chip-more">+{dayEvents.length - 2}</span>}
+                      </span>
+                      {/* 모바일(≤768px) — 점. CSS 미디어쿼리로 데스크톱에선 숨김 */}
+                      <span className="cal-cell-dots">
+                        {dayEvents.slice(0, 3).map((e, j) => (
+                          <span key={j} className="cal-dot" style={{ background: CATEGORY_COLOR[e.category] ?? '#999' }} />
+                        ))}
+                        {dayEvents.length > 3 && <span className="cal-dot-more">+{dayEvents.length - 3}</span>}
+                      </span>
+                    </>
                   )}
                 </button>
               );

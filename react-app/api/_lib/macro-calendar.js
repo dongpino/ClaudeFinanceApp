@@ -54,11 +54,12 @@ const MSCI_REVIEWS_2026 = [
 ];
 
 // 실적 발표 — 2026-07-06 기준 알려진 근접 일정만. 다음 분기분은 확정되는 대로 추가할 것.
+// shortLabel: 캘린더 그리드 셀 칩용 5자 내외 축약(item 1 규칙)
 export const EARNINGS_EVENTS_2026 = [
-  { date: '2026-07-07', title: '삼성전자 2Q26 잠정실적(가이던스) 발표', category: 'earnings', region: 'KR' },
-  { date: '2026-07-23', title: '삼성전자 2Q26 확정실적(컨퍼런스콜)',   category: 'earnings', region: 'KR' },
-  { date: '2026-07-30', title: '애플 FY26 3분기 실적 발표',            category: 'earnings', region: 'US' },
-  { date: '2026-08-26', title: '엔비디아 FY27 2분기 실적 발표',        category: 'earnings', region: 'US' },
+  { date: '2026-07-07', title: '삼성전자 2Q26 잠정실적(가이던스) 발표', shortLabel: '삼성 잠정실적', category: 'earnings', region: 'KR' },
+  { date: '2026-07-23', title: '삼성전자 2Q26 확정실적(컨퍼런스콜)',   shortLabel: '삼성 확정실적', category: 'earnings', region: 'KR' },
+  { date: '2026-07-30', title: '애플 FY26 3분기 실적 발표',            shortLabel: '애플 실적',   category: 'earnings', region: 'US' },
+  { date: '2026-08-26', title: '엔비디아 FY27 2분기 실적 발표',        shortLabel: '엔비디아 실적', category: 'earnings', region: 'US' },
 ];
 
 const CPI_RELEASE_HOUR_ET = 8;
@@ -127,12 +128,14 @@ export function getExpiryEvents(year) {
     events.push({
       date: toDateStr(nthWeekdayOfMonth(year, month, 4, 2)), // 목요일=4, 둘째주
       title: isQuarterly ? '한국 선물옵션 동시만기일(네 마녀의 날)' : '한국 옵션만기일',
+      shortLabel: isQuarterly ? '동시만기' : '옵션만기',
       category: 'expiry', region: 'KR',
     });
     if (isQuarterly) {
       events.push({
         date: toDateStr(nthWeekdayOfMonth(year, month, 5, 3)), // 금요일=5, 셋째주
         title: '미국 쿼드러플 위칭데이',
+        shortLabel: '위칭데이',
         category: 'expiry', region: 'US',
       });
     }
@@ -140,17 +143,22 @@ export function getExpiryEvents(year) {
   return events;
 }
 
+// FOMC 회의 하나를 통합 이벤트 형태로 (getUpcomingEvents/getEventsForMonth 공용)
+function fomcEvent(meeting) {
+  return { date: meeting.start, endDate: meeting.end, title: 'FOMC 회의', shortLabel: 'FOMC', category: 'fomc', region: 'US' };
+}
+
 // CPI 발표 하나를 통합 이벤트 형태로 (getUpcomingEvents/getEventsForMonth 공용)
 function cpiEvent(release) {
   const utc = nyWallTimeToUTC(release.date, CPI_RELEASE_HOUR_ET, CPI_RELEASE_MIN_ET);
-  return { date: release.date, title: '미국 CPI 발표', category: 'cpi', region: 'US', time: formatKSTHM(utc) };
+  return { date: release.date, title: '미국 CPI 발표', shortLabel: 'CPI', category: 'cpi', region: 'US', time: formatKSTHM(utc) };
 }
 
 // MSCI 리뷰 하나(발표+시행)를 통합 이벤트 2개로 (getUpcomingEvents/getEventsForMonth 공용)
 function msciEventsFor(rev) {
   return [
-    { date: rev.announce,  title: `MSCI ${rev.label} 리뷰 발표`, category: 'msci', region: 'KR' },
-    { date: rev.effective, title: `MSCI ${rev.label} 리뷰 시행`, category: 'msci', region: 'KR' },
+    { date: rev.announce,  title: `MSCI ${rev.label} 리뷰 발표`, shortLabel: 'MSCI', category: 'msci', region: 'KR' },
+    { date: rev.effective, title: `MSCI ${rev.label} 리뷰 시행`, shortLabel: 'MSCI', category: 'msci', region: 'KR' },
   ];
 }
 
@@ -180,7 +188,7 @@ export function getNextCpiRelease() {
 /**
  * 시장 캘린더 통합 이벤트 — FOMC/CPI/선물옵션 만기/MSCI 리밸런싱/실적을
  * 하나의 타입으로 합쳐 앞으로 `days`일 이내 것만 D-day와 함께 반환(날짜순 정렬).
- * 타입: { date, endDate?, title, category: 'fomc'|'cpi'|'expiry'|'msci'|'earnings',
+ * 타입: { date, endDate?, title, shortLabel, category: 'fomc'|'cpi'|'expiry'|'msci'|'earnings',
  *         region: 'US'|'KR', time?, dDay }
  * @param {number} days 조회 범위(기본 30일)
  */
@@ -194,7 +202,7 @@ export function getUpcomingEvents(days = 30) {
     if (daysBetween(today, m.end) < 0) continue;
     const dDay = daysBetween(today, m.start);
     if (dDay > days) continue;
-    events.push({ date: m.start, endDate: m.end, title: 'FOMC 회의', category: 'fomc', region: 'US', dDay });
+    events.push({ ...fomcEvent(m), dDay });
   }
 
   // CPI
@@ -243,9 +251,7 @@ export function getEventsForMonth(year, month) {
   const events = [];
 
   for (const m of FOMC_MEETINGS_2026) {
-    if (m.start.startsWith(prefix) || m.end.startsWith(prefix)) {
-      events.push({ date: m.start, endDate: m.end, title: 'FOMC 회의', category: 'fomc', region: 'US' });
-    }
+    if (m.start.startsWith(prefix) || m.end.startsWith(prefix)) events.push(fomcEvent(m));
   }
   for (const r of CPI_RELEASES_2026) {
     if (r.date.startsWith(prefix)) events.push(cpiEvent(r));

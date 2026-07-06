@@ -1168,8 +1168,8 @@ body {
   flex: 1; min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 14px 14px 32px;
-  display: flex; flex-direction: column; gap: 14px;
+  padding: 8px 14px 32px;
+  display: flex; flex-direction: column; gap: 10px;
 }
 
 .cal-header {
@@ -1204,10 +1204,11 @@ body {
 
 .cal-grid {
   display: grid; grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: minmax(44px, 56px);
   gap: 3px;
 }
 .cal-cell {
-  aspect-ratio: 1;
+  min-width: 0; /* 그리드 아이템 기본 min-width:auto가 칩 텍스트 길이로 열 폭을 늘리는 것 방지 */
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 2px;
   border-radius: 9px; border: 1px solid transparent;
@@ -1226,8 +1227,30 @@ body {
 .cal-cell.today .cal-cell-day { color: var(--gold); font-weight: 800; }
 .cal-cell.selected { background: var(--gold-dim); border-color: var(--gold); }
 .cal-cell-day { font-variant-numeric: tabular-nums; }
+
+/* 라벨 칩(기본: 데스크톱) — 카테고리색은 테마 무관 고정색이라 칩별로 명도 대비되는
+   글자색을 직접 지정한다(밝은 배경엔 어두운 글자, 중간 채도 배경엔 흰 글자). */
+.cal-cell-chips {
+  display: flex; flex-direction: column; gap: 2px;
+  width: 100%; padding: 0 3px;
+}
+.cal-chip {
+  display: block;
+  font-size: 8.5px; font-weight: 700; line-height: 1.4;
+  border-radius: 3px; padding: 0 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cal-chip-fomc, .cal-chip-cpi, .cal-chip-earnings { color: #0a0a0b; }
+.cal-chip-expiry, .cal-chip-msci                   { color: #fff; }
+.cal-chip-more {
+  font-size: 7.5px; font-weight: 800; color: var(--text-3);
+  padding: 0 4px;
+}
+
+/* 점(모바일 폴백) */
 .cal-cell-dots {
-  display: flex; align-items: center; gap: 2px; height: 6px;
+  display: none;
+  align-items: center; gap: 2px; height: 6px;
 }
 .cal-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 .cal-dot-more {
@@ -1264,6 +1287,12 @@ body {
   font-size: 10.5px; color: var(--text-2); font-weight: 700;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 768px) {
+  /* 모바일은 셀 폭이 좁아 칩 대신 점으로 폴백(실측 검증 결과, 검증 섹션 참고) */
+  .cal-cell-chips { display: none; }
+  .cal-cell-dots  { display: flex; }
 }
 
 /* ── 헤드라인 뉴스 레이아웃 ─────────────────────────────────── */
