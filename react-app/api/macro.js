@@ -6,6 +6,8 @@
  *   기준금리: DFEDTARU/DFEDTARL(일간) → 목표범위 상한/하한
  *   실업률:  UNRATE(월간) → 최신치 + 기준월
  * 발표 일정(FOMC 회의/CPI 발표)은 _lib/macro-calendar.js의 하드코딩 상수 + D-day 계산.
+ * "시장 캘린더"(다가오는 이벤트, 30일 이내)는 FOMC/CPI에 선물옵션 만기/MSCI 리밸런싱/
+ * 실적 발표까지 통합한 getUpcomingEvents()를 그대로 실어 보낸다(순수 계산, FRED 무관).
  *
  * 캐시: Upstash Redis(briefing-core.js와 동일 패턴) TTL 12시간 — 월간 데이터라 충분.
  *       Redis 없거나 실패 시 인메모리 폴백, 그마저 없으면 FRED 직접 조회.
@@ -14,7 +16,7 @@
  */
 
 import { Redis } from '@upstash/redis';
-import { getNextFomcMeeting, getNextCpiRelease } from './_lib/macro-calendar.js';
+import { getNextFomcMeeting, getNextCpiRelease, getUpcomingEvents } from './_lib/macro-calendar.js';
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
 const CACHE_TTL_SEC = 12 * 60 * 60; // 12시간
@@ -159,6 +161,7 @@ export default async function handler(req, res) {
       fomc: { rate: fomcRate, next: getNextFomcMeeting() },
       cpi:  cpi ? { ...cpi, next: getNextCpiRelease() } : null,
       unemployment: unemploymentResult.status === 'fulfilled' ? unemploymentResult.value : null,
+      upcoming: getUpcomingEvents(30),
     };
 
     memCache = { data, ts: Date.now() };
