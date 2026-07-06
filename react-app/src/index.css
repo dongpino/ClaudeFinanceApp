@@ -1571,30 +1571,6 @@ a.hn-card:active { border-color: var(--border-h); }
   font-size: 11px; color: var(--text-3); white-space: nowrap;
 }
 
-/* 기존 6종목 칩 — 컴팩트 */
-.wl-index-chip {
-  display: flex; align-items: center; gap: 4px;
-  padding: 3px 8px;
-  background: var(--bg-card); border: 1.5px solid var(--border);
-  border-radius: 10px;
-  transition: border-color .15s;
-  cursor: pointer;
-  flex-shrink: 0; white-space: nowrap;
-}
-.wl-index-chip.watched { border-color: var(--gold); background: var(--gold-dim); }
-.wl-index-chip.selected { border-color: #3d82ef; }
-.wl-index-chip.selected.watched { border-color: #3d82ef; background: var(--gold-dim); }
-.wl-chip-label { font-size: 11px; font-weight: 700; color: var(--text-1); }
-.wl-chip-star {
-  background: none; border: none; cursor: pointer;
-  color: var(--text-3); font-size: 12px; line-height: 1;
-  padding: 0; transition: color .15s, transform .1s;
-  -webkit-tap-highlight-color: transparent;
-}
-.wl-index-chip.watched .wl-chip-star { color: var(--gold); }
-.wl-chip-star:hover { color: var(--gold); }
-.wl-chip-star:active { transform: scale(.82); }
-
 /* 즐겨찾기 미니 칩 — 이름 + 등락률 + 제거 */
 .as-fav-chip {
   display: flex; align-items: center; gap: 5px;
@@ -1628,6 +1604,7 @@ a.hn-card:active { border-color: var(--border-h); }
 .wl-ac-badge-stock { background: var(--surface-tint);  color: var(--text-2);
                      border: 1px solid var(--border); }
 .wl-ac-badge-kr    { background: var(--down-dim);      color: var(--down);   }
+.wl-ac-badge-index { background: rgba(168,85,247,.14);  color: #a855f7;       }
 
 /* 미국 주식 카드 — sparkline 자리를 큰 등락률로 대체 */
 .stock-pct-display {

@@ -6,6 +6,9 @@ import Header from './Header';
 import BottomNav from './BottomNav';
 import AnalysisChart from './AnalysisChart';
 
+// 6종 지수 — 예전엔 상단 전용 칩 줄로 노출했지만 그 줄을 없애면서, 검색으로도
+// 여전히 찾을 수 있도록 이 배열을 검색 카탈로그로 재사용한다(Finnhub/CoinGecko/Naver
+// 검색은 개별 종목·코인만 다루고 지수 자체는 안 걸려서, 이 6종은 로컬 매칭이 유일한 경로).
 const INDEX_ITEMS = [
   { type: 'index', id: 'nasdaq',  symbol: 'NASDAQ', name: '나스닥'  },
   { type: 'index', id: 'dow',     symbol: 'DOW',    name: '다우존스' },
@@ -14,6 +17,12 @@ const INDEX_ITEMS = [
   { type: 'index', id: 'vix',     symbol: 'VIX',    name: 'VIX'    },
   { type: 'index', id: 'usdkrw',  symbol: 'KRW',    name: '원/달러' },
 ];
+
+function matchesIndexQuery(item, q) {
+  const norm = s => s.toLowerCase().replace(/[\s/]/g, '');
+  const query = norm(q);
+  return norm(item.name).includes(query) || norm(item.symbol).includes(query);
+}
 
 const TF_OPTIONS = [
   { value: '1m',  label: '1분'   },
@@ -83,7 +92,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     saveTopPanelCollapsed(v);
   }
 
-  // 검색 결과/즐겨찾기 카드/기존 종목 칩 클릭 → 하단 차트에 즉시 반영.
+  // 즐겨찾기 칩 클릭 → 하단 차트에 즉시 반영(검색 결과 클릭은 selectAndClose가 처리).
   // 이미 선택된 항목을 다시 클릭하면 선택 해제.
   // 지원 tf 목록은 응답 도착 전까진 알 수 없으므로 보수적으로 1d로 리셋.
   // market은 type==='stock'일 때만 의미 있음(US/KR) — 그 외 타입은 undefined로 취급.
@@ -360,15 +369,16 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     add({ type: 'stock', market, id: stock.symbol, symbol: stock.symbol, name: stock.name });
   }
 
-  function toggleIndex(item) {
-    if (isWatched(item.id)) remove(item.id);
-    else add(item);
-  }
-
   const isFull = watchlist.length >= MAX_WATCHLIST;
 
-  // 코인 최대 5 + 미국주식 최대 5 + 한국주식 최대 5 병합 (코인 우선)
+  // 지수 6종(로컬 매칭) + 코인 최대 5 + 미국주식 최대 5 + 한국주식 최대 5 병합 (지수 우선 —
+  // 검색·API 응답 없이 즉시 뜨는 데다, 예전 칩 줄을 대체하는 접근 경로라 눈에 잘 띄어야 함)
+  const matchedIndexItems = query.trim()
+    ? INDEX_ITEMS.filter(it => matchesIndexQuery(it, query.trim()))
+    : [];
+
   const mergedResults = [
+    ...matchedIndexItems.map(it => ({ ...it, _kind: 'index' })),
     ...coinResults.slice(0, 5).map(c => ({ ...c, _kind: 'coin' })),
     ...stockResults.slice(0, 5).map(s => ({ ...s, id: s.symbol, _kind: 'us-stock' })),
     ...krResults.slice(0, 5).map(s => ({ ...s, id: s.symbol, _kind: 'kr-stock' })),
@@ -438,10 +448,11 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                     const watched  = isWatched(item.id);
                     const isCoin   = item._kind === 'coin';
                     const isKR     = item._kind === 'kr-stock';
-                    const kind     = isCoin ? 'crypto' : 'stock';
-                    const market   = isCoin ? undefined : (isKR ? 'KR' : 'US');
-                    const badgeCls = isCoin ? 'wl-ac-badge-coin' : isKR ? 'wl-ac-badge-kr' : 'wl-ac-badge-stock';
-                    const badgeTxt = isCoin ? '코인' : isKR ? '한국' : '미국';
+                    const isIndex  = item._kind === 'index';
+                    const kind     = isIndex ? 'index' : isCoin ? 'crypto' : 'stock';
+                    const market   = (isIndex || isCoin) ? undefined : (isKR ? 'KR' : 'US');
+                    const badgeCls = isIndex ? 'wl-ac-badge-index' : isCoin ? 'wl-ac-badge-coin' : isKR ? 'wl-ac-badge-kr' : 'wl-ac-badge-stock';
+                    const badgeTxt = isIndex ? '지수' : isCoin ? '코인' : isKR ? '한국' : '미국';
                     return (
                       <div
                         key={`${item._kind}-${item.id}`}
@@ -466,7 +477,8 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                           onClick={e => {
                             e.stopPropagation();   // 행 클릭(선택)과 중복 트리거 방지
                             if (!watched) {
-                              isCoin ? handleAddCoin(item) : handleAddStock(item, market);
+                              if (isIndex) add(item);
+                              else isCoin ? handleAddCoin(item) : handleAddStock(item, market);
                             }
                             selectAndClose({ type: kind, id: item.id, symbol: item.symbol, name: item.name, market });
                           }}
@@ -480,32 +492,6 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                 </div>
               )}
             </section>
-
-            {/* 기존 종목 — 항상 표시되는 한 줄 가로 스크롤 칩 */}
-            <div className="as-chip-row">
-              <span className="as-chip-row-label">종목</span>
-              <div className="as-chip-scroll">
-                {INDEX_ITEMS.map(item => {
-                  const watched = isWatched(item.id);
-                  return (
-                    <div
-                      key={item.id}
-                      className={`wl-index-chip${watched ? ' watched' : ''}${isSelected('index', item.id) ? ' selected' : ''}`}
-                      onClick={() => handleSelect(item)}
-                    >
-                      <span className="wl-chip-label">{item.name}</span>
-                      <button
-                        className="wl-chip-star"
-                        onClick={e => { e.stopPropagation(); toggleIndex(item); }}
-                        aria-label={watched ? `${item.name} 즐겨찾기 해제` : `${item.name} 즐겨찾기 추가`}
-                      >
-                        {watched ? '★' : '☆'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
 
             {/* 즐겨찾기 — 항상 표시되는 한 줄 가로 스크롤 미니 칩 (큰 카드 그리드는 이 화면에선 안 씀) */}
             <div className="as-chip-row">
@@ -668,7 +654,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
               <div className="analysis-state empty">
                 <div className="as-empty-icon">📊</div>
                 <p>종목을 선택하면 분석 차트가 표시됩니다</p>
-                <small>위 검색·즐겨찾기·기존 종목에서 클릭해서 선택하세요</small>
+                <small>위 검색 또는 즐겨찾기에서 클릭해서 선택하세요</small>
               </div>
             </div>
           )}
