@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useData } from '../DataContext';
 import useWatchlist from '../useWatchlist';
+import { loadTopPanelCollapsed, saveTopPanelCollapsed } from '../analysisTopPanelStore';
 import Header from './Header';
 import BottomNav from './BottomNav';
 import AnalysisChart from './AnalysisChart';
@@ -74,6 +75,13 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   // 여기서는 "선 지우기" 버튼 노출 여부 판단용 개수만 미러링한다.
   const [srLineCount, setSrLineCount] = useState(0);
   const chartRef = useRef(null);
+
+  // 모바일 전용 상단 패널(검색+칩 줄) 접기 — 데스크톱은 CSS 미디어쿼리로 항상 펼침 유지.
+  const [topCollapsed, setTopCollapsedState] = useState(loadTopPanelCollapsed);
+  function setTopCollapsed(v) {
+    setTopCollapsedState(v);
+    saveTopPanelCollapsed(v);
+  }
 
   // 검색 결과/즐겨찾기 카드/기존 종목 칩 클릭 → 하단 차트에 즉시 반영.
   // 이미 선택된 항목을 다시 클릭하면 선택 해제.
@@ -372,8 +380,30 @@ export default function AnalysisPage({ activePage, onPageChange }) {
       <div className="page active">
         <div className="analysis-content">
 
+          {/* ── 모바일 전용 압축 바 — 상단 패널이 접혔을 때만 노출(데스크톱은 CSS로 항상 숨김) ── */}
+          <div className={`as-compact-bar${topCollapsed ? ' is-collapsed' : ''}`}>
+            <span className="as-compact-name">{selected?.name ?? '종목 미선택'}</span>
+            <button
+              type="button"
+              className="as-top-toggle"
+              onClick={() => setTopCollapsed(false)}
+              aria-label="검색·즐겨찾기 패널 펼치기"
+            >
+              펼치기 ▾
+            </button>
+          </div>
+
           {/* ── 검색 + 즐겨찾기 (상단 스크롤 패널) ────────────── */}
-          <div className="as-top-panel">
+          <div className={`as-top-panel${topCollapsed ? ' is-collapsed' : ''}`}>
+
+            <button
+              type="button"
+              className="as-top-toggle as-top-toggle-collapse"
+              onClick={() => setTopCollapsed(true)}
+              aria-label="검색·즐겨찾기 패널 접기"
+            >
+              접기 ▴
+            </button>
 
             <section className="wl-search-wrap">
               <div className="wl-search-bar">

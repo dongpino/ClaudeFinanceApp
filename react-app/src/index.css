@@ -575,6 +575,7 @@ body {
 
 /* 검색 + 즐겨찾기 (상단 컴팩트 고정 패널) — 항상 표시, 세로 공간을 최소로 써서 차트에 공간을 양보 */
 .as-top-panel {
+  position: relative;
   flex-shrink: 0;
   max-height: 42vh;
   overflow-y: auto;
@@ -582,6 +583,41 @@ body {
   display: flex; flex-direction: column; gap: 8px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
+}
+
+/* 모바일 전용 상단 패널 접기 토글 — 데스크톱은 항상 숨김(아래 미디어쿼리 밖에서는 노출 안 함) */
+.as-top-toggle {
+  display: none;
+  align-items: center; gap: 3px;
+  padding: 4px 10px; border-radius: 10px;
+  font-size: 11px; font-weight: 700;
+  border: 1.5px solid var(--border);
+  background: var(--bg-card); color: var(--text-3);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.as-top-toggle-collapse {
+  position: absolute; top: 8px; right: 16px;
+  z-index: 1;
+}
+
+/* 접힌 상태 압축 바 — 종목명 한 줄 + 펼치기 버튼. 데스크톱에서는 항상 숨김. */
+.as-compact-bar {
+  display: none;
+  flex-shrink: 0;
+  align-items: center; justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.as-compact-name {
+  font-size: 13px; font-weight: 700; color: var(--text-1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .as-top-toggle { display: inline-flex; }
+  .as-top-panel.is-collapsed { display: none; }
+  .as-compact-bar.is-collapsed { display: flex; }
 }
 
 /* 타임프레임 선택기 */
