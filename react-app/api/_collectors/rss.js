@@ -17,6 +17,10 @@ const RSS_FEEDS = [
   { url: 'https://www.hankyung.com/feed/finance',   source: '한국경제 금융' },  // 증권 섹션
 ];
 
+// 코인 뉴스 — 돌발 이슈 감지(api/issues.js)용. 리다이렉트(308) 있지만 fetch가 기본으로 따라감.
+// 실측(2026-07-06): 200 OK, 최신 항목 정상 수집 확인.
+const COINDESK_FEED = { url: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk' };
+
 const FETCH_TIMEOUT_MS  = 6_000;
 const MAX_ITEMS_PER_FEED = 12;  // 피드당 최대 12개 → 폴백 채움용 구기사 확보
 const MIN_AFTER_FILTER  = 8;    // 필터 후 이 수 미만이면 원본 기사로 보충
@@ -202,6 +206,36 @@ export async function collectRSSNews(maxTotal = 15) {
 
   console.log(`[rss] 최종 ${final.length}건 반환 (피드 ${RSS_FEEDS.length}개)`);
   return final.slice(0, maxTotal);
+}
+
+/**
+ * 돌발 이슈 감지(api/issues.js)용 — 국내 금융(연합/한경) + 코인(CoinDesk) 원시 헤드라인.
+ * collectRSSNews()와 달리 한국어 시장 키워드 whitelist/blacklist를 적용하지 않는다
+ * (CoinDesk는 영문이라 한국어 키워드로 걸러지면 전부 탈락하고, 어차피 이 용도는
+ * Haiku 분류 자체가 필터 역할을 하므로 사전 키워드 필터가 불필요/유해함).
+ * 최근 24시간 이내 기사만, 최신순으로 최대 maxTotal건 반환.
+ * @param {number} maxTotal
+ */
+export async function collectIssueSourceNews(maxTotal = 30) {
+  const feeds = [...RSS_FEEDS, COINDESK_FEED];
+  const results = await Promise.allSettled(feeds.map(fetchFeed));
+  const all = [];
+  for (const r of results) {
+    if (r.status === 'fulfilled') all.push(...r.value);
+  }
+
+  const deduplicated = deduplicateByTitle(all);
+
+  const cutoffMs = Date.now() - 24 * 3_600_000;
+  const recent = deduplicated.filter(it => {
+    const t = new Date(it.pubDate).getTime();
+    return !isNaN(t) && t >= cutoffMs;
+  });
+
+  recent.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+
+  console.log(`[rss] 이슈 감지용: ${deduplicated.length}건 → 24시간 이내 ${recent.length}건`);
+  return recent.slice(0, maxTotal);
 }
 
 function deduplicateByTitle(items) {

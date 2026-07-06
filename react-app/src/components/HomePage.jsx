@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Header from './Header';
 import CategoryTabs from './CategoryTabs';
 import MajorEditPanel from './MajorEditPanel';
@@ -12,6 +12,25 @@ import { loadMajorIds, saveMajorIds } from '../homeMajorStore';
 // 여기서 별도로 유지하지 않고 그대로 파생시킨다(새 종목 추가 시 이 목록도 자동 반영).
 const EXPECTED_IDS = ITEM_CATEGORIES.map(c => c.id);
 
+// 브리핑 탭 "주요 이슈"와 동일한 카테고리 아이콘 — 홈 스트립은 importance 2 이상만 노출.
+const ISSUE_ICON = { regulation: '⚖️', exchange: '🏦', listing: '🆕', earnings: '📈', macro_shock: '💥', other_major: '🔔' };
+
+// 홈 상단 돌발 이슈 스트립 — 실패/로딩/이슈 없음이면 조용히 숨긴다(홈 본 기능과 완전 분리).
+function IssueStrip({ issues, onClick }) {
+  const majorIssues = issues.filter(it => it.importance >= 2);
+  if (majorIssues.length === 0) return null;
+
+  return (
+    <div className="home-issue-strip" onClick={onClick} role="button" tabIndex={0}>
+      {majorIssues.map((it, i) => (
+        <span key={i} className="home-issue-chip">
+          {ISSUE_ICON[it.category] ?? '🔔'} {it.title_ko}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function HomePage({ activePage, onPageChange }) {
   const { items, updatedAt, loadError, source } = useData();
   const [activeCat, setActiveCat] = useState(DEFAULT_CATEGORY);
@@ -19,6 +38,18 @@ export default function HomePage({ activePage, onPageChange }) {
   // "주요" 탭 사용자 선택(최대 4개) — 없으면 loadMajorIds()가 기본값으로 폴백.
   const [majorIds, setMajorIds]         = useState(loadMajorIds);
   const [editingMajor, setEditingMajor] = useState(false);
+
+  // 돌발 이슈 스트립 — 실패해도 조용히 숨길 뿐 홈 본 기능에는 영향 없음.
+  const [issues, setIssues] = useState([]);
+  useEffect(() => {
+    fetch('/api/issues')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => setIssues(Array.isArray(data.issues) ? data.issues : []))
+      .catch(() => setIssues([]));
+  }, []);
 
   function handleSaveMajor(ids) {
     setMajorIds(ids);
@@ -65,6 +96,8 @@ export default function HomePage({ activePage, onPageChange }) {
             </span>
           </div>
         )}
+
+        <IssueStrip issues={issues} onClick={() => onPageChange('briefing')} />
 
         <CategoryTabs
           activeCat={activeCat}

@@ -251,6 +251,11 @@ export default function BriefingPage({ activePage, onPageChange }) {
   const [macroPhase, setMacroPhase] = useState('loading'); // loading | done | error
   const [macro,      setMacro]      = useState(null);
 
+  // ── 주요 이슈(돌발 이슈 감지) 상태 ───────────
+  // 실패해도 조용히 섹션을 숨길 뿐 브리핑 본 기능에는 영향 없다.
+  const [issuesPhase, setIssuesPhase] = useState('loading'); // loading | done | error
+  const [issues,      setIssues]      = useState([]);
+
   // ── 지난 브리핑(히스토리) 상태 ──────────────
   const [historyPhase, setHistoryPhase]   = useState('loading'); // loading | done | error
   const [historyDates, setHistoryDates]   = useState([]);        // ["YYYY-MM-DD", ...] 최신순
@@ -335,6 +340,21 @@ export default function BriefingPage({ activePage, onPageChange }) {
         setMacroPhase('done');
       })
       .catch(() => setMacroPhase('error'));
+  }, []);
+
+  // ── 주요 이슈 로드 (탭 진입 시 1회) ─────────
+  // 실패해도 오늘의 AI 브리핑·뉴스·매크로 현황과는 완전히 분리된 상태이므로 영향 없음.
+  useEffect(() => {
+    fetch('/api/issues')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(data => {
+        setIssues(Array.isArray(data.issues) ? data.issues : []);
+        setIssuesPhase('done');
+      })
+      .catch(() => setIssuesPhase('error'));
   }, []);
 
   // ── 지난 브리핑 목록 로드 (탭 진입 시 1회) ──
@@ -427,6 +447,9 @@ export default function BriefingPage({ activePage, onPageChange }) {
 
           {/* ── 매크로 현황 섹션 ───────────────────── */}
           <MacroSection phase={macroPhase} macro={macro} />
+
+          {/* ── 주요 이슈 섹션 ─────────────────────── */}
+          <IssueSection phase={issuesPhase} issues={issues} />
 
           {/* ── 지난 브리핑 섹션 ───────────────────── */}
           <HistorySection
@@ -654,6 +677,39 @@ function MacroSection({ phase, macro }) {
         <div className="brf-event-list">
           <div className="brf-event-list-label">다가오는 이벤트 (30일 이내)</div>
           {visibleUpcoming.map((e, i) => <EventRow key={i} event={e} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── 주요 이슈 섹션(돌발 이슈 감지) ──────────────────────────────
+// 로딩 중이거나 실패하면 조용히 숨긴다 — RSS/Haiku 분류 실패가 브리핑 본 기능에
+// 영향을 주지 않도록 완전히 분리된 상태다. 이슈가 0건인 날은 정상(평온한 날)이므로
+// 섹션 자체를 숨기지 않고 "특이 이슈 없음" 한 줄로 시스템이 정상 동작 중임을 알린다.
+const ISSUE_CATEGORY_ICON = {
+  regulation: '⚖️', exchange: '🏦', listing: '🆕',
+  earnings: '📈', macro_shock: '💥', other_major: '🔔',
+};
+
+function IssueSection({ phase, issues }) {
+  if (phase !== 'done') return null;
+
+  return (
+    <section className="brf-section">
+      <div className="brf-section-head">
+        <span className="brf-section-title">주요 이슈</span>
+      </div>
+      {issues.length === 0 ? (
+        <p className="brf-issue-empty">오늘은 특이 이슈가 감지되지 않았습니다.</p>
+      ) : (
+        <div className="brf-issue-list">
+          {issues.map((it, i) => (
+            <div key={i} className={`brf-issue-row${it.importance === 3 ? ' brf-issue-major' : ''}`}>
+              <span className="brf-issue-icon">{ISSUE_CATEGORY_ICON[it.category] ?? '🔔'}</span>
+              <span className="brf-issue-title">{it.title_ko}</span>
+            </div>
+          ))}
         </div>
       )}
     </section>
