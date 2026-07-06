@@ -577,7 +577,7 @@ body {
 .as-top-panel {
   position: relative;
   flex-shrink: 0;
-  max-height: 42vh;
+  max-height: 42dvh; /* iOS Safari 주소창 표시/숨김에 따라 실제 보이는 영역 기준으로 재계산되도록 vh 대신 dvh */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   display: flex; flex-direction: column; gap: 8px;
@@ -715,6 +715,19 @@ body {
   color: var(--text-3);
 }
 .ind-toggle-clear-lines:hover { border-color: var(--down); color: var(--down); }
+
+@media (max-width: 768px) {
+  /* 지표 토글 칩 — 두 줄로 감싸이면 세로 공간을 차트에서 뺏어가므로 가로 스크롤 한 줄로 */
+  .analysis-toggles {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .analysis-toggles .ind-toggle,
+  .analysis-toggles .ind-toggle-clear-lines {
+    flex-shrink: 0;
+  }
+}
 
 /* 차트 메인 영역 */
 .analysis-main {
