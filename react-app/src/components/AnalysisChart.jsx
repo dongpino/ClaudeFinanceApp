@@ -307,6 +307,49 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       volumeRef.current = null;
     }
 
+    // ── 가격축(Y) 모바일 터치 드래그로 스케일 조정 ──────────────────────
+    // lightweight-charts 4.2.3는 handleScroll.vertTouchDrag를 메인 캔들 영역과 가격축
+    // 위젯이 내부적으로 공유한다 — 메인 영역의 세로 스와이프를 페이지 스크롤로 남겨두려고
+    // vertTouchDrag:false로 두면(위 buildChartOpts), 라이브러리가 가격축 위의 세로 터치
+    // 드래그도 "페이지 스크롤 의도"로 판정해 무시해버려 축 자체 드래그로는 스케일 조정이
+    // 안 된다(축만 별도로 켜는 공개 옵션이 없는 라이브러리 제약). 그래서 가격축 DOM 영역만
+    // touch-action:none으로 분리하고, scaleMargins를 직접 조작하는 자체 드래그 핸들러로
+    // 대체한다(scaleMargins는 series가 아닌 priceScale 단위라 MA선 등과 자동으로 맞물림).
+    const priceAxisTd = el.querySelector('table tr:first-child td:last-child');
+    if (priceAxisTd) {
+      priceAxisTd.style.touchAction = 'none';
+      const priceScale = mainSeries.priceScale();
+      let axisDragStartY = null;
+      let axisDragStartMargins = null;
+
+      const onAxisTouchStart = e => {
+        if (e.touches.length !== 1) return;
+        axisDragStartY = e.touches[0].clientY;
+        axisDragStartMargins = { ...priceScale.options().scaleMargins };
+        e.preventDefault();
+      };
+      const onAxisTouchMove = e => {
+        if (axisDragStartY === null || e.touches.length !== 1) return;
+        const delta  = (e.touches[0].clientY - axisDragStartY) / 600;
+        const top    = Math.min(0.45, Math.max(0.02, axisDragStartMargins.top + delta));
+        const bottom = Math.min(0.45, Math.max(0.02, axisDragStartMargins.bottom + delta));
+        priceScale.applyOptions({ scaleMargins: { top, bottom } });
+        e.preventDefault();
+      };
+      const onAxisTouchEnd = () => { axisDragStartY = null; };
+
+      priceAxisTd.addEventListener('touchstart', onAxisTouchStart, { passive: false });
+      priceAxisTd.addEventListener('touchmove',  onAxisTouchMove,  { passive: false });
+      priceAxisTd.addEventListener('touchend',    onAxisTouchEnd,   { passive: true });
+      priceAxisTd.addEventListener('touchcancel', onAxisTouchEnd,   { passive: true });
+    }
+
+    // 시간축(하단)은 handleScroll.horzTouchDrag(기본 true)로 가로 드래그가 이미 동작하지만,
+    // touch-action: pan-y가 이 영역까지 덮고 있어 제스처 판정이 흔들릴 수 있으므로
+    // 가격축과 동일하게 별도 분리해둔다(추가 핸들러 없이 touch-action만).
+    const timeAxisRow = el.querySelector('table tr:last-child');
+    if (timeAxisRow) timeAxisRow.style.touchAction = 'none';
+
     const m20 = chart.addLineSeries({
       color: MA20, lineWidth: 1.5,
       priceLineVisible: false, lastValueVisible: false, visible: showMA20, title: 'MA20',
