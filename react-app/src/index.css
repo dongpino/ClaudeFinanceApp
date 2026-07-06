@@ -22,6 +22,7 @@
   --bg-nav:       rgba(16,16,18,.97);
   --surface-tint: rgba(255,255,255,.05);
   --surface-code: rgba(255,255,255,.08);
+  --chip-tint-pct: 26%; /* 캘린더 이벤트 칩(포스트잇) 배경 틴트 강도 — 다크는 진하게 */
 }
 
 [data-theme="light"] {
@@ -44,6 +45,7 @@
   --bg-nav:       rgba(255,255,255,.97);
   --surface-tint: rgba(0,0,0,.04);
   --surface-code: rgba(0,0,0,.06);
+  --chip-tint-pct: 18%; /* 라이트는 옅게 — 파스텔 포스트잇 느낌 */
 }
 
 html { background: var(--bg); touch-action: pan-x pan-y; }
@@ -1172,6 +1174,12 @@ body {
   display: flex; flex-direction: column; gap: 10px;
 }
 
+/* 월 그리드+헤더+요일줄 묶음 — 데스크톱에서만 뷰포트를 채우고(아래 미디어쿼리),
+   모바일은 기존처럼 자연스러운 콘텐츠 흐름(그리드가 화면을 억지로 채우지 않음). */
+.cal-fold {
+  display: flex; flex-direction: column; gap: 8px;
+}
+
 .cal-header {
   display: flex; align-items: center; justify-content: center; gap: 18px;
 }
@@ -1211,7 +1219,7 @@ body {
   min-width: 0; /* 그리드 아이템 기본 min-width:auto가 칩 텍스트 길이로 열 폭을 늘리는 것 방지 */
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 2px;
-  border-radius: 9px; border: 1px solid transparent;
+  border-radius: 9px; border: 1px solid var(--border);
   background: transparent;
   color: var(--text-1);
   font-size: 12.5px; font-weight: 600;
@@ -1219,7 +1227,7 @@ body {
   -webkit-tap-highlight-color: transparent;
   transition: background .15s, border-color .15s;
 }
-.cal-cell.empty { cursor: default; }
+.cal-cell.empty { cursor: default; border-color: transparent; }
 .cal-cell.sun .cal-cell-day { color: var(--up); }
 .cal-cell.sat .cal-cell-day { color: var(--down); }
 .cal-cell:not(.empty):hover { background: var(--surface-tint); }
@@ -1228,22 +1236,25 @@ body {
 .cal-cell.selected { background: var(--gold-dim); border-color: var(--gold); }
 .cal-cell-day { font-variant-numeric: tabular-nums; }
 
-/* 라벨 칩(기본: 데스크톱) — 카테고리색은 테마 무관 고정색이라 칩별로 명도 대비되는
-   글자색을 직접 지정한다(밝은 배경엔 어두운 글자, 중간 채도 배경엔 흰 글자). */
+/* 라벨 칩(기본: 데스크톱) — "포스트잇" 스타일: 카테고리색 좌측 보더 + 옅은 틴트 배경.
+   틴트가 파스텔이라 다크/라이트 둘 다 일반 텍스트색(var(--text-1))으로 충분히 읽힘 —
+   카테고리별 글자색을 따로 안 정해도 됨(솔리드 배경 안이었다면 필요했을 부분). */
 .cal-cell-chips {
-  display: flex; flex-direction: column; gap: 2px;
-  width: 100%; padding: 0 3px;
+  display: flex; flex-direction: column; gap: 3px;
+  width: 100%; padding: 0 4px;
 }
 .cal-chip {
   display: block;
-  font-size: 8.5px; font-weight: 700; line-height: 1.4;
-  border-radius: 3px; padding: 0 4px;
+  font-size: 9.5px; font-weight: 700; line-height: 2;
+  color: var(--text-1);
+  border-radius: 5px;
+  border-left: 3px solid var(--chip-color, var(--gold));
+  background: color-mix(in srgb, var(--chip-color, var(--gold)) var(--chip-tint-pct), transparent);
+  padding: 0 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.cal-chip-fomc, .cal-chip-cpi, .cal-chip-earnings { color: #0a0a0b; }
-.cal-chip-expiry, .cal-chip-msci                   { color: #fff; }
 .cal-chip-more {
-  font-size: 7.5px; font-weight: 800; color: var(--text-3);
+  font-size: 8px; font-weight: 800; color: var(--text-3);
   padding: 0 4px;
 }
 
@@ -1293,6 +1304,23 @@ body {
   /* 모바일은 셀 폭이 좁아 칩 대신 점으로 폴백(실측 검증 결과, 검증 섹션 참고) */
   .cal-cell-chips { display: none; }
   .cal-cell-dots  { display: flex; }
+}
+
+@media (min-width: 769px) {
+  /* 데스크톱만 그리드가 첫 화면을 채움 — 모바일은 기존 밀도(고정 행 높이)를 그대로 유지.
+     .cal-scroll(overflow-y:auto)은 이미 flexbox로 "페이지 콘텐츠 영역" 높이가 확정돼
+     있으므로, 그 안의 첫 자식(.cal-fold)이 height:100%로 그 영역 전체를 차지하고
+     (flex-shrink:0로 아래 상세/리스트에 밀려 줄어들지 않게), 그 안에서 그리드만
+     flex:1로 남는 공간을 전부 먹는다 — 하드코딩 px 계산 없이 항상 정확하게 맞음. */
+  .cal-fold {
+    height: 100%;
+    flex-shrink: 0;
+  }
+  .cal-grid {
+    flex: 1; min-height: 0;
+    grid-auto-rows: 1fr;
+  }
+  .cal-cell-day { font-size: 14px; }
 }
 
 /* ── 헤드라인 뉴스 레이아웃 ─────────────────────────────────── */
