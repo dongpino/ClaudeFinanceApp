@@ -144,6 +144,7 @@ body {
 .tab {
   padding: 5px 15px; border-radius: 16px;
   font-size: 12.5px; font-weight: 700;
+  white-space: nowrap;
   cursor: pointer; border: 1.5px solid var(--border);
   background: transparent; color: var(--text-2);
   transition: background .15s, border-color .15s, color .15s;
@@ -157,6 +158,7 @@ body {
   margin-left: auto;
   display: flex; align-items: center;
   padding: 5px 13px; border-radius: 16px;
+  white-space: nowrap;
   background: var(--bg-card); border: 1.5px solid var(--border);
   color: var(--text-2); font-size: 12px; font-weight: 700;
   cursor: pointer;
@@ -164,6 +166,20 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 .major-edit-trigger:hover { border-color: var(--gold); color: var(--gold); }
+
+@media (max-width: 768px) {
+  /* 카테고리 칩 — 좁은 화면에서 flex가 버튼을 압축해 글자가 줄바꿈되던 것을
+     분석 탭 지표 칩과 동일한 패턴(한 줄 고정 + 가로 스크롤)으로 방지 */
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tab,
+  .major-edit-trigger {
+    flex-shrink: 0;
+  }
+}
 
 /* ── 주요 종목 편집 패널 ──────────────────── */
 .major-edit-backdrop {
