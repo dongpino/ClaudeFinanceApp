@@ -5,6 +5,6 @@
     { "source": "/detail/:id", "destination": "/index.html" }
   ],
   "crons": [
-    { "path": "/api/briefing-cron", "schedule": "30 22 * * *" }
+    { "path": "/api/briefing-cron", "schedule": "30 23 * * *" }
   ]
 }
