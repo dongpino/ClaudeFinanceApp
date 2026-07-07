@@ -59,9 +59,6 @@ export default function HomePage({ activePage, onPageChange }) {
 
   const list      = itemsInCategory(items, activeCat, majorIds);
   const isSolo    = list.length === 1;
-  const cols      = isSolo ? 1 : 2;
-  const rowCount  = list.length ? Math.ceil(list.length / cols) : 1;
-  const gridStyle = { gridTemplateRows: Array(rowCount).fill('1fr').join(' ') };
 
   // 이상 종목 집계 (데이터가 있는 경우에만 검사)
   const itemsWithIssues = items.filter(it => detectIssues(it).length > 0);
@@ -106,7 +103,6 @@ export default function HomePage({ activePage, onPageChange }) {
         />
         <main
           className={`grid${isSolo ? ' solo' : ''}`}
-          style={gridStyle}
           aria-live="polite"
         >
           {loadError ? (

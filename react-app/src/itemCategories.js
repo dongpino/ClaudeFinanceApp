@@ -13,15 +13,21 @@
  */
 
 export const ITEM_CATEGORIES = [
-  { id: 'nasdaq', name: '나스닥',         source: 'us-indices', categories: ['major', 'index'] },
-  { id: 'dow',    name: '다우존스',       source: 'us-indices', categories: ['major', 'index'] },
-  { id: 'kospi',  name: '코스피',         source: 'kr',          categories: ['major', 'index'] },
-  { id: 'btc',    name: '비트코인',       source: 'btc',         categories: ['major', 'crypto'] },
-  { id: 'vix',    name: 'VIX',            source: 'us-indices', categories: ['index'] },
-  { id: 'usdkrw', name: '원/달러',        source: 'kr',          categories: ['fx'] },
-  { id: 'kosdaq', name: '코스닥',         source: 'kr',          categories: ['index'] },
-  { id: 'us10y',  name: '미국 10년물 금리', source: 'us-indices', categories: ['macro'] },
-  { id: 'dxy',    name: '달러인덱스',     source: 'us-indices', categories: ['macro', 'fx'] },
+  { id: 'nasdaq',     name: '나스닥',              source: 'us-indices', categories: ['major', 'index'] },
+  { id: 'dow',        name: '다우존스',            source: 'us-indices', categories: ['major', 'index'] },
+  { id: 'kospi',      name: '코스피',              source: 'kr',          categories: ['major', 'index'] },
+  { id: 'btc',        name: '비트코인',            source: 'btc',         categories: ['major', 'crypto'] },
+  { id: 'vix',        name: 'VIX',                 source: 'us-indices', categories: ['index'] },
+  { id: 'usdkrw',     name: '원/달러',             source: 'kr',          categories: ['fx'] },
+  { id: 'kosdaq',     name: '코스닥',              source: 'kr',          categories: ['index'] },
+  { id: 'us10y',      name: '미국 10년물 금리',    source: 'us-indices', categories: ['macro'] },
+  { id: 'dxy',        name: '달러인덱스',          source: 'us-indices', categories: ['macro', 'fx'] },
+  { id: 'sp500',      name: 'S&P500',              source: 'us-indices', categories: ['index'] },
+  { id: 'sox',        name: '필라델피아 반도체(SOX)', source: 'us-indices', categories: ['index'] },
+  { id: 'eth',        name: '이더리움',            source: 'eth',         categories: ['crypto'] },
+  { id: 'dominance',  name: 'BTC 도미넌스',        source: 'btc-dominance', categories: ['crypto'] },
+  { id: 'feargreed',  name: '공포탐욕지수',        source: 'fear-greed', categories: ['crypto'] },
+  { id: 'jpykrw',     name: '원/엔(100엔)',        source: 'kr',          categories: ['fx'] },
 ];
 
 // 홈 탭 카테고리 버튼 — key는 ITEM_CATEGORIES의 categories 값과 매칭, label은 화면 표시용.

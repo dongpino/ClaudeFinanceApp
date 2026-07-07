@@ -15,14 +15,32 @@ const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumF
 const fc   = n => { const v = nz(n); return (v > 0 ? '+' : '') + fp(v); };
 const fpct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 
-// unit==='percent'인 종목(미 10년물 금리 등): 값 자체가 %이므로 "4.25%"로,
-// 등락은 국채금리 관례상 bp(basis point, 1bp=0.01%p)로 표시한다(MarketCard와 동일 규칙 —
-// %p 소수 2자리로는 0.01%p 미만의 실제 변동이 "0.00%p"로 뭉개져 계산 실패처럼 보였다).
-const fpUnit = (n, unit) => unit === 'percent' ? `${n.toFixed(2)}%` : fp(n);
+// 가격이 아니라 지수/점수 성격인 unit 3종 — MarketCard.jsx와 동일 규칙(그쪽 주석 참고).
+const NON_PRICE_UNITS = new Set(['percent', 'pct_pt', 'score']);
+
+const fpUnit = (n, unit) => {
+  if (unit === 'percent' || unit === 'pct_pt') return `${n.toFixed(2)}%`;
+  if (unit === 'score') return n.toFixed(0);
+  return fp(n);
+};
 const fcUnit = (n, unit) => {
-  if (unit !== 'percent') return fc(n);
-  const bp = nz(Math.round(n * 100 * 10) / 10); // %p → bp(소수 1자리)
-  return `${bp > 0 ? '+' : ''}${bp.toFixed(1)}bp`;
+  const v = nz(n);
+  if (unit === 'percent') {
+    const bp = nz(Math.round(v * 100 * 10) / 10); // %p → bp(소수 1자리)
+    return `${bp > 0 ? '+' : ''}${bp.toFixed(1)}bp`;
+  }
+  if (unit === 'pct_pt') return `${v > 0 ? '+' : ''}${v.toFixed(2)}%p`;
+  if (unit === 'score')  return `${v > 0 ? '+' : ''}${v.toFixed(0)}`;
+  return fc(v);
+};
+
+// 공포탐욕지수 등급 — MarketCard.jsx GRADE_MAP과 동일 매핑(한국 관례: 탐욕=빨강, 공포=파랑).
+const GRADE_MAP = {
+  'Extreme Fear':  { ko: '극단적 공포', tone: 'fear' },
+  'Fear':          { ko: '공포',        tone: 'fear' },
+  'Neutral':       { ko: '중립',        tone: 'neutral' },
+  'Greed':         { ko: '탐욕',        tone: 'greed' },
+  'Extreme Greed': { ko: '극단적 탐욕', tone: 'greed' },
 };
 
 function stats90(h90) {
@@ -88,8 +106,12 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
 
   // 상세 데이터가 오면 교체 (90일 포함), 없으면 홈 데이터(30일)로 렌더
   const item = detailItem ?? baseItem;
-  const { direction: dir, name, category, price, change, change_pct, source, as_of, history_90d, unit } = item;
+  const {
+    direction: dir, name, category, price, change, change_pct, source, as_of, history_90d, unit, grade,
+    change_unavailable,
+  } = item;
   const s = stats90(history_90d);
+  const gradeInfo = grade ? GRADE_MAP[grade] : null;
 
   return (
     <div className="detail-page">
@@ -107,12 +129,15 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
 
         {/* 현재가 & 변동 */}
         <div className="detail-price-section">
-          <div className="detail-price">{fpUnit(price, unit)}</div>
+          <div className="detail-price">
+            {fpUnit(price, unit)}
+            {gradeInfo && <span className={`detail-grade ${gradeInfo.tone}`}> · {gradeInfo.ko}</span>}
+          </div>
           <div className={`detail-change ${dir}`}>
             <span className="detail-change-chip">
-              {ARROW[dir]} {fcUnit(change, unit)}
+              {change_unavailable ? '—' : <>{ARROW[dir]} {fcUnit(change, unit)}</>}
             </span>
-            {unit !== 'percent' && <span className="detail-change-pct">{fpct(change_pct)}</span>}
+            {!NON_PRICE_UNITS.has(unit) && !change_unavailable && <span className="detail-change-pct">{fpct(change_pct)}</span>}
           </div>
         </div>
 

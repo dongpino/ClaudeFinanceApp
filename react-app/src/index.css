@@ -273,15 +273,23 @@ body {
 .major-edit-done-btn:active { transform: scale(.98); }
 
 /* ── 카드 그리드 ──────────────────────────── */
+/* 행 높이를 "2행이 꽉 채운 상태"의 고정값(calc(50% - 절반 gap))으로 못박아, 아이템이
+   몇 개든(3개든 7개든) 카드 높이가 "주요" 탭(항상 ≤4개=2행)과 완전히 같게 유지된다 —
+   전에는 gridTemplateRows를 rowCount(JS)로 나눠 넣어 아이템이 많을수록(지수 탭 7개=4행)
+   카드가 눌렸다. 4개(2행) 초과분은 이 컨테이너의 overflow-y:auto로 아래로 스크롤된다.
+   모바일(390px)도 별도 미디어쿼리가 없어 이미 동일한 2열이라 이 규칙이 그대로 적용된다. */
 .grid {
-  flex: 1; min-height: 0; overflow: hidden;
+  flex: 1; min-height: 0; overflow-y: auto;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  /* grid-template-rows: props로 인라인 설정 */
+  grid-auto-rows: calc(50% - 4px);
   gap: 8px;
   padding: 0 9px 9px;
 }
-.grid.solo { grid-template-columns: 1fr; }
+/* 종목이 정확히 1개뿐일 때(예: "주요" 탭에서 즐겨찾기를 1개만 선택)만 전체 폭·높이를 쓴다 —
+   2개 이상인 탭의 마지막 홀수 카드(지수 7개/환율 3개 등)는 grid 자동배치로 반 폭을 그대로
+   유지하고 옆 칸만 비워, 이 solo 규칙과 충돌하지 않는다(isSolo는 length===1일 때만 true). */
+.grid.solo { grid-template-columns: 1fr; grid-auto-rows: 100%; }
 
 /* ── 카드 ─────────────────────────────────── */
 .card {
@@ -344,6 +352,13 @@ body {
   letter-spacing: -1px; line-height: 1;
   margin-bottom: 5px; font-variant-numeric: tabular-nums;
 }
+/* 공포탐욕지수 등급 배지 — 한국 시장 관례(탐욕=빨강, 공포=파랑)에 맞춰 UP/DOWN 색과 통일.
+   "극단적 공포/탐욕"처럼 긴 라벨도 2열 그리드의 좁은 카드 폭에서 줄바꿈 위험을 줄이려
+   card-price(20px)보다 작게 잡는다(card-name과 동일한 11px). */
+.card-grade { font-size: 11px; font-weight: 700; letter-spacing: 0; }
+.card-grade.greed   { color: var(--up);   }
+.card-grade.fear    { color: var(--down); }
+.card-grade.neutral { color: var(--flat); }
 .card-change {
   display: flex; align-items: center; gap: 5px;
   font-size: 11px; font-weight: 700;
@@ -370,6 +385,13 @@ body {
 .spark-empty {
   display: flex; align-items: center; justify-content: center;
   height: 100%; font-size: 10px; color: var(--text-3);
+}
+/* BTC 도미넌스처럼 history_bootstrapping 종목이 아직 5일치를 못 채웠을 때 —
+   "데이터 없음"(장애처럼 보임) 대신 진행 상태를 알려준다(정상적으로 축적 중). */
+.spark-collecting {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; font-size: 10px; color: var(--text-3);
+  text-align: center; padding: 0 8px;
 }
 
 /* 카드 하단 메타 */
@@ -495,6 +517,10 @@ body {
   letter-spacing: -1.5px; font-variant-numeric: tabular-nums;
   line-height: 1;
 }
+.detail-grade { font-size: 18px; font-weight: 700; letter-spacing: 0; }
+.detail-grade.greed   { color: var(--up);   }
+.detail-grade.fear    { color: var(--down); }
+.detail-grade.neutral { color: var(--flat); }
 .detail-change {
   display: flex; align-items: center; gap: 8px;
   font-size: 14px; font-weight: 700;

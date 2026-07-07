@@ -1,5 +1,5 @@
 /**
- * _collectors/us-indices.js — 나스닥/다우/VIX/미국채10년/DXY 수집 (Vercel 서버리스 전용)
+ * _collectors/us-indices.js — 나스닥/다우/VIX/미국채10년/DXY/S&P500/SOX 수집 (Vercel 서버리스 전용)
  * data-collector-js/fetch-us-indices.js의 collectUSIndices 로직과 동일.
  */
 
@@ -44,7 +44,7 @@ async function fetchText(url) {
 
 async function fetchCNBCBulk() {
   const params = new URLSearchParams({
-    symbols: '.IXIC|.DJI|.VIX|US10Y|.DXY', requestMethod: 'itv',
+    symbols: '.IXIC|.DJI|.VIX|US10Y|.DXY|.SPX|.SOX', requestMethod: 'itv',
     noform: '1', partnerId: '2', fund: '1', exthrs: '1', output: 'json', events: '0',
   });
   const data = await fetchJSON(`https://quote.cnbc.com/quote-html-webservice/quote.htm?${params}`);
@@ -194,11 +194,15 @@ export async function collectUSIndices({ include90d = true } = {}) {
   const vix    = buildItemFromCNBC(cnbc['.VIX'],   { id: 'vix',    name: 'VIX 공포지수',           symbol: '^VIX',  category: '지수' });
   const us10y  = buildItemFromCNBC(cnbc['US10Y'],  { id: 'us10y',  name: '미국 10년물 국채금리',   symbol: 'US10Y', category: '매크로', unit: 'percent' });
   const dxy    = buildItemFromCNBC(cnbc['.DXY'],   { id: 'dxy',    name: '달러인덱스 (DXY)',       symbol: '.DXY',  category: '매크로' });
+  const sp500  = buildItemFromCNBC(cnbc['.SPX'],   { id: 'sp500',  name: 'S&P500 (^GSPC)',         symbol: '^GSPC', category: '지수' });
+  const sox    = buildItemFromCNBC(cnbc['.SOX'],   { id: 'sox',    name: '필라델피아 반도체 (SOX)', symbol: '^SOX',  category: '지수' });
 
   // history 30일 (per-item isolation)
-  // Dow  : Naver World → FRED DJIA (로컬 확인, Vercel 불확실)
-  // VIX  : Naver World → CBOE CDN CSV (완전 독립, Vercel 확인됨)
+  // Dow   : Naver World → FRED DJIA (로컬 확인, Vercel 불확실)
+  // VIX   : Naver World → CBOE CDN CSV (완전 독립, Vercel 확인됨)
   // US10Y/DXY : Naver Market Index API(m.stock.naver.com) — 단일 소스, 폴백 없음(다른 지표와 동일 수준)
+  // S&P500 : Naver World(심볼 '.INX' — CNBC의 '.SPX'와 다름, 2026-07-07 확인) → FRED SP500 폴백
+  // SOX    : Naver World(심볼 '.SOX') — 단일 소스, 폴백 없음(FRED에 반도체지수 시리즈 없음, 2026-07-07 확인)
   await Promise.allSettled([
     fetchHistoryNaverSise('NAS@IXIC', 3)
       .then(h => { nasdaq.history = h; })
@@ -221,6 +225,15 @@ export async function collectUSIndices({ include90d = true } = {}) {
     fetchHistoryNaverMarketIndex('exchange', 'FX_USDX', 30)
       .then(h => { dxy.history = h; })
       .catch(e => console.warn(`[dxy] history 실패: ${e.message}`)),
+
+    fetchHistoryNaverWorld('.INX', 30)
+      .catch(e => { console.warn(`[sp500] Naver world 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('SP500', 30); })
+      .then(h => { sp500.history = h; })
+      .catch(e => console.warn(`[sp500] history 실패: ${e.message}`)),
+
+    fetchHistoryNaverWorld('.SOX', 30)
+      .then(h => { sox.history = h; })
+      .catch(e => console.warn(`[sox] history 실패: ${e.message}`)),
   ]);
 
   // history_90d — 상세 요청 시에만 수집 (US10Y/DXY는 Naver marketIndex pageSize 상한 60으로 대체)
@@ -247,14 +260,23 @@ export async function collectUSIndices({ include90d = true } = {}) {
       fetchHistoryNaverMarketIndex('exchange', 'FX_USDX', 60)
         .then(h => { dxy.history_90d = h; })
         .catch(e => console.warn(`[dxy] history_90d 실패: ${e.message}`)),
+
+      fetchHistoryNaverWorld('.INX', 90)
+        .catch(e => { console.warn(`[sp500] Naver world 90d 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('SP500', 90); })
+        .then(h => { sp500.history_90d = h; })
+        .catch(e => console.warn(`[sp500] history_90d 실패: ${e.message}`)),
+
+      fetchHistoryNaverWorld('.SOX', 90)
+        .then(h => { sox.history_90d = h; })
+        .catch(e => console.warn(`[sox] history_90d 실패: ${e.message}`)),
     ]);
   }
 
   const sign = n => (n >= 0 ? '+' : '') + n.toFixed(2);
-  for (const it of [nasdaq, dow, vix, us10y, dxy]) {
+  for (const it of [nasdaq, dow, vix, us10y, dxy, sp500, sox]) {
     recalcChange(it);
     console.log(`[${it.id}] ${it.price.toLocaleString()}  ${sign(it.change)} (${sign(it.change_pct)}%)  hist=${it.history.length}  hist_90d=${it.history_90d.length}`);
   }
 
-  return [nasdaq, dow, vix, us10y, dxy];
+  return [nasdaq, dow, vix, us10y, dxy, sp500, sox];
 }
