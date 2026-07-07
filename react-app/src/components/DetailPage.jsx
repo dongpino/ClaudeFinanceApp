@@ -7,14 +7,23 @@ import BottomNav from './BottomNav';
 const ARROW = { up: '▲', down: '▼', flat: '-' };
 const DETAIL_TIMEOUT_MS = 20_000;
 
+// -0(음의 0)은 toFixed()에서 "-0.00"으로 찍히는 JS 특유의 표시 버그를 낳으므로
+// 표시 직전에 항상 +0으로 정규화한다("n === 0"은 -0에도 true라 이 한 줄로 충분).
+const nz = n => (n === 0 ? 0 : n);
+
 const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fc   = n => (n > 0 ? '+' : '') + fp(n);
+const fc   = n => { const v = nz(n); return (v > 0 ? '+' : '') + fp(v); };
 const fpct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 
 // unit==='percent'인 종목(미 10년물 금리 등): 값 자체가 %이므로 "4.25%"로,
-// 등락은 %p로 표시해 다른 종목의 등락률(%)과 헷갈리지 않게 한다(MarketCard와 동일 규칙).
+// 등락은 국채금리 관례상 bp(basis point, 1bp=0.01%p)로 표시한다(MarketCard와 동일 규칙 —
+// %p 소수 2자리로는 0.01%p 미만의 실제 변동이 "0.00%p"로 뭉개져 계산 실패처럼 보였다).
 const fpUnit = (n, unit) => unit === 'percent' ? `${n.toFixed(2)}%` : fp(n);
-const fcUnit = (n, unit) => unit === 'percent' ? `${n > 0 ? '+' : ''}${n.toFixed(2)}%p` : fc(n);
+const fcUnit = (n, unit) => {
+  if (unit !== 'percent') return fc(n);
+  const bp = nz(Math.round(n * 100 * 10) / 10); // %p → bp(소수 1자리)
+  return `${bp > 0 ? '+' : ''}${bp.toFixed(1)}bp`;
+};
 
 function stats90(h90) {
   if (!h90 || !h90.length) return null;

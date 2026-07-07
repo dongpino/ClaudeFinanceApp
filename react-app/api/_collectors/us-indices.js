@@ -56,8 +56,10 @@ async function fetchCNBCBulk() {
   return bySymbol;
 }
 
-// unit: 'percent'면 값 자체가 %(예: 국채 금리) — 카드에서 "4.25%" / 등락 "+0.02%p"로 표시,
+// unit: 'percent'면 값 자체가 %(예: 국채 금리) — 카드에서 "4.25%" / 등락 "+0.2bp"로 표시,
 // 다른 카드의 등락률(%)과 혼동되지 않도록 change_pct는 표시하지 않는다(MarketCard/DetailPage 참고).
+// percent 종목은 change를 r2(소수 2자리)로 반올림하면 0.01%p 미만의 실제 변동(예: +0.002%p)이
+// 0으로 뭉개져 "계산 실패"로 오인되므로(us10y 사례), r4(소수 4자리)로 정밀도를 보존한다.
 function buildItemFromCNBC(q, { id, name, symbol, category, unit }) {
   const current   = cleanNum(q.last);
   const prevClose = cleanNum(q.previous_day_closing);
@@ -67,7 +69,7 @@ function buildItemFromCNBC(q, { id, name, symbol, category, unit }) {
     id, name, symbol,
     price:          r2(current),
     prev_close:     r2(prevClose),
-    change:         r2(change),
+    change:         unit === 'percent' ? r4(change) : r2(change),
     change_pct:     r4(changePct),
     direction:      direction(change),
     source:         'CNBC',
@@ -167,6 +169,10 @@ async function fetchHistoryNaverMarketIndex(category, reutersCode, numRows = 30)
 }
 
 function recalcChange(item) {
+  // percent 단위(국채금리 등)는 CNBC 원본을 r4로 이미 정밀 보존했으므로 history 폴백을 타지 않는다.
+  // 국채금리는 하루 변동이 0.01%p 미만인 날이 흔해 이 임계값(과 history 기반 재계산)이
+  // "정상적으로 작은 변동"을 "CNBC 값 의심"으로 오인시키기 때문(us10y 사례).
+  if (item.unit === 'percent') return;
   if (Math.abs(item.change) > 0.01) return;
   const h = item.history;
   if (!h || h.length < 2) return;
