@@ -834,7 +834,7 @@ body {
   border-color: var(--down); color: var(--down); background: var(--down-dim);
 }
 .analysis-rsi-wrap {
-  flex-shrink: 0; height: 138px;
+  flex-shrink: 0; height: 92px; /* 기존 138px의 2/3 — 줄어든 만큼 메인 차트(flex:1)가 흡수 */
   display: flex; flex-direction: column;
 }
 .analysis-rsi-label {
