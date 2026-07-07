@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
-import { calcMA, calcRSIAligned } from '../indicators';
+import { calcMA, calcBB, calcRSIAligned } from '../indicators';
 import { useTheme } from '../ThemeContext';
 import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesStore';
 
@@ -53,6 +53,7 @@ const MA60  = '#a855f7';
 const MA100 = '#10b981';
 const MA200 = '#fbbf24';
 const RSI_C = '#22d3ee';
+const BB_C  = '#ec4899'; // MA 4색·RSI 시안과 겹치지 않는 핑크 계열
 
 // 거래량 히스토그램 — 캔들 상승/하락색을 반투명으로 재사용(고정 색상이라 다크/라이트 모두 대응).
 // 히스토그램 하단 배치 비율(가격 스케일의 아래 20~25% 영역).
@@ -85,6 +86,7 @@ function buildVolumeData(h) {
 const AnalysisChart = forwardRef(function AnalysisChart({
   item, tf,
   showMA20, showMA60, showMA100, showMA200,
+  showBB,
   showRSI, showVolume,
   symbolKey, onLinesChange,
 }, ref) {
@@ -112,6 +114,9 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   const ma60Ref  = useRef(null);
   const ma100Ref = useRef(null);
   const ma200Ref = useRef(null);
+  const bbUpperRef = useRef(null);
+  const bbBasisRef = useRef(null);
+  const bbLowerRef = useRef(null);
   const volumeRef = useRef(null);
 
   // 동기화용 refs — 콜백 실행 시점에 lazy하게 읽음
@@ -378,6 +383,33 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     m200.setData(calcMA(h, 200));
     ma200Ref.current = m200;
 
+    // ── 볼린저밴드(20, 2) — 상/하단 동일 색 얇은 선, 중심선은 점선+반투명으로 구분 ──
+    // lightweight-charts 4.2.3는 두 라인 사이를 채우는 band-fill 프리미티브가 없고(v5의
+    // ISeriesPrimitive/Band 시리즈 부재), 흔히 쓰는 "Area 시리즈 2개로 흉내내기" 트릭도
+    // 이 차트의 배경이 theme별로 투명(transparent)이라 구멍 낸 영역이 캔들/그리드를 가려
+    // 오히려 깨져 보인다 — 그래서 라인 3개만 그린다.
+    const bb = calcBB(h, 20, 2);
+    const bbUpper = chart.addLineSeries({
+      color: BB_C, lineWidth: 1,
+      priceLineVisible: false, lastValueVisible: false, visible: showBB, title: 'BB상단',
+    });
+    bbUpper.setData(bb.upper);
+    bbUpperRef.current = bbUpper;
+
+    const bbBasis = chart.addLineSeries({
+      color: BB_C + '99', lineWidth: 1, lineStyle: LineStyle.Dashed,
+      priceLineVisible: false, lastValueVisible: false, visible: showBB, title: 'BB중심',
+    });
+    bbBasis.setData(bb.basis);
+    bbBasisRef.current = bbBasis;
+
+    const bbLower = chart.addLineSeries({
+      color: BB_C, lineWidth: 1,
+      priceLineVisible: false, lastValueVisible: false, visible: showBB, title: 'BB하단',
+    });
+    bbLower.setData(bb.lower);
+    bbLowerRef.current = bbLower;
+
     chart.timeScale().fitContent();
 
     // ── 시간축 동기화 → RSI 차트 ──────────────────────────────
@@ -421,6 +453,9 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       ma60Ref.current  = null;
       ma100Ref.current = null;
       ma200Ref.current = null;
+      bbUpperRef.current = null;
+      bbBasisRef.current = null;
+      bbLowerRef.current = null;
       volumeRef.current = null;
       srLineObjs.clear(); // chart.remove()로 이미 소멸된 IPriceLine 참조 정리
       forceHideHoverLine();
@@ -517,6 +552,11 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   useEffect(() => { ma60Ref.current?.applyOptions({ visible: showMA60 });   }, [showMA60]);
   useEffect(() => { ma100Ref.current?.applyOptions({ visible: showMA100 }); }, [showMA100]);
   useEffect(() => { ma200Ref.current?.applyOptions({ visible: showMA200 }); }, [showMA200]);
+  useEffect(() => {
+    bbUpperRef.current?.applyOptions({ visible: showBB });
+    bbBasisRef.current?.applyOptions({ visible: showBB });
+    bbLowerRef.current?.applyOptions({ visible: showBB });
+  }, [showBB]);
   useEffect(() => { volumeRef.current?.applyOptions({ visible: showVolume }); }, [showVolume]);
 
   return (

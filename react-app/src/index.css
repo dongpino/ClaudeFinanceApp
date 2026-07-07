@@ -735,6 +735,7 @@ body {
 .ind-toggle.on.ma60  { border-color: #a855f7; }
 .ind-toggle.on.ma100 { border-color: #10b981; }
 .ind-toggle.on.ma200 { border-color: #fbbf24; }
+.ind-toggle.on.bb    { border-color: #ec4899; }
 .ind-toggle.on.rsi   { border-color: #22d3ee; }
 .ind-toggle.on.vol   { border-color: #64748b; }
 .ind-toggle.disabled { opacity: .35; cursor: not-allowed; }
@@ -746,6 +747,7 @@ body {
 .ind-toggle.on .ind-dot.ma60  { background: #a855f7; }
 .ind-toggle.on .ind-dot.ma100 { background: #10b981; }
 .ind-toggle.on .ind-dot.ma200 { background: #fbbf24; }
+.ind-toggle.on .ind-dot.bb    { background: #ec4899; }
 .ind-toggle.on .ind-dot.rsi   { background: #22d3ee; }
 .ind-toggle.on .ind-dot.vol   { background: #64748b; }
 .ind-toggle-clear-lines {

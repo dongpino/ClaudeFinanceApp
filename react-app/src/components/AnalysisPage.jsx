@@ -77,6 +77,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   const [showMA60,   setShowMA60]   = useState(true);
   const [showMA100,  setShowMA100]  = useState(true);
   const [showMA200,  setShowMA200]  = useState(true);
+  const [showBB,     setShowBB]     = useState(false); // 기본 OFF — 기본 화면이 복잡해지지 않게
   const [showRSI,    setShowRSI]    = useState(true);
   const [showVolume, setShowVolume] = useState(true);
 
@@ -595,6 +596,12 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                   <span className="ind-dot ma200" />MA200
                 </button>
                 <button
+                  className={`ind-toggle${showBB ? ' on bb' : ''}`}
+                  onClick={() => setShowBB(v => !v)}
+                >
+                  <span className="ind-dot bb" />BB(20,2)
+                </button>
+                <button
                   className={`ind-toggle${showRSI ? ' on rsi' : ''}`}
                   onClick={() => setShowRSI(v => !v)}
                 >
@@ -641,6 +648,7 @@ export default function AnalysisPage({ activePage, onPageChange }) {
                     showMA60={showMA60}
                     showMA100={showMA100}
                     showMA200={showMA200}
+                    showBB={showBB}
                     showRSI={showRSI}
                     showVolume={showVolume && !volumeDisabled}
                     symbolKey={symbolKey}
