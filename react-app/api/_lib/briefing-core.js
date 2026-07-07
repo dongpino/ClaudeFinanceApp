@@ -7,10 +7,15 @@
  *
  * ───────────────────────── 비용 정보 ──────────────────────────
  *  모델:  claude-haiku-4-5-20251001  (Anthropic 최저가 모델)
- *  입력:  ~700~1,000 토큰 (지표 6종 + 뉴스 8개 헤드라인 + 고정 system 프롬프트)
+ *  입력:  ~1,000~1,300 토큰 (지표 6종 + 뉴스 8개 헤드라인 + 매크로/캘린더/이슈
+ *         압축 컨텍스트(+~300 토큰) + 고정 system 프롬프트)
  *  출력:  ~350~600 토큰   (마크다운 소제목 구조, 500자 내외 한국어 브리핑)
  *  1회:   ~$0.001 안팎  ← 매우 저렴
  * ──────────────────────────────────────────────────────────────
+ *
+ * 매크로/캘린더/이슈 컨텍스트: api/macro.js·api/issues.js가 이미 Redis에 캐시해둔
+ * 결과를 그대로 읽어 재사용한다(FRED·Haiku 재호출 없음 — 비용 추가 없이 맥락만 주입).
+ * 셋 중 어느 하나가 없거나 실패해도 해당 부분만 "정보 없음"으로 비우고 나머지로 정상 생성한다.
  *
  * 캐싱: Upstash Redis, KST 시간 단위 버킷(1시간) — 서버리스 콜드 스타트와 무관하게 유지됨.
  *       Redis 연결·조회 실패 시에는 캐시 없이 기존처럼 매번 생성하는 방식으로 폴백한다.
@@ -26,6 +31,7 @@ import { collectBTC }        from '../_collectors/btc.js';
 import { collectUSIndices }  from '../_collectors/us-indices.js';
 import { collectKR }         from '../_collectors/kr.js';
 import { collectRSSNews }    from '../_collectors/rss.js';
+import { getUpcomingEvents } from './macro-calendar.js';
 
 // ── 상수 ──────────────────────────────────────────────────────
 
@@ -38,6 +44,14 @@ const MAX_OUTPUT_TOKENS = 1000;
 
 // 프롬프트에 포함할 뉴스 헤드라인 수
 const NEWS_HEADLINES_FOR_PROMPT = 8;
+
+// ── 추가 컨텍스트(매크로/캘린더/이슈) 설정 — 각각 다른 API가 이미 채워둔 캐시를 재사용 ──
+const MACRO_CACHE_KEY          = 'macro:v1';        // api/macro.js가 쓰는 캐시 키 그대로 재사용
+const ISSUES_LATEST_KEY        = 'issues:latest';   // api/issues.js가 쓰는 최신 캐시 키 그대로 재사용
+const CALENDAR_LOOKAHEAD_DAYS  = 14;                // 캘린더 조회 범위
+const CALENDAR_MAX_FOR_PROMPT  = 8;                 // 프롬프트에 싣는 최대 이벤트 수(~100토큰 목표)
+const ISSUES_MIN_IMPORTANCE    = 2;                 // 이 미만은 프롬프트에서 제외
+const ISSUES_MAX_FOR_PROMPT    = 5;                 // 프롬프트에 싣는 최대 이슈 수(~150토큰 목표)
 
 // AI 요청 타임아웃: Vercel 서버리스 최대 실행 시간 고려
 const AI_TIMEOUT_MS = 20_000;
@@ -124,6 +138,31 @@ async function getLatestBriefing() {
   }
 }
 
+// api/macro.js가 저장해둔 매크로 스냅샷을 그대로 읽는다(FRED 재호출 없음).
+// 캐시가 없거나(TTL 만료, macro.js 미호출 등) Redis 자체가 없으면 null — 호출부가 "정보 없음"으로 처리.
+async function getCachedMacro() {
+  const r = getRedis();
+  if (!r) return null;
+  try {
+    return await r.get(MACRO_CACHE_KEY);
+  } catch (e) {
+    console.error('[briefing] 매크로 캐시 조회 실패 — 컨텍스트 없이 진행:', e.message);
+    return null;
+  }
+}
+
+// api/issues.js가 저장해둔 최신 이슈 분류 결과를 그대로 읽는다(Haiku 재호출 없음).
+async function getCachedIssuesLatest() {
+  const r = getRedis();
+  if (!r) return null;
+  try {
+    return await r.get(ISSUES_LATEST_KEY);
+  } catch (e) {
+    console.error('[briefing] 이슈 캐시 조회 실패 — 컨텍스트 없이 진행:', e.message);
+    return null;
+  }
+}
+
 async function getDailyCount(dayKey) {
   const r = getRedis();
   if (!r) return 0;
@@ -198,9 +237,74 @@ async function collectMarketSnapshot() {
   return ITEM_ORDER.filter(id => byId[id]).map(id => byId[id]);
 }
 
+// ── 추가 컨텍스트 압축(매크로/캘린더/이슈) ──────────────────────
+// 각각 실패/부재 시 null을 반환 — 호출부(buildUserPrompt)가 "정보 없음"으로 대체한다.
+
+// 매크로 스냅샷 → 한 줄 압축(~50토큰): "기준금리 X~Y%, CPI YoY Z%(전월비 ..., 기준월), 실업률 ..."
+function buildMacroContext(macro) {
+  if (!macro) return null;
+  const parts = [];
+  if (macro.fomc?.rate) {
+    parts.push(`기준금리 ${macro.fomc.rate.lower}~${macro.fomc.rate.upper}%`);
+  }
+  if (macro.cpi) {
+    const mom = macro.cpi.mom;
+    const momStr = mom != null ? `${mom >= 0 ? '+' : ''}${mom}%` : '?';
+    parts.push(`CPI YoY ${macro.cpi.yoy}%(전월비 ${momStr}, ${macro.cpi.refMonth} 기준)`);
+  }
+  if (macro.unemployment) {
+    parts.push(`실업률 ${macro.unemployment.rate}%(${macro.unemployment.refMonth})`);
+  }
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
+// D-day 표기: 오늘=D-0(오늘), 미래=D-n, 진행 중(FOMC 이틀 회의 등 dDay<0)=진행중
+function formatDday(dDay) {
+  if (dDay < 0) return '진행중';
+  if (dDay === 0) return 'D-0(오늘)';
+  return `D-${dDay}`;
+}
+
+// 캘린더 이벤트 라벨 — macro-calendar.js가 칩용으로 이미 만들어둔 shortLabel을 재사용하되
+// CPI/선물옵션만기처럼 지역 구분이 의미 있는 카테고리만 국가명을 붙인다.
+function calendarEventLabel(ev) {
+  if (ev.category === 'cpi')    return `미국 ${ev.shortLabel}`;
+  if (ev.category === 'expiry') return `${ev.region === 'KR' ? '한국' : '미국'} ${ev.shortLabel}`;
+  return ev.shortLabel;
+}
+
+// 향후 N일 이벤트 → D-day 목록(~100토큰, 최대 CALENDAR_MAX_FOR_PROMPT건)
+function buildCalendarContext(events) {
+  if (!events || events.length === 0) return null;
+  return events
+    .slice(0, CALENDAR_MAX_FOR_PROMPT)
+    .map(ev => `- ${calendarEventLabel(ev)} ${formatDday(ev.dDay)}`)
+    .join('\n');
+}
+
+const ISSUE_CATEGORY_LABEL = {
+  regulation:  '규제',
+  exchange:    '거래소',
+  listing:     '상장',
+  earnings:    '실적',
+  macro_shock: '매크로충격',
+  other_major: '기타',
+};
+
+// 이슈 캐시 → importance 2 이상만, 최대 ISSUES_MAX_FOR_PROMPT건(~150토큰)
+function buildIssuesContext(issuesData) {
+  const list = (issuesData?.issues ?? [])
+    .filter(it => it.importance >= ISSUES_MIN_IMPORTANCE)
+    .slice(0, ISSUES_MAX_FOR_PROMPT);
+  if (list.length === 0) return null;
+  return list
+    .map(it => `- [${ISSUE_CATEGORY_LABEL[it.category] ?? it.category}] ${it.title_ko}`)
+    .join('\n');
+}
+
 // ── 프롬프트 생성 ──────────────────────────────────────────────
 // system: 고정된 역할·해석 원칙·출력 형식 (지표 나열이 아니라 지표 간 관계로 해석시킴)
-// user:   그날그날 바뀌는 실제 데이터(지표 수치·뉴스 헤드라인)만 담음
+// user:   그날그날 바뀌는 실제 데이터(지표 수치·뉴스 헤드라인·매크로/캘린더/이슈 컨텍스트)만 담음
 
 function buildSystemPrompt() {
   return `당신은 한국 개인 투자자를 위한 시장 브리핑을 작성하는 애널리스트입니다.
@@ -211,6 +315,11 @@ function buildSystemPrompt() {
 - 제시된 수치는 해석의 근거로만 인용하고, 수치 나열 자체가 목적이 되지 않게 하십시오.
 - 뉴스 헤드라인은 지표 움직임과 실제로 연관되는 것 위주로만 언급하고, 무관한 헤드라인은 무시하십시오.
 - 확정적 예측이나 매수·매도 같은 투자 조언은 하지 마십시오.
+
+[컨텍스트 활용 원칙]
+- 매크로/캘린더/이슈는 참고 배경일 뿐, 시장 움직임과 무관하면 언급하지 마십시오.
+- D-0(당일) 이벤트는 오늘의 핵심이나 지표 해석에, D-3 이내 이벤트는 관전 포인트에 반영하십시오.
+- 이슈가 뉴스 헤드라인과 겹치면 한 번만 언급하십시오.
 
 [출력 형식 — 아래 마크다운 구조를 그대로 따르고, 전체 500자 내외로 간결하게 작성]
 ## 오늘의 핵심
@@ -232,7 +341,7 @@ function buildSystemPrompt() {
 반드시 한국어로, 위 형식(제목의 ## 표기, 목록의 - 표기, 마지막 줄의 ⚠️ 표기 포함)을 정확히 지켜 작성하십시오.`;
 }
 
-function buildUserPrompt(items, newsItems) {
+function buildUserPrompt(items, newsItems, macroContext, calendarContext, issuesContext) {
   const sign = n => (n >= 0 ? '+' : '') + Number(n).toFixed(2);
 
   const marketSection = items.map(it => {
@@ -250,6 +359,15 @@ ${marketSection}
 
 [경제 뉴스 헤드라인]
 ${newsSection}
+
+[매크로 배경]
+${macroContext ?? '정보 없음'}
+
+[다가오는 이벤트 (${CALENDAR_LOOKAHEAD_DAYS}일 이내)]
+${calendarContext ?? '정보 없음'}
+
+[최근 이슈]
+${issuesContext ?? '정보 없음'}
 
 위 데이터를 바탕으로 오늘의 시장 브리핑을 작성하세요.`;
 }
@@ -337,10 +455,14 @@ export async function getOrGenerateBriefing() {
   console.log(`[briefing] Redis 캐시 MISS (${hourKey}) — 브리핑 생성 시작 (${fmtKST()})`);
   const startMs = Date.now();
 
-  // ── 시장 데이터 + RSS 병렬 수집 ────────────────────────────
-  const [items, newsItems] = await Promise.all([
+  // ── 시장 데이터 + RSS + 매크로/이슈 캐시 병렬 수집 ───────────
+  // 매크로/이슈는 각각 api/macro.js, api/issues.js가 채워둔 Redis 캐시를 읽기만 하므로
+  // FRED·Haiku 재호출이 없다 — 실패해도(캐시 없음 등) null로 조용히 폴백한다.
+  const [items, newsItems, macroCached, issuesCached] = await Promise.all([
     collectMarketSnapshot(),
     collectRSSNews(NEWS_HEADLINES_FOR_PROMPT),
+    getCachedMacro(),
+    getCachedIssuesLatest(),
   ]);
 
   if (items.length === 0) {
@@ -351,12 +473,20 @@ export async function getOrGenerateBriefing() {
     };
   }
 
+  const calendarEvents   = getUpcomingEvents(CALENDAR_LOOKAHEAD_DAYS);
+  const macroContext     = buildMacroContext(macroCached);
+  const calendarContext  = buildCalendarContext(calendarEvents);
+  const issuesContext    = buildIssuesContext(issuesCached);
+
   const collectMs = Date.now() - startMs;
-  console.log(`[briefing] 데이터 수집 완료 (${(collectMs / 1000).toFixed(1)}s): 지표=${items.length}종 뉴스=${newsItems.length}개`);
+  console.log(
+    `[briefing] 데이터 수집 완료 (${(collectMs / 1000).toFixed(1)}s): 지표=${items.length}종 뉴스=${newsItems.length}개  ` +
+    `매크로=${macroContext ? 'OK' : '없음'} 캘린더=${calendarContext ? calendarEvents.length + '건' : '없음'} 이슈=${issuesContext ? 'OK' : '없음'}`
+  );
 
   // ── AI 호출 ────────────────────────────────────────────────
   const systemPrompt = buildSystemPrompt();
-  const userPrompt   = buildUserPrompt(items, newsItems);
+  const userPrompt   = buildUserPrompt(items, newsItems, macroContext, calendarContext, issuesContext);
 
   let aiData;
   try {
