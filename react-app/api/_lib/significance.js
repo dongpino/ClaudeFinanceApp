@@ -1,9 +1,11 @@
 /**
- * api/_lib/significance.js — AI 브리핑 개선 Stage 1: Significance Engine
+ * api/_lib/significance.js — AI 브리핑 개선 Stage 1(Significance Engine) + Stage 2(일별 적재)
  *
- * 목적: 홈탭 15종 지표(+FRED 매크로 발표 3종)의 스냅샷을 모아 "오늘 브리핑에서
- * 짚어야 할 만큼 의미 있는 움직임"을 규칙 기반으로 골라낸다. Stage 2(프롬프트 주입)
- * 이전 단계라 여기서는 판단 결과만 만들고, briefing-core.js는 수정하지 않는다.
+ * Stage 1 목적: 홈탭 15종 지표(+FRED 매크로 발표 3종)의 스냅샷을 모아 "오늘 브리핑에서
+ * 짚어야 할 만큼 의미 있는 움직임"을 규칙 기반으로 골라낸다.
+ * Stage 2 목적: buildSignals() 결과를 하루 1건씩 Redis sorted set(signals:daily)에
+ * 쌓아 향후(Stage 3) 5일 추세 문맥의 데이터 기반을 만든다 — 이번 단계에서는 적재만
+ * 하고 브리핑 프롬프트에는 아직 연결하지 않는다. briefing-core.js는 수정하지 않는다.
  *
  * ── 재사용 원칙(중복 fetch 코드 없음) ──────────────────────────
  * - 홈 15종: market-data.js의 handleHome/briefing-core.js의 collectMarketSnapshot과
@@ -14,6 +16,14 @@
  *   fetched:false로 표시하고 나머지는 정상 진행한다.
  * - "이전 발표값 대비 변경" 판정을 위한 상태는 이 모듈이 별도로 'sig:macro:last'에
  *   저장한다(macro.js와는 다른 키 — 그쪽 캐시를 침범하지 않음).
+ *
+ * ── 일별 스냅샷 적재(signals:daily) ────────────────────────────
+ * briefing-core.js의 일별 아카이브(briefing:day:*+briefing:days 두 키 조합)와는 다르게,
+ * 여기서는 sorted set 하나에 "score=그 날짜 KST 자정 타임스탬프, member=buildSignals()
+ * 결과 JSON 문자열"을 직접 담는다 — 데이터 자체가 멤버라 별도 날짜별 키가 필요 없다.
+ * 하루 1개 원칙이라 같은 날 재호출되면 그 score의 기존 멤버를 지우고 다시 넣는다
+ * (member 값 자체가 매번 달라지는 JSON이라 "같은 멤버면 자동 덮어씀"이 안 통해서
+ * score로 찾아 지우는 방식이 필요함).
  */
 
 import { Redis } from '@upstash/redis';
@@ -54,6 +64,10 @@ export const THRESHOLDS = {
 const MACRO_CACHE_KEY    = 'macro:v1';      // api/macro.js가 쓰는 캐시 키 — 재조회만, FRED 재호출 없음
 const SIG_MACRO_LAST_KEY = 'sig:macro:last'; // "마지막으로 확인한 발표값" — 이 모듈 전용 상태
 
+const DAILY_SNAPSHOT_KEY    = 'signals:daily'; // sorted set: score=KST 자정 타임스탬프, member=signals JSON
+const DAILY_RETENTION_DAYS  = 30;
+const DAY_MS                = 24 * 60 * 60 * 1000;
+
 // ── 유틸 ──────────────────────────────────────────────────────
 
 function fmtKST(date = new Date()) {
@@ -67,6 +81,14 @@ function fmtKST(date = new Date()) {
 }
 
 function sign(n) { return (n >= 0 ? '+' : '') + n.toFixed(2); }
+
+// 해당 시각이 KST로 몇 년-몇 월-며칠인지 구한 뒤, 그 날짜의 "00:00:00 KST"를
+// UTC epoch ms로 환산한다(KST=UTC+9라 자정 KST는 전날 15:00 UTC).
+function kstMidnightScore(date = new Date()) {
+  const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  const y = kst.getUTCFullYear(), mo = kst.getUTCMonth(), d = kst.getUTCDate();
+  return Date.UTC(y, mo, d) - 9 * 60 * 60 * 1000;
+}
 
 // ── Redis (지연 생성, 실패 시 null 폴백 — 프로젝트 공통 패턴) ──
 let redisClient;
@@ -316,4 +338,50 @@ export async function buildSignals() {
     patterns,
     meta: { fetchFailures: snapshot.fetchFailures },
   };
+}
+
+// ── Stage 2: 일별 스냅샷 적재 ──────────────────────────────────
+// 저장 실패는 완전히 격리한다 — 호출부(브리핑 cron 등)는 이 함수가 절대 throw하지
+// 않는다고 가정할 수 있고, 실패 시에도 브리핑 생성 자체는 정상 진행돼야 하기 때문.
+export async function saveSnapshot(signals) {
+  const r = getRedis();
+  if (!r) {
+    console.warn('[significance] Redis 없음 — 일별 스냅샷 저장 스킵');
+    return { saved: false, reason: 'no-redis' };
+  }
+  try {
+    const score  = kstMidnightScore();
+    const member = JSON.stringify(signals);
+
+    // 하루 1개 원칙: 같은 날짜(score) 기존 멤버 제거 후 새로 저장(덮어쓰기).
+    await r.zremrangebyscore(DAILY_SNAPSHOT_KEY, score, score);
+    await r.zadd(DAILY_SNAPSHOT_KEY, { score, member });
+
+    // 30일 초과분 정리.
+    const cutoff = score - DAILY_RETENTION_DAYS * DAY_MS;
+    await r.zremrangebyscore(DAILY_SNAPSHOT_KEY, '-inf', cutoff);
+
+    console.log(`[significance] 일별 스냅샷 저장 완료 (score=${score})`);
+    return { saved: true, score };
+  } catch (e) {
+    console.error('[significance] 일별 스냅샷 저장 실패(호출부에는 전파하지 않음):', e.message);
+    return { saved: false, reason: e.message };
+  }
+}
+
+// 최근 days일 스냅샷 — 날짜 오름차순(오래된→최신). Stage 3(추세 문맥)에서 사용 예정.
+export async function getRecentSnapshots(days = 5) {
+  const r = getRedis();
+  if (!r) return [];
+  try {
+    const cutoff = kstMidnightScore() - (days - 1) * DAY_MS;
+    // @upstash/redis는 저장된 값이 JSON처럼 보이면 zrange 결과에서도 자동으로
+    // parse해서 돌려준다(get/set과 동일한 동작) — saveSnapshot()에서 JSON.stringify로
+    // 넣었더라도 여기서 다시 JSON.parse하면 "이미 객체인 것을 parse"해서 예외가 나고,
+    // 그 예외를 삼키면 전부 null이 돼 조용히 빈 배열을 반환하는 버그가 된다(실측으로 확인).
+    return await r.zrange(DAILY_SNAPSHOT_KEY, cutoff, '+inf', { byScore: true });
+  } catch (e) {
+    console.error('[significance] 일별 스냅샷 조회 실패:', e.message);
+    return [];
+  }
 }

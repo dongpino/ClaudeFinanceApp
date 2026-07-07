@@ -14,9 +14,15 @@
  *
  * 환경변수: CRON_SECRET (필수 — 없으면 요청 자체를 거부), ANTHROPIC_API_KEY,
  *           KV_REST_API_URL / KV_REST_API_TOKEN — api/_lib/briefing-core.js 참고.
+ *
+ * AI 브리핑 개선 Stage 2: 브리핑 생성 후 significance.js의 buildSignals()+saveSnapshot()을
+ * 호출해 오늘의 지표 스냅샷을 signals:daily에 하루 1건씩 쌓는다(Stage 3의 5일 추세 문맥용
+ * 데이터 축적 — 이 단계에서는 브리핑 프롬프트에 연결하지 않는다). 완전히 격리돼 있어 이
+ * 수집/적재가 실패해도 브리핑 응답에는 전혀 영향을 주지 않는다.
  */
 
 import { getOrGenerateBriefing } from './_lib/briefing-core.js';
+import { buildSignals, saveSnapshot } from './_lib/significance.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -37,6 +43,14 @@ export default async function handler(req, res) {
 
   console.log('[briefing-cron] 인증 성공 — 아침 자동 브리핑 생성 시작');
   const result = await getOrGenerateBriefing();
+
+  // Stage 2 지표 스냅샷 적재 — 브리핑 응답과 완전히 무관하게 격리(실패해도 무시하고 진행).
+  try {
+    const signals = await buildSignals();
+    await saveSnapshot(signals);
+  } catch (e) {
+    console.error('[briefing-cron] 일별 스냅샷 수집/적재 실패(브리핑 응답에는 영향 없음):', e.message);
+  }
 
   res.setHeader('Cache-Control', 'no-store');
   if (result.cacheStatus) res.setHeader('X-Cache', result.cacheStatus);
