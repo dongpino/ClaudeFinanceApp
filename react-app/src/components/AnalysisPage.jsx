@@ -24,6 +24,10 @@ function matchesIndexQuery(item, q) {
   return norm(item.name).includes(query) || norm(item.symbol).includes(query);
 }
 
+// 선택된 종목이 없을 때의 기본값 — INDEX_ITEMS(검색 카탈로그)에서 그대로 가져와
+// 검색 결과 클릭으로 코스피를 선택했을 때와 완전히 같은 객체 모양을 보장한다.
+const DEFAULT_ITEM = INDEX_ITEMS.find(it => it.id === 'kospi');
+
 const TF_OPTIONS = [
   { value: '1m',  label: '1분'   },
   { value: '5m',  label: '5분'   },
@@ -93,14 +97,25 @@ export default function AnalysisPage({ activePage, onPageChange }) {
     saveTopPanelCollapsed(v);
   }
 
+  // 실제 선택 반영 — handleSelect(즐겨찾기 칩)·selectAndClose(검색 결과)·기본값
+  // 자동 선택(아래 useEffect)이 전부 이 함수 하나만 거친다. 지수 타임프레임 매핑,
+  // S/R 라인 localStorage 키(symbolKey), KR 라우팅 가드는 모두 selected 상태 하나로
+  // 부터 파생되므로, 이 함수만 정확하면 세 진입 경로 전부 동일하게 동작한다.
+  function selectItem(item) {
+    setSelectedTF('1d');
+    setSelected({ type: item.type, id: item.id, symbol: item.symbol, name: item.name, market: item.market });
+  }
+
   // 즐겨찾기 칩 클릭 → 하단 차트에 즉시 반영(검색 결과 클릭은 selectAndClose가 처리).
   // 이미 선택된 항목을 다시 클릭하면 선택 해제.
-  // 지원 tf 목록은 응답 도착 전까진 알 수 없으므로 보수적으로 1d로 리셋.
   // market은 type==='stock'일 때만 의미 있음(US/KR) — 그 외 타입은 undefined로 취급.
   function handleSelect(item) {
-    const isDeselect = isSelected(item.type, item.id, item.market);
-    setSelectedTF('1d');
-    setSelected(isDeselect ? null : { type: item.type, id: item.id, symbol: item.symbol, name: item.name, market: item.market });
+    if (isSelected(item.type, item.id, item.market)) {
+      setSelectedTF('1d');
+      setSelected(null);
+      return;
+    }
+    selectItem(item);
   }
 
   function isSelected(type, id, market) {
@@ -111,13 +126,23 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   // 검색 결과 클릭/즐겨찾기 추가 → 항상 선택(토글 아님) + 검색창 닫기(입력값·결과 비우고 포커스 해제).
   // 이미 선택된 항목이면 재조회를 건너뛰되 검색창은 그대로 닫는다.
   function selectAndClose(item) {
-    if (!isSelected(item.type, item.id, item.market)) {
-      setSelectedTF('1d');
-      setSelected({ type: item.type, id: item.id, symbol: item.symbol, name: item.name, market: item.market });
-    }
+    if (!isSelected(item.type, item.id, item.market)) selectItem(item);
     clearQuery();
     searchInputRef.current?.blur();
   }
+
+  // 탭 진입(마운트) 시 선택 종목이 없으면 코스피를 1회만 자동 선택한다 — selectItem()을
+  // 그대로 타므로 검색·즐겨찾기 클릭과 완전히 같은 흐름(타임프레임 리셋, symbolKey 파생,
+  // analysisUrl 라우팅)을 거친다. ref로 1회성을 보장해 이후 ✕로 선택 해제하면 원래대로
+  // 빈 화면이 유지된다(재자동선택 없음). App.jsx가 activePage에 따라 AnalysisPage 자체를
+  // 마운트/언마운트하므로, 다른 탭에 갔다가 돌아오면 ref가 초기화돼 "새 진입"으로 다시
+  // 자동 선택된다 — 별도의 "재진입 감지" 로직 없이 마운트 생명주기만으로 요구사항 충족.
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedRef.current) return;
+    autoSelectedRef.current = true;
+    if (!selected) selectItem(DEFAULT_ITEM);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- 마운트 시 1회만 실행되어야 함
 
   // 종목 전환 시 "선 지우기" 버튼 상태 리셋 — 새 종목의 실제 개수는
   // AnalysisChart 복원 완료 후 onLinesChange로 다시 채워진다.
