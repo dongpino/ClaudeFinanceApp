@@ -1176,8 +1176,8 @@ body {
    backdrop-filter는 이 컨테이너 레벨에만(.brf-event-row 개별에는 주지 않음). */
 [data-theme="dark"] .brf-event-list {
   background: rgba(15, 20, 25, 0.5);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   border-color: rgba(255, 255, 255, 0.06);
 }
 .brf-event-list-label {
@@ -1274,8 +1274,8 @@ body {
    생겨 스크롤 성능이 크게 떨어짐). */
 [data-theme="dark"] .cal-fold {
   background: rgba(15, 20, 25, 0.5);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   border-radius: 16px;
   padding: 12px 12px 14px;
 }
@@ -1342,6 +1342,9 @@ body {
    무배경 그대로 둔다. */
 [data-theme="dark"] .cal-cell { border-color: rgba(255, 255, 255, 0.09); }
 [data-theme="dark"] .cal-cell.today { background: rgba(255, 255, 255, 0.08); }
+/* backdrop-filter를 blur(3px)로 낮춰 사진의 나무 형태가 비치게 하는 대신, 날짜
+   숫자 판독성은 그림자로 보강한다 — 밝은 배경 위에 숫자가 겹쳐도 윤곽이 살아있게. */
+[data-theme="dark"] .cal-cell-day { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
 
 /* 라벨 칩(기본: 데스크톱) — "포스트잇" 스타일: 카테고리색 좌측 보더 + 옅은 틴트 배경.
    틴트가 파스텔이라 다크/라이트 둘 다 일반 텍스트색(var(--text-1))으로 충분히 읽힘 —
@@ -1393,8 +1396,8 @@ body {
    var(--bg-card) 솔리드 카드 그대로 둔다. */
 [data-theme="dark"] .cal-detail {
   background: rgba(15, 20, 25, 0.5);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   border-color: rgba(255, 255, 255, 0.06);
 }
 .cal-detail-label {
