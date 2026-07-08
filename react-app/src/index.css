@@ -1172,13 +1172,14 @@ body {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 13px; padding: 4px 14px;
 }
-/* PhotoBackground(다크 전용) 위에서만 유리 카드로 전환 — .cal-detail과 동일 톤.
-   backdrop-filter는 이 컨테이너 레벨에만(.brf-event-row 개별에는 주지 않음). */
+/* PhotoBackground(다크 전용) 위에서만 옅은 틴트로 전환 — .cal-detail과 동일 톤.
+   backdrop-filter는 의도적으로 없음(사진이 카드 뒤에서 그대로 비치게) — 대신
+   내부 텍스트에 text-shadow로 판독성을 방어한다(아래, text-shadow는 상속되어
+   .brf-event-row의 라벨/타이틀/시간까지 전부 적용됨). */
 [data-theme="dark"] .brf-event-list {
-  background: rgba(15, 20, 25, 0.5);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  background: rgba(15, 20, 25, 0.3);
   border-color: rgba(255, 255, 255, 0.06);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 12px rgba(0, 0, 0, 0.6);
 }
 .brf-event-list-label {
   font-size: 10px; font-weight: 700; color: var(--text-3);
@@ -1266,16 +1267,14 @@ body {
   display: flex; flex-direction: column; gap: 8px;
 }
 
-/* PhotoBackground(다크 테마 전용, PhotoBackground.jsx 참고) 위에 뜨는 "유리" 카드.
+/* PhotoBackground(다크 테마 전용, PhotoBackground.jsx 참고) 위에 뜨는 옅은 틴트.
    라이트 테마는 사진 자체가 렌더링되지 않으므로 이 블록도 적용하지 않는다(원래
    배경 없는 .cal-fold 그대로) — 리터럴 rgba 값을 양쪽 테마에 공통 적용하지 않기
-   위해 [data-theme="dark"]로 분기한다. backdrop-filter는 반드시 이 컨테이너
-   레벨에서 한 번만 준다(날짜 셀 하나하나에 주면 모바일에서 GPU 레이어가 셀 수만큼
-   생겨 스크롤 성능이 크게 떨어짐). */
+   위해 [data-theme="dark"]로 분기한다. backdrop-filter는 의도적으로 없음(사진이
+   카드 뒤에서 그대로 비치게) — 날짜 숫자 판독성은 .cal-cell-day의 text-shadow가
+   대신 방어한다(아래). */
 [data-theme="dark"] .cal-fold {
-  background: rgba(15, 20, 25, 0.5);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  background: rgba(15, 20, 25, 0.3);
   border-radius: 16px;
   padding: 12px 12px 14px;
 }
@@ -1340,11 +1339,12 @@ body {
    var(--border)(불투명 회색)보다 옅은 흰 테두리가, 진한 --bg-card 배경 없이도
    셀 경계를 은은하게 드러낸다. 라이트 테마는 사진이 없으므로 원래 var(--border)/
    무배경 그대로 둔다. */
-[data-theme="dark"] .cal-cell { border-color: rgba(255, 255, 255, 0.09); }
+[data-theme="dark"] .cal-cell { border-color: rgba(255, 255, 255, 0.12); }
 [data-theme="dark"] .cal-cell.today { background: rgba(255, 255, 255, 0.08); }
-/* backdrop-filter를 blur(3px)로 낮춰 사진의 나무 형태가 비치게 하는 대신, 날짜
-   숫자 판독성은 그림자로 보강한다 — 밝은 배경 위에 숫자가 겹쳐도 윤곽이 살아있게. */
-[data-theme="dark"] .cal-cell-day { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
+/* backdrop-filter를 없애 사진이 카드 뒤에서 그대로 비치는 대신, 날짜 숫자
+   판독성은 이중 그림자로 방어한다 — 좁고 진한 그림자(가독성) + 넓고 옅은
+   그림자(밝은 배경 위에서도 윤곽 유지)를 겹쳐 밝은 사진 영역 위에서도 버틴다. */
+[data-theme="dark"] .cal-cell-day { text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 12px rgba(0, 0, 0, 0.6); }
 
 /* 라벨 칩(기본: 데스크톱) — "포스트잇" 스타일: 카테고리색 좌측 보더 + 옅은 틴트 배경.
    틴트가 파스텔이라 다크/라이트 둘 다 일반 텍스트색(var(--text-1))으로 충분히 읽힘 —
@@ -1390,15 +1390,15 @@ body {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 13px; padding: 4px 14px 10px;
 }
-/* PhotoBackground(다크 전용) 위에서만 유리 카드로 전환 — .cal-fold와 같은 톤.
-   backdrop-filter는 이 컨테이너 레벨에만 준다(.cal-detail-row 개별에는 주지 않음
-   — 리스트가 길어져도 GPU 레이어가 하나로 유지되게). 라이트 테마는 원래
-   var(--bg-card) 솔리드 카드 그대로 둔다. */
+/* PhotoBackground(다크 전용) 위에서만 옅은 틴트로 전환 — .cal-fold와 같은 톤.
+   backdrop-filter는 의도적으로 없음(사진이 카드 뒤에서 그대로 비치게) — 대신
+   text-shadow로 텍스트 판독성을 방어한다(상속되어 .cal-detail-row의 아이콘/
+   타이틀/시간까지 전부 적용됨). 라이트 테마는 원래 var(--bg-card) 솔리드 카드
+   그대로 둔다. */
 [data-theme="dark"] .cal-detail {
-  background: rgba(15, 20, 25, 0.5);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  background: rgba(15, 20, 25, 0.3);
   border-color: rgba(255, 255, 255, 0.06);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 12px rgba(0, 0, 0, 0.6);
 }
 .cal-detail-label {
   font-size: 11px; font-weight: 800; color: var(--gold);

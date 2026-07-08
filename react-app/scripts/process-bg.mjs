@@ -5,7 +5,7 @@
  * 각 변형(VARIANTS)마다: blur → modulate(brightness, saturation) → 긴 변 1920px로
  * 리사이즈 → 200KB 이하가 될 때까지 webp 품질을 낮춰가며 재인코딩.
  *
- * 버전 A(기본, forest-calendar.webp): blur 5,  brightness 0.5  — 나무 형태가 뚜렷하게
+ * 버전 A(기본, forest-calendar.webp): blur 2,  brightness 0.9  — 원본에 가까운 선명함
  * 버전 B(forest-calendar-b.webp):     blur 10, brightness 0.55 — 더 뭉갠 절충안
  * blur가 낮아지면 디테일이 살아나 파일이 커지므로 버전마다 독립적으로 품질을 탐색한다.
  *
@@ -27,7 +27,7 @@ const MIN_QUALITY   = 20;
 const QUALITY_STEP  = 10;
 
 const VARIANTS = [
-  { label: 'A', file: 'forest-calendar.webp',   blur: 5,  brightness: 0.5,  saturation: 0.7 },
+  { label: 'A', file: 'forest-calendar.webp',   blur: 2,  brightness: 0.9,  saturation: 0.9 },
   { label: 'B', file: 'forest-calendar-b.webp', blur: 10, brightness: 0.55, saturation: 0.7 },
 ];
 
