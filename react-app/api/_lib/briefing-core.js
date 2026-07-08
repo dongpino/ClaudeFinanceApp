@@ -7,14 +7,25 @@
  *
  * ───────────────────────── 비용 정보 ──────────────────────────
  *  모델:  claude-haiku-4-5-20251001  (Anthropic 최저가 모델)
- *  입력:  ~1,000~1,300 토큰 (지표 6종 + 뉴스 8개 헤드라인 + 매크로/캘린더/이슈
- *         압축 컨텍스트(+~300 토큰) + 고정 system 프롬프트)
- *  출력:  ~350~600 토큰   (마크다운 소제목 구조, 500자 내외 한국어 브리핑)
- *  1회:   ~$0.001 안팎  ← 매우 저렴
+ *  입력:  ~2,000~2,700 토큰 (Significance 지표 15종+매크로 3종 압축 + 뉴스 8개 헤드라인 +
+ *         캘린더/이슈 압축 컨텍스트 + 확장된 고정 system 프롬프트 — 실측 기준, Stage 3 이전
+ *         6종 지표 방식(~1,100~1,400 토큰)보다 늘었지만 여전히 Haiku 기준 비용은 미미함)
+ *  출력:  ~350~700 토큰   (마크다운 소제목 구조, 500자 내외 한국어 브리핑)
+ *  1회:   ~$0.002 안팎  ← 매우 저렴
  * ──────────────────────────────────────────────────────────────
+ *
+ * AI 브리핑 개선 Stage 3: 지표 컨텍스트를 significance.js의 buildSignals()(Significance
+ * Engine) 결과로 교체했다. 지표 15종 전체 + FRED 매크로 3종을 넘기되, notable로 판정된
+ * 것만 price/prev_close까지 상세히 담고 나머지는 이름+변동률만 압축해 넘긴다(토큰 절약).
+ * 감지된 patterns(디커플링 등)도 description 그대로 프롬프트에 포함해 지표 해석의 근거로
+ * 쓰게 한다. buildSignals()가 실패하거나 사용 가능한 지표가 하나도 없으면(예: 전체
+ * 수집기 장애) 기존 collectMarketSnapshot() 방식(지표 6종+매크로 한 줄 요약)으로 완전히
+ * 격리된 폴백 경로를 탄다 — 브리핑 생성 자체가 막히는 일은 없어야 하기 때문.
  *
  * 매크로/캘린더/이슈 컨텍스트: api/macro.js·api/issues.js가 이미 Redis에 캐시해둔
  * 결과를 그대로 읽어 재사용한다(FRED·Haiku 재호출 없음 — 비용 추가 없이 맥락만 주입).
+ * 매크로는 significance.js가 macro:v1 → macro:v1:latest 폴백까지 처리해주므로 여기서는
+ * (신호 경로에서는) 별도 재조회하지 않는다 — 폴백 경로에서만 이 파일이 직접 macro:v1을 읽는다.
  * 셋 중 어느 하나가 없거나 실패해도 해당 부분만 "정보 없음"으로 비우고 나머지로 정상 생성한다.
  *
  * 캐싱: Upstash Redis, KST 시간 단위 버킷(1시간) — 서버리스 콜드 스타트와 무관하게 유지됨.
@@ -32,6 +43,7 @@ import { collectUSIndices }  from '../_collectors/us-indices.js';
 import { collectKR }         from '../_collectors/kr.js';
 import { collectRSSNews }    from '../_collectors/rss.js';
 import { getUpcomingEvents } from './macro-calendar.js';
+import { buildSignals }      from './significance.js';
 
 // ── 상수 ──────────────────────────────────────────────────────
 
@@ -302,9 +314,77 @@ function buildIssuesContext(issuesData) {
     .join('\n');
 }
 
+// ── Significance signals → 프롬프트 컨텍스트 압축 ────────────────
+// buildSignals() 결과(지표 15종+매크로 3종+patterns+notable)를 토큰 절약형으로 직렬화한다.
+// notable 지표만 price/prev_close까지 담고, 나머지는 name+change_pct+direction만 압축해
+// 한 줄에 몰아넣는다 — system 프롬프트가 "notable만으로 서사를 구성"하도록 유도하는 것과
+// 짝을 이룬다(그 외 지표는 애초에 상세 데이터를 안 줘서 개별 언급을 구조적으로 억제).
+
+const DIRECTION_KO = { up: '상승', down: '하락', flat: '보합' };
+
+function fmtNum(n) { return n != null ? Number(n).toLocaleString('en-US') : '?'; }
+
+function buildIndicatorsContext(signals) {
+  const sign = n => (n >= 0 ? '+' : '') + Number(n).toFixed(2);
+  const notableSet = new Set(signals.notable);
+  const assets = signals.indicators.filter(it => it.category !== 'macro_release' && it.fetched);
+
+  const notableLines = assets
+    .filter(it => notableSet.has(it.id))
+    .map(it => {
+      const pct = it.change_pct != null ? `${sign(it.change_pct)}%` : '?';
+      const dir = DIRECTION_KO[it.direction] ?? it.direction ?? '?';
+      return `- ${it.name}: ${fmtNum(it.price)} (전일 ${fmtNum(it.prev_close)}, ${pct}, ${dir})`;
+    });
+
+  const restLine = assets
+    .filter(it => !notableSet.has(it.id))
+    .map(it => {
+      const pct = it.change_pct != null ? `${sign(it.change_pct)}%` : '?';
+      const dir = DIRECTION_KO[it.direction] ?? it.direction ?? '?';
+      return `${it.name} ${pct}(${dir})`;
+    })
+    .join(', ');
+
+  const patternsSection = signals.patterns.length > 0
+    ? signals.patterns.map(p => `- ${p.description}`).join('\n')
+    : '(감지된 패턴 없음)';
+
+  return {
+    notableSection: notableLines.length > 0 ? notableLines.join('\n') : '(주목할 움직임 없음)',
+    restSection:    restLine || '(해당 없음)',
+    patternsSection,
+  };
+}
+
+// FRED 매크로 발표 3종(macro_release 카테고리)만 골라 기존 buildMacroContext()와 동일한
+// 한 줄 압축 포맷으로 만든다. stale:true(macro:v1 만료로 macro:v1:latest에서 승계된 값)인
+// 항목에는 "최신 발표 아닐 수 있음" 표기를 붙여 AI가 단정적으로 서술하지 않게 한다.
+function buildMacroContextFromSignals(signals) {
+  const STALE_NOTE = ' (캐시 승계값, 최신 발표 아닐 수 있음)';
+  const byId = {};
+  for (const it of signals.indicators) if (it.category === 'macro_release') byId[it.id] = it;
+
+  const parts = [];
+  const rate = byId.fred_fomc_rate;
+  if (rate?.fetched) parts.push(`기준금리 ${rate.value.lower}~${rate.value.upper}%${rate.stale ? STALE_NOTE : ''}`);
+  const cpi = byId.fred_cpi;
+  if (cpi?.fetched) parts.push(`CPI YoY ${cpi.value}%(${cpi.refMonth} 기준)${cpi.stale ? STALE_NOTE : ''}`);
+  const unemp = byId.fred_unemployment;
+  if (unemp?.fetched) parts.push(`실업률 ${unemp.value}%(${unemp.refMonth})${unemp.stale ? STALE_NOTE : ''}`);
+
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
 // ── 프롬프트 생성 ──────────────────────────────────────────────
 // system: 고정된 역할·해석 원칙·출력 형식 (지표 나열이 아니라 지표 간 관계로 해석시킴)
 // user:   그날그날 바뀌는 실제 데이터(지표 수치·뉴스 헤드라인·매크로/캘린더/이슈 컨텍스트)만 담음
+//
+// buildSignals() 기반 경로(주 경로)와 collectMarketSnapshot() 기반 폴백 경로가 system
+// 프롬프트를 공유하지 않는다 — 폴백 프롬프트에는 [주목할 움직임]/[감지된 패턴] 같은 신호
+// 섹션 자체가 없어서, 신호 전용 지침을 그대로 주면 AI가 존재하지 않는 섹션을 참조하게 된다.
+// 그래서 폴백은 Stage 3 이전의 system/user 프롬프트를 그대로 유지한다(buildSystemPrompt/
+// buildUserPromptFallback) — "폴백 격리" 원칙.
 
 function buildSystemPrompt() {
   return `당신은 한국 개인 투자자를 위한 시장 브리핑을 작성하는 애널리스트입니다.
@@ -341,7 +421,7 @@ function buildSystemPrompt() {
 반드시 한국어로, 위 형식(제목의 ## 표기, 목록의 - 표기, 마지막 줄의 ⚠️ 표기 포함)을 정확히 지켜 작성하십시오.`;
 }
 
-function buildUserPrompt(items, newsItems, macroContext, calendarContext, issuesContext) {
+function buildUserPromptFallback(items, newsItems, macroContext, calendarContext, issuesContext) {
   const sign = n => (n >= 0 ? '+' : '') + Number(n).toFixed(2);
 
   const marketSection = items.map(it => {
@@ -356,6 +436,91 @@ function buildUserPrompt(items, newsItems, macroContext, calendarContext, issues
 
   return `[시장 지표]
 ${marketSection}
+
+[경제 뉴스 헤드라인]
+${newsSection}
+
+[매크로 배경]
+${macroContext ?? '정보 없음'}
+
+[다가오는 이벤트 (${CALENDAR_LOOKAHEAD_DAYS}일 이내)]
+${calendarContext ?? '정보 없음'}
+
+[최근 이슈]
+${issuesContext ?? '정보 없음'}
+
+위 데이터를 바탕으로 오늘의 시장 브리핑을 작성하세요.`;
+}
+
+// ── Significance signals 기반 프롬프트(Stage 3 주 경로) ──────────
+// system: notable/patterns 중심으로 서사를 구성하도록 섹션별 지침을 명시하고, 데이터에
+//         없는 수치·사건을 지어내지 말라는 제약을 건다.
+// user:   [주목할 움직임]/[그 외]/[감지된 패턴]으로 나눠 담아 "notable만 상세, 나머지는
+//         배경"이라는 system 지침과 구조적으로 맞물리게 한다.
+
+function buildSignalsSystemPrompt() {
+  return `당신은 한국 개인 투자자를 위한 시장 브리핑을 작성하는 애널리스트입니다.
+
+[공통 제약]
+- 확정적 예측이나 매수·매도 같은 투자 조언은 하지 마십시오.
+- 제공된 지표·패턴·이슈 데이터에 없는 수치나 사건을 추측하거나 만들어내지 마십시오. 모르면 언급하지 마십시오.
+- [매크로 배경]에 "(캐시 승계값, 최신 발표 아닐 수 있음)"이라고 표시된 값은 최신 발표가 아닐 수 있으니 단정적으로 서술하지 마십시오.
+
+[섹션별 작성 지침]
+## 오늘의 핵심
+- [감지된 패턴] 중 가장 비중 있는 것 하나를 한 문장으로 요약하십시오.
+- 감지된 패턴이 없으면 [주목할 움직임(Notable)]에서 변동폭이 가장 큰 지표를 기준으로 한 문장을 쓰십시오.
+- [주목할 움직임(Notable)]도 "(주목할 움직임 없음)"이고 감지된 패턴도 없으면, "주요 지표 모두 보합권, 특이 신호 없음" 톤으로 짧게 쓰십시오.
+
+## 지표 해석
+- [주목할 움직임(Notable)]에 실린 지표와 [감지된 패턴]만으로 서사를 구성하십시오. 지표를 하나씩 나열하지 말고 관계로 엮어 해석하고, 패턴 설명에 있는 수치를 근거로 직접 인용하십시오.
+- [그 외(보합권 수준)]에 실린 지표는 "그 외는 보합권" 정도의 배경 한 줄 언급만 허용하고, 개별적으로 풀어서 설명하지 마십시오.
+- 주목할 움직임도 패턴도 없으면 이 섹션도 "특이 신호 없음"에 맞게 한두 문장으로 짧게 쓰십시오.
+
+## 뉴스 연결
+- [경제 뉴스 헤드라인]과 [최근 이슈] 중 [주목할 움직임(Notable)]의 지표 변동과 실제로 연관되는 것만 골라 "어떤 뉴스/이슈가 어떤 지표 변동을 설명하는지" 짝지어 서술하십시오.
+- 관련 없는 헤드라인·이슈는 언급하지 마십시오. 이슈가 뉴스 헤드라인과 겹치면 한 번만 언급하십시오. 관련된 것이 하나도 없으면 그렇다고 짧게 밝히십시오.
+
+## 관전 포인트
+- [다가오는 이벤트]와 [주목할 움직임(Notable)] 지표의 후속 확인 사항(이 흐름이 다음 발표·이벤트까지 이어지는지 등)을 결합해 제시하십시오.
+- D-0(당일) 이벤트는 오늘의 핵심이나 지표 해석에도 반영할 수 있고, D-3 이내 이벤트는 반드시 이 섹션에 반영하십시오.
+
+[출력 형식 — 아래 마크다운 구조를 그대로 따르고, 전체 500자 내외로 간결하게 작성]
+## 오늘의 핵심
+(한 줄)
+
+## 지표 해석
+(2~4문장)
+
+## 뉴스 연결
+- (시사점 1)
+- (시사점 2, 필요시 3까지)
+
+## 관전 포인트
+- (주목할 점 1)
+- (필요시 2까지)
+
+⚠️ (이 브리핑이 투자 권유가 아니라는 점을 한 문장으로 명시)
+
+반드시 한국어로, 위 형식(제목의 ## 표기, 목록의 - 표기, 마지막 줄의 ⚠️ 표기 포함)을 정확히 지켜 작성하십시오.`;
+}
+
+function buildUserPromptFromSignals(signals, newsItems, calendarContext, issuesContext) {
+  const { notableSection, restSection, patternsSection } = buildIndicatorsContext(signals);
+  const macroContext = buildMacroContextFromSignals(signals);
+
+  const newsSection = newsItems.length > 0
+    ? newsItems.map((n, i) => `${i + 1}. [${n.source}] ${n.title}`).join('\n')
+    : '(뉴스 RSS 수집 실패 — 시장 지표만으로 해석)';
+
+  return `[시장 지표 — 주목할 움직임(Notable)]
+${notableSection}
+
+[시장 지표 — 그 외(보합권 수준)]
+${restSection}
+
+[감지된 패턴]
+${patternsSection}
 
 [경제 뉴스 헤드라인]
 ${newsSection}
@@ -409,8 +574,11 @@ async function callAnthropicAPI(apiKey, systemPrompt, userPrompt) {
 
 // ── 핵심 로직 ────────────────────────────────────────────────
 // 호출자(api/briefing.js, api/briefing-cron.js)는 req/res를 몰라도 되도록
-// { status, cacheStatus, body } 형태로 결과를 반환한다 — cacheStatus는
-// X-Cache 헤더용('HIT'|'MISS'|'LIMIT'), 에러 응답이면 null.
+// { status, cacheStatus, body, signals } 형태로 결과를 반환한다 — cacheStatus는
+// X-Cache 헤더용('HIT'|'MISS'|'LIMIT'), 에러 응답이면 null. signals는 이번 호출에서
+// 실제로 새로 계산한 buildSignals() 결과(있으면)를 그대로 실어, briefing-cron.js의
+// Stage 2 일별 적재가 collectSnapshot()을 중복 호출하지 않고 재사용할 수 있게 한다
+// (캐시 HIT/LIMIT/폴백 등 신호를 새로 계산하지 않은 경로에서는 null).
 
 export async function getOrGenerateBriefing() {
   const hourKey    = `briefing:${kstHourBucket()}`;
@@ -421,7 +589,7 @@ export async function getOrGenerateBriefing() {
   const cached = await getCachedBriefing(hourKey);
   if (cached) {
     console.log(`[briefing] Redis 캐시 HIT (${hourKey}) — Anthropic 호출 없음`);
-    return { status: 200, cacheStatus: 'HIT', body: { ...cached, cached: true } };
+    return { status: 200, cacheStatus: 'HIT', body: { ...cached, cached: true }, signals: null };
   }
 
   // ── API 키 확인 (fail-fast — 없으면 수집·AI 호출 자체를 하지 않음) ──
@@ -430,6 +598,7 @@ export async function getOrGenerateBriefing() {
     return {
       status: 500,
       cacheStatus: null,
+      signals: null,
       body: {
         error: 'ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.',
         hint: 'Vercel Dashboard → 프로젝트 → Settings → Environment Variables에서 추가하세요. 로컬 테스트는 react-app/.env.local 파일을 사용하세요.',
@@ -443,11 +612,12 @@ export async function getOrGenerateBriefing() {
     console.warn(`[briefing] 일일 생성 상한(${DAILY_GENERATION_LIMIT}) 도달(${dayKey}) — 최신 캐시로 대체, Anthropic 호출 없음`);
     const latest = await getLatestBriefing();
     if (latest) {
-      return { status: 200, cacheStatus: 'LIMIT', body: { ...latest, cached: true, limited: true } };
+      return { status: 200, cacheStatus: 'LIMIT', body: { ...latest, cached: true, limited: true }, signals: null };
     }
     return {
       status: 429,
       cacheStatus: null,
+      signals: null,
       body: { error: '오늘 생성 한도에 도달했고, 표시할 캐시된 브리핑도 없습니다. 잠시 후 다시 시도해주세요.' },
     };
   }
@@ -455,45 +625,77 @@ export async function getOrGenerateBriefing() {
   console.log(`[briefing] Redis 캐시 MISS (${hourKey}) — 브리핑 생성 시작 (${fmtKST()})`);
   const startMs = Date.now();
 
-  // ── 시장 데이터 + RSS + 매크로/이슈 캐시 병렬 수집 ───────────
-  // 매크로/이슈는 각각 api/macro.js, api/issues.js가 채워둔 Redis 캐시를 읽기만 하므로
-  // FRED·Haiku 재호출이 없다 — 실패해도(캐시 없음 등) null로 조용히 폴백한다.
-  const [items, newsItems, macroCached, issuesCached] = await Promise.all([
-    collectMarketSnapshot(),
+  // ── Significance signals + RSS + 이슈 캐시 병렬 수집 ─────────
+  // 매크로는 significance.js의 buildSignals()가 macro:v1→macro:v1:latest 폴백까지
+  // 알아서 처리하므로 여기서 따로 조회하지 않는다. 이슈는 api/issues.js가 채워둔
+  // Redis 캐시를 읽기만 한다(Haiku 재호출 없음) — 실패해도 null로 조용히 폴백한다.
+  // buildSignals() 자체가 throw하거나(Redis 전면 장애 등) 지표를 하나도 못 건지면
+  // (전체 수집기 장애) collectMarketSnapshot() 기반 폴백 경로로 완전히 전환한다.
+  const [signalsResult, newsItems, issuesCached] = await Promise.all([
+    buildSignals().then(
+      s => ({ ok: true, signals: s }),
+      e => ({ ok: false, error: e }),
+    ),
     collectRSSNews(NEWS_HEADLINES_FOR_PROMPT),
-    getCachedMacro(),
     getCachedIssuesLatest(),
   ]);
 
-  if (items.length === 0) {
-    return {
-      status: 500,
-      cacheStatus: null,
-      body: { error: '시장 데이터 수집 실패 — 브리핑을 생성할 수 없습니다.' },
-    };
+  const usableSignals = signalsResult.ok && signalsResult.signals.indicators.some(it => it.fetched);
+  const usedFallback  = !usableSignals;
+
+  if (usedFallback) {
+    const reason = signalsResult.ok
+      ? 'buildSignals 결과에 fetched 지표가 하나도 없음'
+      : signalsResult.error.message;
+    console.warn(`[briefing] Significance 신호 사용 불가 — collectMarketSnapshot 폴백 경로로 전환 (사유: ${reason})`);
   }
 
-  const calendarEvents   = getUpcomingEvents(CALENDAR_LOOKAHEAD_DAYS);
-  const macroContext     = buildMacroContext(macroCached);
-  const calendarContext  = buildCalendarContext(calendarEvents);
-  const issuesContext    = buildIssuesContext(issuesCached);
+  const calendarEvents  = getUpcomingEvents(CALENDAR_LOOKAHEAD_DAYS);
+  const calendarContext = buildCalendarContext(calendarEvents);
+  const issuesContext   = buildIssuesContext(issuesCached);
+
+  let systemPrompt, userPrompt, marketCount, signalsForArchive;
+
+  if (usedFallback) {
+    const [items, macroCached] = await Promise.all([collectMarketSnapshot(), getCachedMacro()]);
+    if (items.length === 0) {
+      return {
+        status: 500,
+        cacheStatus: null,
+        signals: null,
+        body: { error: '시장 데이터 수집 실패 — 브리핑을 생성할 수 없습니다.' },
+      };
+    }
+    const macroContext = buildMacroContext(macroCached);
+    systemPrompt = buildSystemPrompt();
+    userPrompt   = buildUserPromptFallback(items, newsItems, macroContext, calendarContext, issuesContext);
+    marketCount  = items.length;
+    signalsForArchive = null;
+  } else {
+    const signals = signalsResult.signals;
+    systemPrompt = buildSignalsSystemPrompt();
+    userPrompt   = buildUserPromptFromSignals(signals, newsItems, calendarContext, issuesContext);
+    marketCount  = signals.indicators.filter(it => it.fetched).length;
+    signalsForArchive = signals;
+  }
 
   const collectMs = Date.now() - startMs;
   console.log(
-    `[briefing] 데이터 수집 완료 (${(collectMs / 1000).toFixed(1)}s): 지표=${items.length}종 뉴스=${newsItems.length}개  ` +
-    `매크로=${macroContext ? 'OK' : '없음'} 캘린더=${calendarContext ? calendarEvents.length + '건' : '없음'} 이슈=${issuesContext ? 'OK' : '없음'}`
+    `[briefing] 데이터 수집 완료 (${(collectMs / 1000).toFixed(1)}s): 경로=${usedFallback ? 'fallback' : 'signals'} ` +
+    `지표=${marketCount}종 뉴스=${newsItems.length}개 캘린더=${calendarContext ? calendarEvents.length + '건' : '없음'} 이슈=${issuesContext ? 'OK' : '없음'}`
   );
 
   // ── AI 호출 ────────────────────────────────────────────────
-  const systemPrompt = buildSystemPrompt();
-  const userPrompt   = buildUserPrompt(items, newsItems, macroContext, calendarContext, issuesContext);
-
+  if (process.env.DEBUG_BRIEFING_PROMPT === '1') {
+    console.log('=== SYSTEM PROMPT ===\n' + systemPrompt);
+    console.log('=== USER PROMPT ===\n' + userPrompt);
+  }
   let aiData;
   try {
     aiData = await callAnthropicAPI(apiKey, systemPrompt, userPrompt);
   } catch (e) {
     console.error(`[briefing] Anthropic API 실패: ${e.message}`);
-    return { status: 500, cacheStatus: null, body: { error: `AI 브리핑 생성 실패: ${e.message}` } };
+    return { status: 500, cacheStatus: null, signals: null, body: { error: `AI 브리핑 생성 실패: ${e.message}` } };
   }
 
   // ── 응답 파싱 ──────────────────────────────────────────────
@@ -504,13 +706,13 @@ export async function getOrGenerateBriefing() {
   console.log(
     `[briefing] 완료 (${(totalMs / 1000).toFixed(1)}s)  ` +
     `input=${usage.input_tokens ?? '?'}tok  output=${usage.output_tokens ?? '?'}tok  ` +
-    `뉴스=${newsItems.length}개  지표=${items.length}종`
+    `뉴스=${newsItems.length}개  지표=${marketCount}종`
   );
 
   const data = {
     briefing:     briefingText,
     generated_at: fmtKST(),
-    market_count: items.length,
+    market_count: marketCount,
     news_count:   newsItems.length,
     news_sources: [...new Set(newsItems.map(n => n.source))],
     usage: {
@@ -526,5 +728,5 @@ export async function getOrGenerateBriefing() {
   await incrementDailyCount(dayKey);
   await persistDayArchive(dateBucket, data);
 
-  return { status: 200, cacheStatus: 'MISS', body: data };
+  return { status: 200, cacheStatus: 'MISS', body: data, signals: signalsForArchive };
 }
