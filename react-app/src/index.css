@@ -1166,11 +1166,19 @@ body {
   white-space: nowrap;
 }
 
-/* 다가오는 이벤트 리스트 */
+/* 다가오는 이벤트 리스트 — CalendarPage.jsx 전용(브리핑 탭에서는 안 씀) */
 .brf-event-list {
   display: flex; flex-direction: column;
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 13px; padding: 4px 14px;
+}
+/* PhotoBackground(다크 전용) 위에서만 유리 카드로 전환 — .cal-detail과 동일 톤.
+   backdrop-filter는 이 컨테이너 레벨에만(.brf-event-row 개별에는 주지 않음). */
+[data-theme="dark"] .brf-event-list {
+  background: rgba(15, 20, 25, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: rgba(255, 255, 255, 0.06);
 }
 .brf-event-list-label {
   font-size: 10px; font-weight: 700; color: var(--text-3);
@@ -1195,6 +1203,15 @@ body {
 }
 .brf-event-region.brf-event-KR { color: var(--down); background: var(--down-dim); }
 .brf-event-region.brf-event-US { color: var(--gold); background: var(--gold-dim); }
+/* var(--down-dim)/var(--gold-dim)는 반투명이라 유리 카드 위에서 사진 색이 배지에
+   섞여 들어온다 — .cal-chip과 같은 방식으로 다크 전용 불투명 버전을 준다.
+   .brf-event-region은 CalendarPage 전용 클래스라 다른 탭 영향 없음. */
+[data-theme="dark"] .brf-event-region.brf-event-KR { background: color-mix(in srgb, var(--down) 20%, #0f1419); }
+[data-theme="dark"] .brf-event-region.brf-event-US { background: color-mix(in srgb, var(--gold) 20%, #0f1419); }
+/* .brf-macro-dday는 브리핑 탭 매크로 카드에서도 쓰는 공용 클래스라(사진 배경 없음,
+   var(--gold-dim) 그대로 둬야 함) 전역으로 바꾸지 않고 .brf-event-list 안에 있을
+   때만(=캘린더 탭의 다가오는 이벤트 리스트) 불투명 버전으로 오버라이드한다. */
+[data-theme="dark"] .brf-event-list .brf-macro-dday { background: color-mix(in srgb, var(--gold) 20%, #0f1419); }
 
 /* 주요 이슈 */
 .brf-issue-empty {
@@ -1256,7 +1273,7 @@ body {
    레벨에서 한 번만 준다(날짜 셀 하나하나에 주면 모바일에서 GPU 레이어가 셀 수만큼
    생겨 스크롤 성능이 크게 떨어짐). */
 [data-theme="dark"] .cal-fold {
-  background: rgba(15, 20, 25, 0.78);
+  background: rgba(15, 20, 25, 0.75);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-radius: 16px;
@@ -1345,7 +1362,7 @@ body {
 }
 /* 다크 테마 + PhotoBackground 위에서는 transparent 믹스가 사진 색과 섞여 카테고리
    색코딩이 오염된다 — 불투명한 다크 베이스(#0f1419, .cal-fold 유리 배경
-   rgba(15,20,25,.78)의 불투명 버전)와 섞어 완전 불투명을 유지한다. 라이트
+   rgba(15,20,25,.75)의 불투명 버전)와 섞어 완전 불투명을 유지한다. 라이트
    테마는 사진이 없어 원래 transparent 믹스(옅은 파스텔) 그대로 둔다. */
 [data-theme="dark"] .cal-chip {
   background: color-mix(in srgb, var(--chip-color, var(--gold)) var(--chip-tint-pct), #0f1419);
@@ -1369,6 +1386,16 @@ body {
 .cal-detail {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 13px; padding: 4px 14px 10px;
+}
+/* PhotoBackground(다크 전용) 위에서만 유리 카드로 전환 — .cal-fold와 같은 톤.
+   backdrop-filter는 이 컨테이너 레벨에만 준다(.cal-detail-row 개별에는 주지 않음
+   — 리스트가 길어져도 GPU 레이어가 하나로 유지되게). 라이트 테마는 원래
+   var(--bg-card) 솔리드 카드 그대로 둔다. */
+[data-theme="dark"] .cal-detail {
+  background: rgba(15, 20, 25, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: rgba(255, 255, 255, 0.06);
 }
 .cal-detail-label {
   font-size: 11px; font-weight: 800; color: var(--gold);
