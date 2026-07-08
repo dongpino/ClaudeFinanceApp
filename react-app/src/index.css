@@ -60,11 +60,27 @@ body {
 }
 
 /* React 루트 — 뷰포트 전체를 채우는 세로 flex 컨테이너 */
+/* isolation:isolate — PhotoBackground(position:fixed;z-index:-1)를 위한 스태킹 컨텍스트.
+   html/body 둘 다 명시적 불투명 배경(var(--bg))을 갖고 있어 캔버스 배경 전파가 안 되고,
+   격리 없이는 body 자신의 배경이 정상 페인트 순서상 z-index:-1보다 앞에 그려져 그 아래
+   깔린 배경 사진을 완전히 가려버린다. 이 한 줄이 그 문제를 근본적으로 없앤다 — 레이아웃에는
+   영향 없음(격리는 페인트 순서만 관여). */
 #root {
   display: flex;
   flex-direction: column;
   height: 100dvh;
   overflow: hidden;
+  isolation: isolate;
+}
+
+/* ── 탭 배경 사진(PhotoBackground.jsx) ──────────────────────── */
+.photo-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 /* ── 헤더 ─────────────────────────────────── */
@@ -450,6 +466,7 @@ body {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border);
+  z-index: 1; /* PhotoBackground(z-index:-1)가 fixed로 전체 화면에 깔려도 항상 위에 남게 */
 }
 .nav-item {
   flex: 1; display: flex; flex-direction: column;
@@ -1227,9 +1244,17 @@ body {
 }
 
 /* 월 그리드+헤더+요일줄 묶음 — 데스크톱에서만 뷰포트를 채우고(아래 미디어쿼리),
-   모바일은 기존처럼 자연스러운 콘텐츠 흐름(그리드가 화면을 억지로 채우지 않음). */
+   모바일은 기존처럼 자연스러운 콘텐츠 흐름(그리드가 화면을 억지로 채우지 않음).
+   PhotoBackground 위에 뜨는 "유리" 카드 — backdrop-filter는 반드시 이 컨테이너
+   레벨에서 한 번만 준다(날짜 셀 하나하나에 주면 모바일에서 GPU 레이어가 셀 수만큼
+   생겨 스크롤 성능이 크게 떨어짐). */
 .cal-fold {
   display: flex; flex-direction: column; gap: 8px;
+  background: rgba(15, 20, 25, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 16px;
+  padding: 12px 12px 14px;
 }
 
 .cal-header {
@@ -1271,8 +1296,8 @@ body {
   min-width: 0; /* 그리드 아이템 기본 min-width:auto가 칩 텍스트 길이로 열 폭을 늘리는 것 방지 */
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 2px;
-  border-radius: 9px; border: 1px solid var(--border);
-  background: transparent;
+  border-radius: 9px; border: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent; /* 개별 셀에는 backdrop-filter를 절대 주지 않음(모바일 스크롤 성능) */
   color: var(--text-1);
   font-size: 12.5px; font-weight: 600;
   cursor: pointer;
@@ -1283,14 +1308,18 @@ body {
 .cal-cell.sun .cal-cell-day { color: var(--up); }
 .cal-cell.sat .cal-cell-day { color: var(--down); }
 .cal-cell:not(.empty):hover { background: var(--surface-tint); }
-.cal-cell.today { border-color: var(--gold); }
+.cal-cell.today { border-color: var(--gold); background: rgba(255, 255, 255, 0.08); }
 .cal-cell.today .cal-cell-day { color: var(--gold); font-weight: 800; }
 .cal-cell.selected { background: var(--gold-dim); border-color: var(--gold); }
 .cal-cell-day { font-variant-numeric: tabular-nums; }
 
 /* 라벨 칩(기본: 데스크톱) — "포스트잇" 스타일: 카테고리색 좌측 보더 + 옅은 틴트 배경.
    틴트가 파스텔이라 다크/라이트 둘 다 일반 텍스트색(var(--text-1))으로 충분히 읽힘 —
-   카테고리별 글자색을 따로 안 정해도 됨(솔리드 배경 안이었다면 필요했을 부분). */
+   카테고리별 글자색을 따로 안 정해도 됨(솔리드 배경 안이었다면 필요했을 부분).
+   background는 반드시 완전 불투명 — PhotoBackground 위에서 반투명(color-mix ...
+   transparent)으로 두면 사진 색이 카테고리 색코딩에 섞여 들어와 색 구분이
+   오염된다. 그래서 transparent 대신 불투명한 다크 베이스(#0f1419 — .cal-fold
+   유리 배경 rgba(15,20,25,.85)의 불투명 버전)와 섞는다. */
 .cal-cell-chips {
   display: flex; flex-direction: column; gap: 3px;
   width: 100%; padding: 0 4px;
@@ -1301,7 +1330,7 @@ body {
   color: var(--text-1);
   border-radius: 5px;
   border-left: 3px solid var(--chip-color, var(--gold));
-  background: color-mix(in srgb, var(--chip-color, var(--gold)) var(--chip-tint-pct), transparent);
+  background: color-mix(in srgb, var(--chip-color, var(--gold)) var(--chip-tint-pct), #0f1419);
   padding: 0 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }

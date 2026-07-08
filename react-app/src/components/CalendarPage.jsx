@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Header from './Header';
 import BottomNav from './BottomNav';
+import PhotoBackground from './PhotoBackground';
 
 const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -136,6 +137,7 @@ export default function CalendarPage({ activePage, onPageChange }) {
 
   return (
     <>
+      <PhotoBackground src="/bg/forest-calendar.webp" />
       <Header />
       <div className="page active">
         <div className="cal-scroll">
