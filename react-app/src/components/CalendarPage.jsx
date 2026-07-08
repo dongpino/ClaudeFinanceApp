@@ -75,6 +75,7 @@ export default function CalendarPage({ activePage, onPageChange }) {
   const [upcomingPhase, setUpcomingPhase] = useState('loading');
 
   const detailRef = useRef(null);
+  const scrollRef = useRef(null); // .cal-scroll — PhotoBackground 패럴랙스가 구독하는 스크롤 컨테이너
 
   function selectDate(dateStr) {
     setSelectedDate(dateStr);
@@ -137,85 +138,85 @@ export default function CalendarPage({ activePage, onPageChange }) {
 
   return (
     <>
-      <PhotoBackground src="/bg/forest-calendar.webp" />
+      <PhotoBackground src="/bg/forest-calendar.webp" scrollContainerRef={scrollRef} />
       <Header />
       <div className="page active">
-        <div className="cal-scroll">
+        <div className="cal-scroll" ref={scrollRef}>
+          <div className="cal-scroll-inner">
+            <div className="cal-fold">
+              <div className="cal-header">
+                <button type="button" className="cal-nav-btn" onClick={goPrevMonth} aria-label="이전 달">‹</button>
+                <span className="cal-month-label">{viewYear}년 {viewMonth}월</span>
+                <button type="button" className="cal-nav-btn" onClick={goNextMonth} aria-label="다음 달">›</button>
+              </div>
 
-          <div className="cal-fold">
-            <div className="cal-header">
-              <button type="button" className="cal-nav-btn" onClick={goPrevMonth} aria-label="이전 달">‹</button>
-              <span className="cal-month-label">{viewYear}년 {viewMonth}월</span>
-              <button type="button" className="cal-nav-btn" onClick={goNextMonth} aria-label="다음 달">›</button>
+              <div className="cal-weekday-row">
+                {WEEKDAY_KO.map((w, i) => (
+                  <span key={w} className={`cal-weekday${i === 0 ? ' sun' : ''}${i === 6 ? ' sat' : ''}`}>{w}</span>
+                ))}
+              </div>
+
+              <div className="cal-grid">
+                {cells.map((d, i) => {
+                  if (d === null) return <div key={i} className="cal-cell empty" />;
+                  const dateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                  const dayEvents = eventsByDate[dateStr] ?? [];
+                  const weekday = (firstWeekday + d - 1) % 7;
+                  const isToday    = dateStr === todayStr;
+                  const isSelected = dateStr === selectedDate;
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      className={`cal-cell${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}${weekday === 0 ? ' sun' : ''}${weekday === 6 ? ' sat' : ''}`}
+                      onClick={() => selectDate(dateStr)}
+                    >
+                      <span className="cal-cell-day">{d}</span>
+                      {dayEvents.length > 0 && (
+                        <>
+                          {/* 데스크톱(>768px) — 라벨 칩. CSS 미디어쿼리로 모바일에선 숨김 */}
+                          <span className="cal-cell-chips">
+                            {dayEvents.slice(0, 2).map((e, j) => (
+                              <span
+                                key={j}
+                                className={`cal-chip cal-chip-${e.category}`}
+                                style={{ '--chip-color': CATEGORY_COLOR[e.category] ?? '#999' }}
+                              >
+                                {e.shortLabel || e.title.slice(0, 5)}
+                              </span>
+                            ))}
+                            {dayEvents.length > 2 && <span className="cal-chip-more">+{dayEvents.length - 2}</span>}
+                          </span>
+                          {/* 모바일(≤768px) — 점. CSS 미디어쿼리로 데스크톱에선 숨김 */}
+                          <span className="cal-cell-dots">
+                            {dayEvents.slice(0, 3).map((e, j) => (
+                              <span key={j} className="cal-dot" style={{ background: CATEGORY_COLOR[e.category] ?? '#999' }} />
+                            ))}
+                            {dayEvents.length > 3 && <span className="cal-dot-more">+{dayEvents.length - 3}</span>}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="cal-weekday-row">
-              {WEEKDAY_KO.map((w, i) => (
-                <span key={w} className={`cal-weekday${i === 0 ? ' sun' : ''}${i === 6 ? ' sat' : ''}`}>{w}</span>
-              ))}
+            <div className="cal-detail" ref={detailRef}>
+              <div className="cal-detail-label">{formatDetailDate(selectedDate)}</div>
+              {monthPhase === 'done' && selectedEvents.length === 0 && (
+                <p className="cal-detail-empty">이 날은 예정된 이벤트가 없습니다.</p>
+              )}
+              {selectedEvents.map((e, i) => <EventDetailRow key={i} event={e} />)}
             </div>
 
-            <div className="cal-grid">
-              {cells.map((d, i) => {
-                if (d === null) return <div key={i} className="cal-cell empty" />;
-                const dateStr = `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                const dayEvents = eventsByDate[dateStr] ?? [];
-                const weekday = (firstWeekday + d - 1) % 7;
-                const isToday    = dateStr === todayStr;
-                const isSelected = dateStr === selectedDate;
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    className={`cal-cell${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}${weekday === 0 ? ' sun' : ''}${weekday === 6 ? ' sat' : ''}`}
-                    onClick={() => selectDate(dateStr)}
-                  >
-                    <span className="cal-cell-day">{d}</span>
-                    {dayEvents.length > 0 && (
-                      <>
-                        {/* 데스크톱(>768px) — 라벨 칩. CSS 미디어쿼리로 모바일에선 숨김 */}
-                        <span className="cal-cell-chips">
-                          {dayEvents.slice(0, 2).map((e, j) => (
-                            <span
-                              key={j}
-                              className={`cal-chip cal-chip-${e.category}`}
-                              style={{ '--chip-color': CATEGORY_COLOR[e.category] ?? '#999' }}
-                            >
-                              {e.shortLabel || e.title.slice(0, 5)}
-                            </span>
-                          ))}
-                          {dayEvents.length > 2 && <span className="cal-chip-more">+{dayEvents.length - 2}</span>}
-                        </span>
-                        {/* 모바일(≤768px) — 점. CSS 미디어쿼리로 데스크톱에선 숨김 */}
-                        <span className="cal-cell-dots">
-                          {dayEvents.slice(0, 3).map((e, j) => (
-                            <span key={j} className="cal-dot" style={{ background: CATEGORY_COLOR[e.category] ?? '#999' }} />
-                          ))}
-                          {dayEvents.length > 3 && <span className="cal-dot-more">+{dayEvents.length - 3}</span>}
-                        </span>
-                      </>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="cal-detail" ref={detailRef}>
-            <div className="cal-detail-label">{formatDetailDate(selectedDate)}</div>
-            {monthPhase === 'done' && selectedEvents.length === 0 && (
-              <p className="cal-detail-empty">이 날은 예정된 이벤트가 없습니다.</p>
+            {upcomingPhase === 'done' && visibleUpcoming.length > 0 && (
+              <div className="brf-event-list">
+                <div className="brf-event-list-label">다가오는 이벤트 (30일 이내)</div>
+                {visibleUpcoming.map((e, i) => <UpcomingRow key={i} event={e} />)}
+              </div>
             )}
-            {selectedEvents.map((e, i) => <EventDetailRow key={i} event={e} />)}
           </div>
-
-          {upcomingPhase === 'done' && visibleUpcoming.length > 0 && (
-            <div className="brf-event-list">
-              <div className="brf-event-list-label">다가오는 이벤트 (30일 이내)</div>
-              {visibleUpcoming.map((e, i) => <UpcomingRow key={i} event={e} />)}
-            </div>
-          )}
-
         </div>
       </div>
       <BottomNav activePage={activePage} onPageChange={onPageChange} />
