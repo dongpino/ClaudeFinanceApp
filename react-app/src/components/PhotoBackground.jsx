@@ -1,5 +1,7 @@
+import { useTheme } from '../ThemeContext';
+
 /**
- * PhotoBackground.jsx — 탭 배경으로 쓰는 고정 사진 레이어
+ * PhotoBackground.jsx — 탭 배경으로 쓰는 고정 사진 레이어(다크 테마 전용)
  *
  * position:fixed + z-index:-1로 뷰포트 전체를 덮는 배경 이미지를 렌더링한다.
  * #root에 준 isolation:isolate(index.css)가 이 레이어를 body/html의 불투명
@@ -7,11 +9,18 @@
  * html의 background가 이미 불투명이라 캔버스 배경 전파가 일어나지 않고, body
  * 자신의 배경이 그대로 페인트돼 z-index:-1인 이 레이어를 가려버린다.
  *
+ * 라이트 테마에서는 렌더링하지 않는다 — 사진 위 반투명 유리 카드(index.css의
+ * [data-theme="dark"] .cal-fold 등)와 짝을 이루는 다크 전용 장식이라, 라이트
+ * 테마 텍스트 색(어두운 네이비 계열)과 겹치면 대비가 무너져 판독이 안 된다.
+ *
  * src는 절대 경로(예: '/bg/forest-calendar.webp')로 전달 — public/ 밑에 두면
  * 그대로 서빙되므로 별도 import 없이 바로 쓸 수 있다. 어느 탭에서 쓸지는
  * 이 컴포넌트가 알 필요 없이, 해당 페이지 컴포넌트가 조건부로 렌더링하면 된다.
  */
 export default function PhotoBackground({ src }) {
+  const { theme } = useTheme();
+  if (theme !== 'dark') return null;
+
   return (
     <div
       className="photo-background"

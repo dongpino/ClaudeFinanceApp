@@ -1244,12 +1244,18 @@ body {
 }
 
 /* 월 그리드+헤더+요일줄 묶음 — 데스크톱에서만 뷰포트를 채우고(아래 미디어쿼리),
-   모바일은 기존처럼 자연스러운 콘텐츠 흐름(그리드가 화면을 억지로 채우지 않음).
-   PhotoBackground 위에 뜨는 "유리" 카드 — backdrop-filter는 반드시 이 컨테이너
-   레벨에서 한 번만 준다(날짜 셀 하나하나에 주면 모바일에서 GPU 레이어가 셀 수만큼
-   생겨 스크롤 성능이 크게 떨어짐). */
+   모바일은 기존처럼 자연스러운 콘텐츠 흐름(그리드가 화면을 억지로 채우지 않음). */
 .cal-fold {
   display: flex; flex-direction: column; gap: 8px;
+}
+
+/* PhotoBackground(다크 테마 전용, PhotoBackground.jsx 참고) 위에 뜨는 "유리" 카드.
+   라이트 테마는 사진 자체가 렌더링되지 않으므로 이 블록도 적용하지 않는다(원래
+   배경 없는 .cal-fold 그대로) — 리터럴 rgba 값을 양쪽 테마에 공통 적용하지 않기
+   위해 [data-theme="dark"]로 분기한다. backdrop-filter는 반드시 이 컨테이너
+   레벨에서 한 번만 준다(날짜 셀 하나하나에 주면 모바일에서 GPU 레이어가 셀 수만큼
+   생겨 스크롤 성능이 크게 떨어짐). */
+[data-theme="dark"] .cal-fold {
   background: rgba(15, 20, 25, 0.85);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -1296,7 +1302,7 @@ body {
   min-width: 0; /* 그리드 아이템 기본 min-width:auto가 칩 텍스트 길이로 열 폭을 늘리는 것 방지 */
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 2px;
-  border-radius: 9px; border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 9px; border: 1px solid var(--border);
   background: transparent; /* 개별 셀에는 backdrop-filter를 절대 주지 않음(모바일 스크롤 성능) */
   color: var(--text-1);
   font-size: 12.5px; font-weight: 600;
@@ -1308,18 +1314,21 @@ body {
 .cal-cell.sun .cal-cell-day { color: var(--up); }
 .cal-cell.sat .cal-cell-day { color: var(--down); }
 .cal-cell:not(.empty):hover { background: var(--surface-tint); }
-.cal-cell.today { border-color: var(--gold); background: rgba(255, 255, 255, 0.08); }
+.cal-cell.today { border-color: var(--gold); }
 .cal-cell.today .cal-cell-day { color: var(--gold); font-weight: 800; }
 .cal-cell.selected { background: var(--gold-dim); border-color: var(--gold); }
 .cal-cell-day { font-variant-numeric: tabular-nums; }
 
+/* PhotoBackground(다크 전용) 위에서만 필요한 미세 조정 — 유리 카드 위에서는
+   var(--border)(불투명 회색)보다 옅은 흰 테두리가, 진한 --bg-card 배경 없이도
+   셀 경계를 은은하게 드러낸다. 라이트 테마는 사진이 없으므로 원래 var(--border)/
+   무배경 그대로 둔다. */
+[data-theme="dark"] .cal-cell { border-color: rgba(255, 255, 255, 0.06); }
+[data-theme="dark"] .cal-cell.today { background: rgba(255, 255, 255, 0.08); }
+
 /* 라벨 칩(기본: 데스크톱) — "포스트잇" 스타일: 카테고리색 좌측 보더 + 옅은 틴트 배경.
    틴트가 파스텔이라 다크/라이트 둘 다 일반 텍스트색(var(--text-1))으로 충분히 읽힘 —
-   카테고리별 글자색을 따로 안 정해도 됨(솔리드 배경 안이었다면 필요했을 부분).
-   background는 반드시 완전 불투명 — PhotoBackground 위에서 반투명(color-mix ...
-   transparent)으로 두면 사진 색이 카테고리 색코딩에 섞여 들어와 색 구분이
-   오염된다. 그래서 transparent 대신 불투명한 다크 베이스(#0f1419 — .cal-fold
-   유리 배경 rgba(15,20,25,.85)의 불투명 버전)와 섞는다. */
+   카테고리별 글자색을 따로 안 정해도 됨(솔리드 배경 안이었다면 필요했을 부분). */
 .cal-cell-chips {
   display: flex; flex-direction: column; gap: 3px;
   width: 100%; padding: 0 4px;
@@ -1330,9 +1339,16 @@ body {
   color: var(--text-1);
   border-radius: 5px;
   border-left: 3px solid var(--chip-color, var(--gold));
-  background: color-mix(in srgb, var(--chip-color, var(--gold)) var(--chip-tint-pct), #0f1419);
+  background: color-mix(in srgb, var(--chip-color, var(--gold)) var(--chip-tint-pct), transparent);
   padding: 0 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 다크 테마 + PhotoBackground 위에서는 transparent 믹스가 사진 색과 섞여 카테고리
+   색코딩이 오염된다 — 불투명한 다크 베이스(#0f1419, .cal-fold 유리 배경
+   rgba(15,20,25,.85)의 불투명 버전)와 섞어 완전 불투명을 유지한다. 라이트
+   테마는 사진이 없어 원래 transparent 믹스(옅은 파스텔) 그대로 둔다. */
+[data-theme="dark"] .cal-chip {
+  background: color-mix(in srgb, var(--chip-color, var(--gold)) var(--chip-tint-pct), #0f1419);
 }
 .cal-chip-more {
   font-size: 8px; font-weight: 800; color: var(--text-3);
