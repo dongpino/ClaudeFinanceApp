@@ -7,10 +7,15 @@
  *   이 값이 환경변수 CRON_SECRET과 일치하는 요청만 처리한다 — 외부인이 이 경로를
  *   직접 호출해 생성을 유발할 수 없게 막는 용도(Anthropic 호출 비용 보호).
  *
- * 생성 로직은 api/briefing.js(버튼 클릭용)와 완전히 동일하게 api/_lib/briefing-core.js를
- * 공유한다 — cron이라고 캐시·상한·히스토리 저장을 다르게 취급하지 않는다. 이미 이번 시간에
- * 생성된 캐시가 있으면(예: 새벽에 아무도 안 눌렀는데 상한에 걸린 경우는 없지만) Anthropic을
+ * 생성 로직(캐시·상한·프롬프트 등)은 api/briefing.js(버튼 클릭용)와 완전히 동일하게
+ * api/_lib/briefing-core.js를 공유한다. 이미 이번 시간에 생성된 캐시가 있으면 Anthropic을
  * 다시 호출하지 않고 그대로 반환한다.
+ *
+ * 아침 보고/수동 생성 분리(Stage 4): getOrGenerateBriefing({ slot: 'morning' })으로 호출해
+ * 일별 아카이브를 morning 슬롯(write-once)에 쓴다. 예전엔 버튼 클릭과 같은 briefing:day:{날짜}
+ * 키를 공유해서, 크론이 08:30에 남긴 "그날의 아침 기록"을 이후 버튼 클릭이나 로컬 테스트가
+ * 덮어쓸 수 있었다(실측 확인: 08:30 크론 생성분이 09:25 수동 호출로 덮어써짐). 이제 같은
+ * 날짜에 morning이 이미 있으면 이 호출은 그 기록을 절대 덮어쓰지 않는다.
  *
  * 환경변수: CRON_SECRET (필수 — 없으면 요청 자체를 거부), ANTHROPIC_API_KEY,
  *           KV_REST_API_URL / KV_REST_API_TOKEN — api/_lib/briefing-core.js 참고.
@@ -45,7 +50,7 @@ export default async function handler(req, res) {
   }
 
   console.log('[briefing-cron] 인증 성공 — 아침 자동 브리핑 생성 시작');
-  const result = await getOrGenerateBriefing();
+  const result = await getOrGenerateBriefing({ slot: 'morning' });
 
   // Stage 2 지표 스냅샷 적재 — 브리핑 응답과 완전히 무관하게 격리(실패해도 무시하고 진행).
   // result.signals가 있으면(이번 호출에서 브리핑 생성 중 실제로 계산된 신호) 그대로 재사용하고,

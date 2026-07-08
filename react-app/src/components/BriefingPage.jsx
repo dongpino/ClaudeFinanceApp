@@ -261,7 +261,8 @@ export default function BriefingPage({ activePage, onPageChange }) {
   const [historyDates, setHistoryDates]   = useState([]);        // ["YYYY-MM-DD", ...] 최신순
   const [historyShowAll, setHistoryShowAll] = useState(false);   // false: 최근 7일만, true: 최대 30일
   const [selectedDate, setSelectedDate]   = useState(null);      // null이면 오늘 브리핑 표시 중
-  const [historyDetail, setHistoryDetail] = useState(null);      // 선택한 날짜의 브리핑 데이터
+  const [historyDetail, setHistoryDetail] = useState(null);      // { date, morning, manual } — 선택한 날짜
+  const [historyViewSlot, setHistoryViewSlot] = useState('manual'); // 'morning' | 'manual' — 현재 보고 있는 슬롯
   const [historyDetailPhase, setHistoryDetailPhase] = useState('idle'); // idle | loading | done | error
   const [historyDetailError, setHistoryDetailError] = useState(null);
 
@@ -370,6 +371,8 @@ export default function BriefingPage({ activePage, onPageChange }) {
   }, []);
 
   // ── 지난 브리핑 날짜 선택 ────────────────────
+  // 응답 shape: { date, morning, manual } — 기본 표시는 manual(수동 최신본), 없으면
+  // morning(아침 보고). 둘 다 있으면 배지로 서로 전환 가능(toggleHistorySlot).
   async function selectHistoryDate(date) {
     setSelectedDate(date);
     setHistoryDetailPhase('loading');
@@ -379,6 +382,7 @@ export default function BriefingPage({ activePage, onPageChange }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setHistoryDetail(data);
+      setHistoryViewSlot(data.manual ? 'manual' : 'morning');
       setHistoryDetailPhase('done');
     } catch (e) {
       setHistoryDetailError(e.message);
@@ -386,9 +390,14 @@ export default function BriefingPage({ activePage, onPageChange }) {
     }
   }
 
+  function toggleHistorySlot() {
+    setHistoryViewSlot(v => (v === 'morning' ? 'manual' : 'morning'));
+  }
+
   function backToTodayBriefing() {
     setSelectedDate(null);
     setHistoryDetail(null);
+    setHistoryViewSlot('manual');
     setHistoryDetailPhase('idle');
     setHistoryDetailError(null);
   }
@@ -414,7 +423,9 @@ export default function BriefingPage({ activePage, onPageChange }) {
                 <HistoryDetailBody
                   phase={historyDetailPhase}
                   date={selectedDate}
-                  briefing={historyDetail}
+                  data={historyDetail}
+                  viewSlot={historyViewSlot}
+                  onToggleSlot={toggleHistorySlot}
                   error={historyDetailError}
                 />
               ) : (
@@ -735,7 +746,16 @@ function HistorySection({ phase, dates, selectedDate, showAll, onToggleShowAll, 
 }
 
 // ── 지난 브리핑 상세(선택한 날짜) 본문 ─────────────────────────
-function HistoryDetailBody({ phase, date, briefing, error }) {
+// data는 api/briefing-history.js가 주는 { date, morning, manual } — 슬롯당 없으면 null.
+// viewSlot('morning'|'manual')이 가리키는 쪽을 렌더링하고, 둘 다 있는 날짜에만 서로
+// 전환하는 배지 버튼을 보여준다. generated_at("YYYY-MM-DD HH:MM KST")에서 시:분만 뽑아
+// "아침 보고 08:30" / "수동 생성 14:20" 라벨을 만든다.
+function slotTimeLabel(slot, entry) {
+  const time = entry?.generated_at ? entry.generated_at.slice(11, 16) : '';
+  return slot === 'morning' ? `아침 보고 ${time}` : `수동 생성 ${time}`;
+}
+
+function HistoryDetailBody({ phase, date, data, viewSlot, onToggleSlot, error }) {
   if (phase === 'loading') {
     return (
       <div className="brf-ai-loading">
@@ -756,13 +776,25 @@ function HistoryDetailBody({ phase, date, briefing, error }) {
     );
   }
 
-  if (phase === 'done' && briefing) {
+  if (phase === 'done' && data) {
+    const hasBoth = Boolean(data.morning) && Boolean(data.manual);
+    const current = data[viewSlot] ?? data.manual ?? data.morning;
+    if (!current) return null;
+
     return (
       <div className="brf-ai-result">
-        <div className="brf-history-label">{date} 브리핑</div>
-        <div className="brf-ai-text">{renderBriefingMarkdown(briefing.briefing)}</div>
+        <div className="brf-history-label-row">
+          <span className="brf-history-label">{date} 브리핑</span>
+          <span className={`brf-slot-badge brf-slot-${viewSlot}`}>{slotTimeLabel(viewSlot, current)}</span>
+        </div>
+        <div className="brf-ai-text">{renderBriefingMarkdown(current.briefing)}</div>
         <div className="brf-ai-meta">
-          <span>{briefing.generated_at}</span>
+          <span>{current.generated_at}</span>
+          {hasBoth && (
+            <button className="brf-slot-toggle-btn" onClick={onToggleSlot}>
+              {viewSlot === 'morning' ? '수동 생성 보기' : '아침 보고 보기'}
+            </button>
+          )}
         </div>
       </div>
     );
