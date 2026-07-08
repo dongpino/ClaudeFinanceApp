@@ -2,7 +2,7 @@
  * scripts/process-bg.mjs — 캘린더 탭 배경 이미지 전처리
  *
  * 입력:  scripts/forest-original.jpg
- * 처리:  blur(20) → modulate(brightness 0.35, saturation 0.7) → 긴 변 1920px로 리사이즈
+ * 처리:  blur(20) → modulate(brightness 0.55, saturation 0.7) → 긴 변 1920px로 리사이즈
  * 출력:  public/bg/forest-calendar.webp (200KB 이하가 될 때까지 webp 품질을 낮춰가며 재인코딩)
  *
  * 실행: node scripts/process-bg.mjs
@@ -29,7 +29,7 @@ async function run() {
   // 아래 품질 탐색 루프에서 매번 블러를 다시 계산하지 않고 인코딩만 반복하기 위함.
   const { data, info } = await sharp(INPUT)
     .blur(20)
-    .modulate({ brightness: 0.35, saturation: 0.7 })
+    .modulate({ brightness: 0.55, saturation: 0.7 })
     .resize({ width: LONG_EDGE, height: LONG_EDGE, fit: 'inside', withoutEnlargement: true })
     .raw()
     .toBuffer({ resolveWithObject: true });

@@ -1256,7 +1256,7 @@ body {
    레벨에서 한 번만 준다(날짜 셀 하나하나에 주면 모바일에서 GPU 레이어가 셀 수만큼
    생겨 스크롤 성능이 크게 떨어짐). */
 [data-theme="dark"] .cal-fold {
-  background: rgba(15, 20, 25, 0.85);
+  background: rgba(15, 20, 25, 0.78);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-radius: 16px;
@@ -1345,7 +1345,7 @@ body {
 }
 /* 다크 테마 + PhotoBackground 위에서는 transparent 믹스가 사진 색과 섞여 카테고리
    색코딩이 오염된다 — 불투명한 다크 베이스(#0f1419, .cal-fold 유리 배경
-   rgba(15,20,25,.85)의 불투명 버전)와 섞어 완전 불투명을 유지한다. 라이트
+   rgba(15,20,25,.78)의 불투명 버전)와 섞어 완전 불투명을 유지한다. 라이트
    테마는 사진이 없어 원래 transparent 믹스(옅은 파스텔) 그대로 둔다. */
 [data-theme="dark"] .cal-chip {
   background: color-mix(in srgb, var(--chip-color, var(--gold)) var(--chip-tint-pct), #0f1419);
