@@ -12,8 +12,11 @@
  *   동일하게 각 수집기를 { include90d: false }로 직접 호출한다(90일 OHLC 등 무거운
  *   데이터는 요청하지 않음 — history_90d는 항상 비어 있는 경량 모드).
  * - FRED 매크로(기준금리/CPI/실업률): api/macro.js가 이미 Redis에 캐시해둔 'macro:v1'을
- *   그대로 읽기만 한다(FRED 재호출 없음). 캐시가 없으면(콜드/미배포) 해당 3개 항목만
- *   fetched:false로 표시하고 나머지는 정상 진행한다.
+ *   그대로 읽기만 한다(FRED 재호출 없음). 'macro:v1'은 12시간 TTL이라 이 모듈이(주로
+ *   크론으로) 그 만료 시간대에 실행되면 비어 있을 수 있는데, 이때는 'macro:v1:latest'
+ *   (7일 TTL, macro.js가 필드별 승계용으로 관리하는 키)로 폴백해 fetched:true+stale:true로
+ *   표시한다. 그마저 없으면(완전 콜드/미배포) 해당 3개 항목만 fetched:false로 표시하고
+ *   나머지는 정상 진행한다.
  * - "이전 발표값 대비 변경" 판정을 위한 상태는 이 모듈이 별도로 'sig:macro:last'에
  *   저장한다(macro.js와는 다른 키 — 그쪽 캐시를 침범하지 않음).
  *
@@ -61,7 +64,8 @@ export const THRESHOLDS = {
   SENTIMENT_SCORE: 10,    // 공포탐욕지수 |변동| 포인트(0~100 스케일)
 };
 
-const MACRO_CACHE_KEY    = 'macro:v1';      // api/macro.js가 쓰는 캐시 키 — 재조회만, FRED 재호출 없음
+const MACRO_CACHE_KEY    = 'macro:v1';        // api/macro.js가 쓰는 캐시 키(12시간 TTL) — 재조회만, FRED 재호출 없음
+const MACRO_LATEST_KEY   = 'macro:v1:latest'; // macro.js가 필드별 승계용으로 쓰는 7일 TTL 키 — v1 만료 시 폴백
 const SIG_MACRO_LAST_KEY = 'sig:macro:last'; // "마지막으로 확인한 발표값" — 이 모듈 전용 상태
 
 const DAILY_SNAPSHOT_KEY    = 'signals:daily'; // sorted set: score=KST 자정 타임스탬프, member=signals JSON
@@ -105,15 +109,31 @@ function getRedis() {
   return redisClient;
 }
 
+// macro:v1(12시간 TTL)이 크론 실행 시점에 이미 만료돼 있으면(예: 밤새 아무도 /api/macro를
+// 호출하지 않아 캐시가 비면) macro:v1:latest(7일 TTL, macro.js가 필드별 승계용으로 관리)로
+// 폴백한다. latest에서 읽은 값은 stale=true로 표시해 호출부가 신선도를 구분할 수 있게 한다.
 async function getCachedMacro() {
   const r = getRedis();
-  if (!r) return null;
+  if (!r) return { data: null, stale: false };
+
   try {
-    return await r.get(MACRO_CACHE_KEY);
+    const v1 = await r.get(MACRO_CACHE_KEY);
+    if (v1) return { data: v1, stale: false };
   } catch (e) {
     console.error('[significance] macro:v1 조회 실패:', e.message);
-    return null;
   }
+
+  try {
+    const latest = await r.get(MACRO_LATEST_KEY);
+    if (latest) {
+      console.warn('[significance] macro:v1 없음 — macro:v1:latest로 폴백(stale)');
+      return { data: latest, stale: true };
+    }
+  } catch (e) {
+    console.error('[significance] macro:v1:latest 조회 실패:', e.message);
+  }
+
+  return { data: null, stale: false };
 }
 
 async function getLastMacroSnapshot() {
@@ -140,26 +160,26 @@ async function saveMacroSnapshot(snap) {
 // macro:v1 캐시 → 발표성 지표 3종(기준금리/CPI/실업률). compareKey는 "발표값이 실제로
 // 바뀌었는지" 판정용 — asOf처럼 매일 갱신되는 날짜 필드는 제외하고 값 자체만 담는다
 // (안 그러면 FRED 일별 시계열의 날짜만 바뀌어도 "변경"으로 오탐한다).
-function buildMacroReleaseIndicators(macroCached) {
+function buildMacroReleaseIndicators(macroCached, stale = false) {
   const fomcRate = macroCached?.fomc?.rate ?? null;
   const cpi      = macroCached?.cpi ?? null;
   const unemp    = macroCached?.unemployment ?? null;
 
   return [
     fomcRate
-      ? { id: 'fred_fomc_rate', name: '기준금리(FOMC)', category: 'macro_release', fetched: true,
+      ? { id: 'fred_fomc_rate', name: '기준금리(FOMC)', category: 'macro_release', fetched: true, stale,
           value: { upper: fomcRate.upper, lower: fomcRate.lower }, asOf: fomcRate.asOf,
           compareKey: `${fomcRate.upper}|${fomcRate.lower}` }
       : { id: 'fred_fomc_rate', name: '기준금리(FOMC)', category: 'macro_release', fetched: false },
 
     cpi
-      ? { id: 'fred_cpi', name: 'CPI YoY', category: 'macro_release', fetched: true,
+      ? { id: 'fred_cpi', name: 'CPI YoY', category: 'macro_release', fetched: true, stale,
           value: cpi.yoy, refMonth: cpi.refMonth,
           compareKey: `${cpi.refMonth}|${cpi.yoy}` }
       : { id: 'fred_cpi', name: 'CPI YoY', category: 'macro_release', fetched: false },
 
     unemp
-      ? { id: 'fred_unemployment', name: '실업률', category: 'macro_release', fetched: true,
+      ? { id: 'fred_unemployment', name: '실업률', category: 'macro_release', fetched: true, stale,
           value: unemp.rate, refMonth: unemp.refMonth,
           compareKey: `${unemp.refMonth}|${unemp.rate}` }
       : { id: 'fred_unemployment', name: '실업률', category: 'macro_release', fetched: false },
@@ -204,8 +224,8 @@ export async function collectSnapshot() {
     };
   });
 
-  const macroCached      = await getCachedMacro();
-  const macroIndicators  = buildMacroReleaseIndicators(macroCached);
+  const { data: macroCached, stale: macroStale } = await getCachedMacro();
+  const macroIndicators  = buildMacroReleaseIndicators(macroCached, macroStale);
   const allIndicators    = [...indicators, ...macroIndicators];
   const fetchFailures    = allIndicators.filter(it => !it.fetched).map(it => it.id);
 
