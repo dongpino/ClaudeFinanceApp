@@ -348,6 +348,36 @@ body {
   user-select: none;
 }
 
+/* ── 홈 스와이프 실기기 진단 HUD(?debugSwipe=1) — 계측 전용, 원인 확정 후 제거 예정 ── */
+.swipe-debug-hud {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  right: 0;
+  z-index: 999;
+  max-width: 230px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, .78);
+  color: #7cfc7c;
+  font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 8px 9px;
+  border-radius: 0 0 0 10px;
+  pointer-events: none; /* 아래 UI 조작을 가리지 않음(계측만, 오버레이는 인터랙션 불가) */
+  white-space: nowrap;
+}
+.swipe-debug-title { font-weight: 700; color: #fff; margin-bottom: 4px; }
+.swipe-debug-empty { color: #999; }
+.swipe-debug-entry {
+  border-top: 1px solid rgba(255, 255, 255, .15);
+  padding-top: 4px;
+  margin-top: 4px;
+}
+.swipe-debug-entry-head { display: flex; gap: 6px; align-items: center; color: #fff; font-weight: 700; }
+.swipe-debug-cancel { color: #ff6666; }
+.swipe-debug-outcome { padding: 0 4px; border-radius: 3px; }
+.swipe-debug-outcome.commit   { background: rgba(60, 200, 90, .35); }
+.swipe-debug-outcome.snapback { background: rgba(200, 160, 40, .35); }
+
 /* ── 카드 그리드 ──────────────────────────── */
 /* 행 높이를 "2행이 꽉 채운 상태"의 고정값(calc(50% - 절반 gap))으로 못박아, 아이템이
    몇 개든(3개든 7개든) 카드 높이가 "주요" 탭(항상 ≤4개=2행)과 완전히 같게 유지된다 —
