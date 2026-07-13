@@ -215,6 +215,23 @@ export default function HomePage({ activePage, onPageChange }) {
     if (pw) posRef.current = -(activeIndex * pw);
   }, [activeIndex]);
 
+  // iOS Safari 대응 — React가 onPointerMove(및 터치 기반 합성 이벤트)를 내부적으로
+  // passive 리스너로 붙이기 때문에, 그 안에서 부르는 e.preventDefault()는 iOS에서
+  // 네이티브 스크롤을 막지 못한다(HUD로 확인: 가로 락이 걸린 뒤에도 pointercancel로
+  // 제스처를 뺏어감). 그래서 뷰포트에 진짜 non-passive touchmove 리스너를 직접
+  // addEventListener로 붙여, 가로 락이 걸려있는 동안(dragRef.current.locked==='x')만
+  // 네이티브 스크롤을 막는다 — 락 전/세로 판정 시에는 그대로 통과시켜 .grid의
+  // overflow-y:auto(및 touch-action:pan-y)에 양보한다(기존 방향 락 판정은 손대지 않음).
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    function onNativeTouchMove(e) {
+      if (dragRef.current.locked === 'x') e.preventDefault();
+    }
+    vp.addEventListener('touchmove', onNativeTouchMove, { passive: false });
+    return () => vp.removeEventListener('touchmove', onNativeTouchMove);
+  }, []);
+
   function applyTrackTransform(px) {
     posRef.current = px;
     if (trackRef.current) trackRef.current.style.transform = `translate3d(${px}px,0,0)`;
