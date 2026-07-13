@@ -4,7 +4,8 @@
  * FRED(Federal Reserve Economic Data) API 사용 — series_id별 최신 관측치 조회.
  *   CPI:    CPIAUCSL(월간, NSA) → 최신 YoY%/전월비(MoM)/기준월 + 최근 12개월 YoY 추이
  *   기준금리: DFEDTARU/DFEDTARL(일간) → 목표범위 상한/하한
- *   실업률:  UNRATE(월간) → 최신치 + 기준월
+ *   실업률:  UNRATE(월간) → 최신치 + 기준월 + 최근 12개월 history([{month,rate}], macro-insight.js가
+ *           Haiku 프롬프트에 CPI trend와 동일한 방식으로 실어 "빈약한 해석"을 방지하는 재료로 씀)
  * 발표 일정(FOMC 회의/CPI 발표)은 _lib/macro-calendar.js의 하드코딩 상수 + D-day 계산.
  * "시장 캘린더"(다가오는 이벤트, 30일 이내)는 FOMC/CPI에 선물옵션 만기/MSCI 리밸런싱/
  * 실적 발표까지 통합한 getUpcomingEvents()를 그대로 실어 보낸다(순수 계산, FRED 무관).
@@ -125,9 +126,20 @@ async function fetchRateRange() {
   };
 }
 
+// 최근 12개월 관측치를 받아 최신치 + history를 함께 반환한다(cpi.trend와 동일한
+// 구조/기간 — [{month, rate}], 오름차순). UNRATE는 CPI와 달리 그 자체가 이미
+// 비율값이라(YoY 환산 불필요) 파생 계산은 필요 없지만, fetchSeriesOnce가 결측
+// 관측치(value:".")를 걸러내므로 정확히 12개만 요청하면 중간에 결측월이 하나만
+// 있어도 11개로 줄어든다(실측으로 확인됨 — 2025-10 결측) — 14개를 여유 있게 받아
+// 마지막 12개만 쓴다(CPI가 26개를 받아 12개 trend를 뽑는 것과 같은 여유분 확보 방식).
 async function fetchUnemployment() {
-  const obs = await fetchSeries('UNRATE', { limit: 1, sort: 'desc' });
-  return { rate: r2(parseFloat(obs[0].value)), refMonth: obs[0].date.slice(0, 7) };
+  const obs = (await fetchSeries('UNRATE', { limit: 14, sort: 'desc' })).reverse();
+  if (obs.length === 0) throw new Error('UNRATE 유효 관측치 없음');
+
+  const history = obs.slice(-12).map(o => ({ month: o.date.slice(0, 7), rate: r2(parseFloat(o.value)) }));
+  const latest = history[history.length - 1];
+
+  return { rate: latest.rate, refMonth: latest.month, history };
 }
 
 // ── Redis 캐시 (briefing-core.js와 동일 패턴: 지연 생성, 실패 시 null 폴백) ──

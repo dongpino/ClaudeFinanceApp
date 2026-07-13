@@ -137,6 +137,8 @@ function buildSystemPrompt() {
 - 금리 인하·동결·인상 전망 등 통화정책 방향에 대한 결론이나 예측을 내리지 마십시오. 사실 서술에 그치십시오.
 - 확정적 시장 예측이나 매수·매도 같은 투자 조언을 하지 마십시오.
 - 제공되지 않은 수치나 사건을 추측하거나 만들어내지 마십시오.
+- "내일", "N일 후", "이번 주"처럼 캐시된 뒤 시간이 지나면 틀려지는 상대적 날짜 표현을 쓰지 마십시오. 다음 발표·회의 일정을 언급할 필요가 있으면 "다음 발표를 앞두고"처럼 날짜에 의존하지 않는 표현만 사용하십시오.
+- 수치를 단순히 반복해서 서술하지 마십시오. 해당 수치가 추세상 어느 위치인지(상승·하락·횡보), 역사적으로 높은·낮은·중립적인 수준인지 등 맥락과 의미 위주로 서술하십시오.
 
 [출력 형식]
 아래 JSON 형식으로만 응답하십시오. 그 외 어떤 텍스트도, 마크다운 코드펜스(\`\`\`)도, 서두 인사말도 포함하지 말고 JSON 객체 하나만 반환하십시오:
@@ -154,6 +156,12 @@ function buildUserPrompt(macro) {
   const cpiTrend = Array.isArray(cpi.trend) && cpi.trend.length > 0
     ? cpi.trend.map(t => t.yoy).join(', ')
     : '추세 데이터 없음';
+  // unemployment.history는 macro.js가 이 필드를 추가하기 전에 저장된 캐시(macro:v1이
+  // TTL 만료 전이거나 latest 승계본)에는 없을 수 있다 — optional 처리, 없으면 CPI와
+  // 마찬가지로 "추세 데이터 없음"으로 대체하고 나머지 파이프라인은 그대로 동작한다.
+  const unemploymentTrend = Array.isArray(unemployment.history) && unemployment.history.length > 0
+    ? unemployment.history.map(h => h.rate).join(', ')
+    : '추세 데이터 없음';
 
   return `[FOMC 기준금리]
 현재 목표범위: ${fomc.rate.lower}~${fomc.rate.upper}% (기준일 ${fomc.rate.asOf})
@@ -166,6 +174,7 @@ ${cpiNext}
 
 [실업률]
 최근 수치: ${unemployment.rate}% (기준월 ${unemployment.refMonth})
+최근 12개월 추세(오래된순): ${unemploymentTrend}
 
 위 세 지표 각각에 대해 지정된 JSON 형식으로 해석을 작성하세요.`;
 }
