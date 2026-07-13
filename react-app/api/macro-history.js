@@ -14,12 +14,13 @@
  * 프록시하는 통로가 되지 않도록 막는다).
  *
  * 캐시: macro.js와 동일 패턴(Upstash Redis, 지연 생성, 실패 시 조용히 비활성화) —
- *   macro:hist:v1:{indicator}  TTL 24시간(요청 캐시)
- *   macro:hist:last:{indicator} TTL 7일(마지막 성공값 — 24시간 캐시가 만료된 뒤에도
- *   FRED가 계속 실패하면 이 키로 폴백한다. macro.js의 "캐시 포이즈닝 방지" 교훈 그대로,
- *   FRED 조회가 비거나 실패하면 macro:hist:v1/macro:hist:last 둘 다 절대 쓰지 않는다
- *   (성공한 응답만 캐시에 남긴다 — null/에러를 캐시했다가 TTL 내내 재시도가 막히는
- *   사고를 반복하지 않기 위함).
+ *   macro:hist:v1:{indicator}   TTL 24시간(요청 캐시)
+ *   macro:hist:last:{indicator} TTL 없음(무기한 영속 — 성공할 때마다 덮어쓰는 최후의
+ *   폴백본이라 스스로 만료되면 안 된다. FRED가 며칠씩 계속 실패해도 이 키만은 살아있어야
+ *   폴백이 의미가 있다). macro.js의 "캐시 포이즈닝 방지" 교훈 그대로, FRED 조회가
+ *   비거나 실패하면 macro:hist:v1/macro:hist:last 둘 다 절대 쓰지 않는다(성공한
+ *   응답만 캐시에 남긴다 — null/에러를 캐시했다가 재시도가 막히는 사고를 반복하지
+ *   않기 위함).
  * 환경변수: FRED_API_KEY(필수), KV_REST_API_URL/KV_REST_API_TOKEN(선택 — 없으면 인메모리
  *           캐시만 사용, macro.js와 동일).
  */
@@ -29,8 +30,8 @@ import { Redis } from '@upstash/redis';
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
 const ALLOWED_INDICATORS = ['fomc', 'cpi', 'unemployment'];
 
-const CACHE_TTL_SEC  = 24 * 60 * 60;      // 24시간
-const LATEST_TTL_SEC = 7 * 24 * 60 * 60;  // 7일 — macro.js의 latest 캐시 관례와 동일
+const CACHE_TTL_SEC = 24 * 60 * 60; // 24시간 — macro:hist:v1:*(요청 캐시)에만 적용.
+// macro:hist:last:*(마지막 성공값)는 TTL 없이 무기한 저장한다 — setLatestGood 참고.
 
 function cacheKey(indicator)  { return `macro:hist:v1:${indicator}`; }
 function latestKey(indicator) { return `macro:hist:last:${indicator}`; }
@@ -110,10 +111,11 @@ async function fetchPairSettled(idA, idB, opts) {
   return [a.value, b.value];
 }
 
-// 목표금리 상단(DFEDTARU) 월간 시계열에서 값이 바뀐 지점만 뽑아 변경 이력으로 만든다.
-// frequency=m 집계(기본 aggregation_method=avg)라 변경 월의 평균값은 정확한 계단이
-// 아니라 전후 값이 섞인 근사치일 수 있다 — 그래도 "언제 어느 방향으로 얼마나" 바뀌었는지
-// 파악하는 용도로는 충분해 요구사항대로 이 시리즈에서 바로 추출한다.
+// 값이 바뀐 지점만 뽑아 변경 이력으로 만든다 — 반드시 frequency 지정 없는 일간 원본
+// 시계열에 대해서만 호출할 것. frequency=m(월평균) 시계열에 대해 이 함수를 쓰면 변경월의
+// 평균값이 전후 값과 섞여 계단이 번지면서 25bp 표준 단위가 아닌 허위 폭(예: 8bp)이
+// 나온다 — 실측으로 확인된 문제라 changes 추출은 항상 일간 원본에서만 한다(아래
+// INDICATOR_BUILDERS.fomc 참고).
 function extractRateChanges(points) {
   const changes = [];
   for (let i = 1; i < points.length; i++) {
@@ -131,14 +133,30 @@ function extractRateChanges(points) {
 
 const INDICATOR_BUILDERS = {
   async fomc() {
-    const start = isoDateYearsAgo(5);
-    const [upper, lower] = await fetchPairSettled('DFEDTARU', 'DFEDTARL', { start, frequency: 'm' });
+    const start5y = isoDateYearsAgo(5);
+    const start3y = isoDateYearsAgo(3);
+    // upper/lower(월간, 5년)는 차트 표시용 series 그대로 유지하고, changes는 별도로
+    // DFEDTARU를 frequency 지정 없이(일간 원본, 최근 3년) 다시 받아서 뽑는다 — 일간
+    // 원본이라야 값이 바뀌는 지점(=발효일)과 정확한 25bp 단위 폭이 그대로 드러난다.
+    const [upperR, lowerR, dailyUpperR] = await Promise.allSettled([
+      fetchSeriesRange('DFEDTARU', { start: start5y, frequency: 'm' }),
+      fetchSeriesRange('DFEDTARL', { start: start5y, frequency: 'm' }),
+      fetchSeriesRange('DFEDTARU', { start: start3y }),
+    ]);
+    if (upperR.status === 'rejected' || lowerR.status === 'rejected' || dailyUpperR.status === 'rejected') {
+      const detail = [
+        upperR.status === 'rejected'      ? `DFEDTARU(월간): ${upperR.reason.message}` : null,
+        lowerR.status === 'rejected'      ? `DFEDTARL(월간): ${lowerR.reason.message}` : null,
+        dailyUpperR.status === 'rejected' ? `DFEDTARU(일간): ${dailyUpperR.reason.message}` : null,
+      ].filter(Boolean).join(' / ');
+      throw new Error(`fomc 시리즈 일부 실패 — ${detail}`);
+    }
     return {
       series: [
-        { id: 'DFEDTARU', label: '목표금리 상단', points: upper },
-        { id: 'DFEDTARL', label: '목표금리 하단', points: lower },
+        { id: 'DFEDTARU', label: '목표금리 상단', points: upperR.value },
+        { id: 'DFEDTARL', label: '목표금리 하단', points: lowerR.value },
       ],
-      changes: extractRateChanges(upper).slice(-3),
+      changes: extractRateChanges(dailyUpperR.value).slice(-3),
     };
   },
 
@@ -200,8 +218,9 @@ async function setCached(indicator, data) {
 }
 
 // "마지막 성공값" 승계용 — macro:hist:v1:*과 별개 키라 24시간 캐시가 만료된 뒤에도
-// 유지된다. 조회/저장 둘 다 내부에서 에러를 삼켜 절대 상위로 던지지 않는다(요구사항:
-// "폴백 실패가 상위로 전파되지 않게 격리").
+// 유지된다. TTL을 주지 않아(ex 옵션 생략) 무기한 저장되며, 성공할 때마다 최신값으로
+// 덮어써진다 — 폴백 본이 스스로 만료돼 사라지면 안 되므로. 조회/저장 둘 다 내부에서
+// 에러를 삼켜 절대 상위로 던지지 않는다(요구사항: "폴백 실패가 상위로 전파되지 않게 격리").
 async function getLatestGood(indicator) {
   const r = getRedis();
   if (!r) return null;
@@ -217,7 +236,7 @@ async function setLatestGood(indicator, data) {
   const r = getRedis();
   if (!r) return;
   try {
-    await r.set(latestKey(indicator), data, { ex: LATEST_TTL_SEC });
+    await r.set(latestKey(indicator), data); // TTL 없음(무기한) — 의도적으로 ex 생략
   } catch (e) {
     console.error(`[macro-history] latest 저장 실패(${indicator}):`, e.message);
   }
