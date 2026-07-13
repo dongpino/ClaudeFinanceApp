@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { createChart, LineType } from 'lightweight-charts';
 import Header from './Header';
 import BottomNav from './BottomNav';
 import Sparkline from './Sparkline';
@@ -601,7 +602,160 @@ function EventBanner({ event }) {
   return <div>⚡ 이번 주 {weekday}{time} {event.title}</div>;
 }
 
+// ── FOMC 카드 인라인 아코디언 상세(1단계 파일럿 — 컨테이너 패턴 확정용) ──────────
+// 목표금리 상/하단 계단형 라인 차트 + 최근 변경 이력. .brf-macro-cards(그리드)의
+// 카드 줄 전부 다음에 렌더되는 "공유 슬롯" 하나로 존재해(요구사항: 카드 줄 아래
+// 전체 폭) 어떤 카드가 펼쳐지든 grid-column:1/-1로 새 줄을 차지한다 — 나중 단계에서
+// cpi/unemployment도 추가되면 이 슬롯을 그대로 확장(indicator별 분기)하면 된다.
+const FOMC_UPPER_COLOR = '#e8a640';
+const FOMC_LOWER_COLOR = '#3d82ef';
+
+function FomcChangesList({ changes }) {
+  if (!changes || changes.length === 0) {
+    return <p className="brf-macro-changes-empty">최근 변경 이력이 없습니다.</p>;
+  }
+  // API는 날짜 오름차순으로 준다 — 목록은 최신이 위로 오게 뒤집어 보여준다.
+  return (
+    <ul className="brf-macro-changes-list">
+      {changes.slice().reverse().map((c, i) => (
+        <li key={i} className="brf-macro-change-row">
+          <span className="brf-macro-change-date">{formatMMDD(c.date)}</span>
+          <span className={`brf-macro-change-dir brf-macro-change-${c.direction === '인상' ? 'up' : 'down'}`}>
+            {c.direction}
+          </span>
+          <span className="brf-macro-change-bp">{c.delta_bp}bp</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function FomcDetailPanel({ expanded, orderValue }) {
+  const [phase, setPhase] = useState('idle'); // idle | loading | done | error — 카드 요약(macro)과 완전 분리된 상태
+  const [data, setData]   = useState(null);   // { series, changes } — /api/macro-history 응답
+  const [error, setError] = useState(null);
+
+  const fetchedRef = useRef(false);      // 첫 펼침에만 fetch, 이후 재펼침은 재사용
+  const wrapRef     = useRef(null);      // grid-template-rows 트랜지션을 감지할 바깥 래퍼
+  const chartElRef  = useRef(null);      // 차트를 그릴 DOM 컨테이너
+  const chartRef    = useRef(null);      // 생성된 차트 인스턴스(한 번만 생성, 이후 재사용)
+  const roRef       = useRef(null);
+  const [transitionEnded, setTransitionEnded] = useState(false);
+
+  // 첫 펼침 시 1회만 히스토리 로드 — 실패해도 카드 요약(FOMC 기준금리 박스)에는
+  // 전혀 영향 없다(이 컴포넌트 안에서만 에러 상태를 갖는다).
+  useEffect(() => {
+    if (!expanded || fetchedRef.current) return;
+    fetchedRef.current = true;
+    setPhase('loading');
+    fetch('/api/macro-history?indicator=fomc')
+      .then(res => {
+        if (!res.ok) return res.json().then(j => { throw new Error(j?.error ?? `HTTP ${res.status}`); });
+        return res.json();
+      })
+      .then(json => { setData(json); setPhase('done'); })
+      .catch(e => { setError(e.message); setPhase('error'); });
+  }, [expanded]);
+
+  // 펼쳐질 때 뷰포트 밖이면 보이는 위치로 스크롤(요구사항5) — 접힐 때는 하지 않는다.
+  useEffect(() => {
+    if (expanded) wrapRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [expanded]);
+
+  // grid-template-rows 트랜지션이 "끝난" 시점만 잡아낸다 — 차트 최초 마운트를 여기에
+  // 걸어야 0-size(트랜지션 도중) 컨테이너에 createChart를 호출하지 않는다.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    function onTransitionEnd(e) {
+      if (e.target !== el || e.propertyName !== 'grid-template-rows') return;
+      if (expanded) setTransitionEnded(true);
+    }
+    el.addEventListener('transitionend', onTransitionEnd);
+    return () => el.removeEventListener('transitionend', onTransitionEnd);
+  }, [expanded]);
+
+  // 차트 최초 마운트 — 데이터 준비 + 펼침 트랜지션 종료 + 아직 미생성, 셋 다 만족할 때만.
+  // 이후 재펼침(expanded가 다시 true)은 이 effect의 chartRef.current 가드에 걸려
+  // 재실행되지 않는다 — 이미 만든 차트를 그대로 재사용(요구사항4).
+  useEffect(() => {
+    if (chartRef.current || phase !== 'done' || !data || !transitionEnded) return;
+    const el = chartElRef.current;
+    if (!el || el.clientWidth === 0) return; // 방어적 가드 — 크기 0인 컨테이너엔 그리지 않는다
+
+    const chart = createChart(el, {
+      width:  el.clientWidth,
+      height: el.clientHeight,
+      layout: { background: { color: 'transparent' }, textColor: '#7a8ba8' },
+      grid: { vertLines: { color: '#1a2540' }, horzLines: { color: '#1a2540' } },
+      rightPriceScale: { borderColor: '#1a2540' },
+      timeScale: { borderColor: '#1a2540' },
+      handleScroll: { vertTouchDrag: false }, // Chart.jsx와 동일 — 세로 터치는 페이지 스크롤에 양보
+      handleScale: { pinch: true },
+    });
+    chartRef.current = chart;
+
+    const upper = data.series?.find(s => s.id === 'DFEDTARU');
+    const lower = data.series?.find(s => s.id === 'DFEDTARL');
+    const upperSeries = chart.addLineSeries({ color: FOMC_UPPER_COLOR, lineWidth: 2, lineType: LineType.WithSteps, priceLineVisible: false });
+    const lowerSeries = chart.addLineSeries({ color: FOMC_LOWER_COLOR, lineWidth: 2, lineType: LineType.WithSteps, priceLineVisible: false });
+    upperSeries.setData((upper?.points ?? []).map(p => ({ time: p.date, value: p.value })));
+    lowerSeries.setData((lower?.points ?? []).map(p => ({ time: p.date, value: p.value })));
+    chart.timeScale().fitContent();
+
+    const ro = new ResizeObserver(() => {
+      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+    });
+    ro.observe(el);
+    roRef.current = ro;
+  }, [phase, data, transitionEnded]);
+
+  // 브리핑 탭 자체가 언마운트될 때만 정리 — 아코디언을 접을 때는 파괴하지 않는다.
+  useEffect(() => {
+    return () => {
+      roRef.current?.disconnect();
+      chartRef.current?.remove();
+    };
+  }, []);
+
+  return (
+    <div className={`brf-macro-detail${expanded ? ' expanded' : ''}`} style={{ order: orderValue }} ref={wrapRef}>
+      <div className="brf-macro-detail-inner">
+        <div className="brf-macro-detail-body">
+          {phase === 'loading' && (
+            <div className="brf-ai-loading">
+              <span className="brf-dot" /><span className="brf-dot" /><span className="brf-dot" />
+              <span>히스토리를 불러오는 중…</span>
+            </div>
+          )}
+          {phase === 'error' && (
+            <div className="brf-ai-error">
+              <p className="brf-error-title">히스토리를 불러오지 못했습니다</p>
+              <p className="brf-error-detail">{error}</p>
+            </div>
+          )}
+          {phase === 'done' && data && (
+            <>
+              <div className="brf-macro-detail-chart" ref={chartElRef} />
+              <div className="brf-macro-detail-legend">
+                <span><i className="brf-macro-legend-dot" style={{ background: FOMC_UPPER_COLOR }} />상단</span>
+                <span><i className="brf-macro-legend-dot" style={{ background: FOMC_LOWER_COLOR }} />하단</span>
+              </div>
+              <div className="brf-macro-changes-head">최근 변경 이력</div>
+              <FomcChangesList changes={data.changes} />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MacroSection({ phase, macro, onPageChange }) {
+  // expandedCard: 'fomc' | null — 나중 단계에서 cpi/unemployment도 펼침을 지원하게
+  // 되면 같은 state로 그대로 확장한다(값만 늘리면 "동시 1개만" 배타 처리가 자동으로 됨).
+  const [expandedCard, setExpandedCard] = useState(null);
+
   if (phase !== 'done' || !macro || (!macro.fomc?.rate && !macro.cpi)) return null;
 
   const { fomc, cpi, unemployment, upcoming } = macro;
@@ -614,6 +768,18 @@ function MacroSection({ phase, macro, onPageChange }) {
     ? (cpi.trend.at(-1).yoy >= cpi.trend[0].yoy ? 'up' : 'down')
     : 'flat';
   const cpiSparkHistory = cpi?.trend?.map(t => ({ close: t.yoy })) ?? [];
+
+  function toggleCard(key) {
+    setExpandedCard(prev => (prev === key ? null : key));
+  }
+  function handleCardKeyDown(e, key) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault(); // 스페이스의 기본 스크롤 동작 방지
+      toggleCard(key);
+    }
+  }
+
+  const fomcExpanded = expandedCard === 'fomc';
 
   return (
     <section className="brf-section">
@@ -632,10 +798,31 @@ function MacroSection({ phase, macro, onPageChange }) {
         </div>
       )}
 
+      {/*
+        카드/패널 순서는 DOM이 아니라 order로 정한다(+ .brf-macro-cards의
+        grid-auto-flow:dense) — 모바일(1열)에서는 상세 패널이 그 카드 바로 다음
+        order라 곧장 그 카드 아래에 놓이고(요구사항2), 데스크톱(3열)에서는 dense
+        패킹이 order상 패널 "뒤"인 카드들을 패널이 만든 빈 칸(1열 그리드 폭 3칸 중
+        나머지) 대신 먼저 온 줄로 당겨 채워서, 결국 카드 3장이 한 줄을 가득 채우고
+        패널은 그 다음 줄(전체 폭)에 놓인다. 카드는 order 10/20/30, 패널은 15
+        (FOMC=10과 CPI=20 사이) — 나중 단계에서 cpi/unemployment도 패널을 가지면
+        각각 25/35처럼 자기 카드 바로 뒤 값을 끼워 넣으면 된다.
+      */}
       <div className="brf-macro-cards">
         {fomc?.rate && (
-          <div className="brf-macro-card">
-            <div className="brf-macro-card-label">FOMC 기준금리</div>
+          <div
+            className={`brf-macro-card brf-macro-card-expandable${fomcExpanded ? ' active' : ''}`}
+            style={{ order: 10 }}
+            role="button"
+            tabIndex={0}
+            aria-expanded={fomcExpanded}
+            onClick={() => toggleCard('fomc')}
+            onKeyDown={e => handleCardKeyDown(e, 'fomc')}
+          >
+            <div className="brf-macro-card-label-row">
+              <span className="brf-macro-card-label">FOMC 기준금리</span>
+              <span className="brf-macro-card-chevron" aria-hidden="true">{fomcExpanded ? '▴' : '▾'}</span>
+            </div>
             <div className="brf-macro-card-main">
               {fomc.rate.lower.toFixed(2)}–{fomc.rate.upper.toFixed(2)}%
             </div>
@@ -649,8 +836,10 @@ function MacroSection({ phase, macro, onPageChange }) {
           </div>
         )}
 
+        {fomc?.rate && <FomcDetailPanel expanded={fomcExpanded} orderValue={15} />}
+
         {cpi && (
-          <div className="brf-macro-card">
+          <div className="brf-macro-card" style={{ order: 20 }}>
             <div className="brf-macro-card-label">CPI (소비자물가)</div>
             <div className={`brf-macro-card-main brf-macro-${cpiDir}`}>
               {cpi.yoy.toFixed(1)}%<span className="brf-macro-yoy-label">YoY</span>
@@ -671,7 +860,7 @@ function MacroSection({ phase, macro, onPageChange }) {
         )}
 
         {unemployment && (
-          <div className="brf-macro-card">
+          <div className="brf-macro-card" style={{ order: 30 }}>
             <div className="brf-macro-card-label">실업률</div>
             <div className="brf-macro-card-main">{unemployment.rate.toFixed(1)}%</div>
             <div className="brf-macro-card-sub">{unemployment.refMonth} 기준</div>

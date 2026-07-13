@@ -1216,19 +1216,44 @@ body {
   white-space: nowrap; overflow-x: auto;
 }
 
+/* 3열 그리드(데스크톱) — 아코디언 상세 패널(.brf-macro-detail)이 카드 줄 다음에
+   grid-column:1/-1로 들어와 전체 폭 새 줄을 차지한다. 카드 3장이 정확히 한 줄을
+   가득 채우므로(3열) 패널이 그 어떤 카드가 펼쳐지든 항상 "카드 줄 바로 아래"에
+   빈틈 없이 놓인다 — flex-wrap이었다면 몇 번째 카드인지에 따라 같은 줄에 빈 칸이
+   남거나(grid-auto-flow 없이 mid-row에 전체폭 아이템을 끼워넣는 문제) 카드 줄
+   자체의 높이가 패널 콘텐츠에 밀려 왜곡될 수 있어 grid로 전환했다. */
 .brf-macro-cards {
-  display: flex; flex-wrap: wrap; gap: 10px;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  /* dense — 카드 order 사이에 끼워 넣은 상세 패널(order 15 등, JSX 참고)이 만드는
+     "패널 뒤 order를 가진 카드들"을 패널이 시작한 새 줄이 아니라 그 앞의 남은
+     칸으로 당겨 채운다. 그 결과 모바일(1열)에서는 패널이 order상 바로 다음이라
+     해당 카드 밑에 곧장 오고, 데스크톱(3열)에서는 카드 3장이 빈틈없이 한 줄을
+     채운 뒤 패널이 전체 폭 다음 줄에 오는 두 요구사항이 동시에 만족된다. */
+  grid-auto-flow: row dense;
 }
 .brf-macro-card {
-  flex: 1 1 220px; min-width: 220px;
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 13px; padding: 12px 14px;
   display: flex; flex-direction: column; gap: 4px;
+}
+.brf-macro-card-label-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
 }
 .brf-macro-card-label {
   font-size: 10.5px; font-weight: 700; color: var(--text-3);
   white-space: nowrap;
 }
+/* 펼침 가능한 카드(현재는 FOMC만, 1단계 파일럿) */
+.brf-macro-card-expandable {
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: border-color .15s;
+}
+.brf-macro-card-expandable:hover { border-color: var(--gold); }
+.brf-macro-card-expandable.active { border-color: var(--gold); }
+.brf-macro-card-chevron {
+  font-size: 10px; color: var(--text-3); line-height: 1; flex-shrink: 0;
+}
+.brf-macro-card-expandable.active .brf-macro-card-chevron { color: var(--gold); }
 .brf-macro-card-main {
   font-size: 21px; font-weight: 800; color: var(--text-1);
   letter-spacing: -.5px; font-variant-numeric: tabular-nums;
@@ -1335,14 +1360,60 @@ body {
 .brf-issue-row.brf-issue-major .brf-issue-title { font-weight: 800; color: var(--gold); }
 
 @media (max-width: 768px) {
+  /* 모바일: 가로 스크롤 대신 세로 스택(요구사항2) — 카드를 펼치면 아코디언 패널이
+     바로 그 카드 아래(다음 grid row, 1열이라 항상 카드 바로 아래)에 나타난다. */
   .brf-macro-cards {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    grid-template-columns: 1fr;
   }
-  .brf-macro-card { flex: 0 0 240px; }
 }
 .brf-macro-banner { cursor: pointer; }
+
+/* ── 매크로 카드 인라인 아코디언(1단계: FOMC만) ──────────────────
+   grid-template-rows: 0fr → 1fr 트랜지션 — JS로 높이를 재지 않고도 "auto 높이로
+   부드럽게 펼치기"가 되는 표준 기법. 바깥(.brf-macro-detail)이 1행짜리 그리드
+   컨테이너, 안쪽(.brf-macro-detail-inner)이 그 행을 채우는 아이템 — overflow:hidden을
+   안쪽에 둬야 행이 0fr로 줄어들 때 콘텐츠가 진짜로 잘려 보인다. */
+.brf-macro-detail {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows .3s ease;
+}
+.brf-macro-detail.expanded { grid-template-rows: 1fr; }
+.brf-macro-detail-inner { overflow: hidden; min-height: 0; }
+.brf-macro-detail-body {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 13px; padding: 14px 16px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.brf-macro-detail-chart { width: 100%; height: 180px; }
+.brf-macro-detail-legend {
+  display: flex; gap: 14px;
+  font-size: 11px; color: var(--text-2); font-weight: 600;
+}
+.brf-macro-detail-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.brf-macro-legend-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+}
+.brf-macro-changes-head {
+  font-size: 11px; font-weight: 800; color: var(--gold);
+  letter-spacing: .02em;
+}
+.brf-macro-changes-empty { font-size: 12px; color: var(--text-3); }
+.brf-macro-changes-list {
+  list-style: none; display: flex; flex-direction: column; gap: 6px;
+}
+.brf-macro-change-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.brf-macro-change-date { color: var(--text-2); font-weight: 600; min-width: 40px; }
+.brf-macro-change-dir {
+  font-weight: 700; padding: 1px 7px; border-radius: 4px; font-size: 11px;
+}
+.brf-macro-change-dir.brf-macro-change-up   { color: var(--up);   background: var(--up-dim); }
+.brf-macro-change-dir.brf-macro-change-down { color: var(--down); background: var(--down-dim); }
+.brf-macro-change-bp { color: var(--text-1); font-weight: 700; }
 
 /* ── 캘린더 탭 ──────────────────────────────────────────────── */
 /* .cal-scroll: 뷰포트에 맞춰 고정된 스크롤 "창" — flex:1로 .page 내에서 남는
