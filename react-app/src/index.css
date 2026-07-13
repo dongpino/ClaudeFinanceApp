@@ -1428,6 +1428,25 @@ body {
 .brf-macro-detail-spark { height: 60px; margin: 2px 0; }
 .brf-macro-detail-note { font-size: 11px; color: var(--text-3); font-style: italic; }
 
+/* 매크로 카드 개별 해석(Haiku, /api/macro-insight) — 본문 나머지와 구분되게 위에
+   구분선을 두고, 응답 전에는 스켈레톤 한 줄만(에러/null은 아무것도 렌더 안 함, JS에서 처리). */
+.brf-macro-insight {
+  font-size: 12px; color: var(--text-2); line-height: 1.6;
+  padding-top: 10px; margin-top: 2px;
+  border-top: 1px dashed var(--border);
+}
+.brf-macro-insight-skeleton {
+  height: 13px; border-radius: 4px;
+  margin-top: 12px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--surface-tint) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: brf-insight-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes brf-insight-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ── 캘린더 탭 ──────────────────────────────────────────────── */
 /* .cal-scroll: 뷰포트에 맞춰 고정된 스크롤 "창" — flex:1로 .page 내에서 남는
    공간을 정확히 채우고, 그 안의 콘텐츠(.cal-scroll-inner)가 이 높이를 넘으면

@@ -252,6 +252,12 @@ export default function BriefingPage({ activePage, onPageChange }) {
   const [macroPhase, setMacroPhase] = useState('loading'); // loading | done | error
   const [macro,      setMacro]      = useState(null);
 
+  // ── 매크로 카드 개별 해석(Haiku) 상태 ────────
+  // /api/macro 데이터 fetch와 완전히 별개의 비동기 요청 — 페이지 렌더를 블로킹하지
+  // 않는다. 실패/null이어도 카드·패널 자체는 정상 동작(해석 영역만 안 보임).
+  const [macroInsightPhase, setMacroInsightPhase] = useState('loading'); // loading | done
+  const [macroInsight,      setMacroInsight]      = useState(null);      // { fomc, cpi, unemployment } | null
+
   // ── 주요 이슈(돌발 이슈 감지) 상태 ───────────
   // 실패해도 조용히 섹션을 숨길 뿐 브리핑 본 기능에는 영향 없다.
   const [issuesPhase, setIssuesPhase] = useState('loading'); // loading | done | error
@@ -342,6 +348,21 @@ export default function BriefingPage({ activePage, onPageChange }) {
         setMacroPhase('done');
       })
       .catch(() => setMacroPhase('error'));
+  }, []);
+
+  // ── 매크로 카드 개별 해석 로드 (탭 진입 시 1회, /api/macro와 별개 요청) ──
+  // 실패/null이어도 카드 요약·펼침 자체는 정상 — 해석 영역만 렌더되지 않는다.
+  useEffect(() => {
+    fetch('/api/macro-insight')
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        setMacroInsight(data && typeof data === 'object' ? data : null);
+        setMacroInsightPhase('done');
+      })
+      .catch(() => {
+        setMacroInsight(null);
+        setMacroInsightPhase('done');
+      });
   }, []);
 
   // ── 주요 이슈 로드 (탭 진입 시 1회) ─────────
@@ -472,7 +493,13 @@ export default function BriefingPage({ activePage, onPageChange }) {
           </section>
 
           {/* ── 매크로 현황 섹션 ───────────────────── */}
-          <MacroSection phase={macroPhase} macro={macro} onPageChange={onPageChange} />
+          <MacroSection
+            phase={macroPhase}
+            macro={macro}
+            onPageChange={onPageChange}
+            insightPhase={macroInsightPhase}
+            insight={macroInsight}
+          />
 
           {/* ── 주요 이슈 섹션 ─────────────────────── */}
           <IssueSection phase={issuesPhase} issues={issues} />
@@ -631,10 +658,22 @@ function FomcChangesList({ changes }) {
   );
 }
 
+// 매크로 카드 개별 해석(Haiku, /api/macro-insight) 표시 — 세 Body 컴포넌트가 공용으로
+// 쓴다. insightPhase==='loading'이면(아직 응답 전) 스켈레톤 한 줄만, 응답은 왔는데
+// 이 지표 몫 텍스트가 없으면(전체 null 포함) 아무것도 렌더하지 않는다 — 에러 문구를
+// 노출하지 않는다는 요구사항 그대로.
+function MacroInsightNote({ insightPhase, insightText }) {
+  if (insightPhase === 'loading') {
+    return <div className="brf-macro-insight-skeleton" aria-hidden="true" />;
+  }
+  if (!insightText) return null;
+  return <p className="brf-macro-insight">{insightText}</p>;
+}
+
 // FOMC 상세 본문 — 목표금리 상/하단 계단형 라인 차트(lightweight-charts, 첫 펼침 시
 // lazy 마운트) + 최근 변경 이력(1단계 /api/macro-history의 changes). 카드 요약(macro)과
 // 완전히 분리된 자체 fetch 상태를 가져 실패해도 카드 요약엔 영향 없다.
-function FomcDetailBody({ expanded, transitionEnded }) {
+function FomcDetailBody({ expanded, transitionEnded, insightPhase, insightText }) {
   const [phase, setPhase] = useState('idle'); // idle | loading | done | error
   const [data, setData]   = useState(null);   // { series, changes } — /api/macro-history 응답
   const [error, setError] = useState(null);
@@ -701,20 +740,28 @@ function FomcDetailBody({ expanded, transitionEnded }) {
     };
   }, []);
 
+  // 해석(insight)은 /api/macro-history(차트·변경이력)와 완전히 별개 fetch라, 저쪽이
+  // loading/error여도 여기는 독립적으로 표시한다.
   if (phase === 'loading') {
     return (
-      <div className="brf-ai-loading">
-        <span className="brf-dot" /><span className="brf-dot" /><span className="brf-dot" />
-        <span>히스토리를 불러오는 중…</span>
-      </div>
+      <>
+        <div className="brf-ai-loading">
+          <span className="brf-dot" /><span className="brf-dot" /><span className="brf-dot" />
+          <span>히스토리를 불러오는 중…</span>
+        </div>
+        <MacroInsightNote insightPhase={insightPhase} insightText={insightText} />
+      </>
     );
   }
   if (phase === 'error') {
     return (
-      <div className="brf-ai-error">
-        <p className="brf-error-title">히스토리를 불러오지 못했습니다</p>
-        <p className="brf-error-detail">{error}</p>
-      </div>
+      <>
+        <div className="brf-ai-error">
+          <p className="brf-error-title">히스토리를 불러오지 못했습니다</p>
+          <p className="brf-error-detail">{error}</p>
+        </div>
+        <MacroInsightNote insightPhase={insightPhase} insightText={insightText} />
+      </>
     );
   }
   if (phase === 'done' && data) {
@@ -727,6 +774,7 @@ function FomcDetailBody({ expanded, transitionEnded }) {
         </div>
         <div className="brf-macro-changes-head">최근 변경 이력</div>
         <FomcChangesList changes={data.changes} />
+        <MacroInsightNote insightPhase={insightPhase} insightText={insightText} />
       </>
     );
   }
@@ -735,7 +783,7 @@ function FomcDetailBody({ expanded, transitionEnded }) {
 
 // CPI 상세 본문(1단계) — 카드 요약과 같은 데이터(트렌드 미니 차트)를 그대로 재사용해
 // 우선 보여준다. 별도 fetch 없음 — 상세 그래프(FRED 히스토리)는 다음 단계에서 추가.
-function CpiDetailBody({ cpi, cpiDir, cpiSparkHistory }) {
+function CpiDetailBody({ cpi, cpiDir, cpiSparkHistory, insightPhase, insightText }) {
   if (!cpi) return null;
   return (
     <>
@@ -757,12 +805,13 @@ function CpiDetailBody({ cpi, cpiDir, cpiSparkHistory }) {
         </div>
       )}
       <p className="brf-macro-detail-note">상세 히스토리 그래프는 다음 단계에서 제공됩니다.</p>
+      <MacroInsightNote insightPhase={insightPhase} insightText={insightText} />
     </>
   );
 }
 
 // 실업률 상세 본문(1단계) — 현재 수치 + 기준월만. 히스토리 차트는 다음 단계.
-function UnemploymentDetailBody({ unemployment }) {
+function UnemploymentDetailBody({ unemployment, insightPhase, insightText }) {
   if (!unemployment) return null;
   return (
     <>
@@ -771,13 +820,14 @@ function UnemploymentDetailBody({ unemployment }) {
         <span className="brf-macro-detail-sub">{unemployment.refMonth} 기준</span>
       </div>
       <p className="brf-macro-detail-note">히스토리 차트는 다음 단계에서 제공됩니다.</p>
+      <MacroInsightNote insightPhase={insightPhase} insightText={insightText} />
     </>
   );
 }
 
 // 공용 아코디언 래퍼 — kind에 따라 본문만 바꿔 끼운다. 펼침/접힘 메커니즘(트랜지션
 // 감지, 스크롤)은 여기 한 곳에만 있고 세 indicator가 그대로 공유한다.
-function MacroDetailPanel({ kind, expanded, orderValue, ...bodyProps }) {
+function MacroDetailPanel({ kind, expanded, orderValue, insightPhase, insightText, ...bodyProps }) {
   const wrapRef = useRef(null); // grid-template-rows 트랜지션을 감지할 바깥 래퍼
   const [transitionEnded, setTransitionEnded] = useState(false);
 
@@ -805,16 +855,25 @@ function MacroDetailPanel({ kind, expanded, orderValue, ...bodyProps }) {
     <div className={`brf-macro-detail${expanded ? ' expanded' : ''}`} style={{ order: orderValue }} ref={wrapRef}>
       <div className="brf-macro-detail-inner">
         <div className="brf-macro-detail-body">
-          {kind === 'fomc' && <FomcDetailBody expanded={expanded} transitionEnded={transitionEnded} />}
-          {kind === 'cpi' && <CpiDetailBody {...bodyProps} />}
-          {kind === 'unemployment' && <UnemploymentDetailBody {...bodyProps} />}
+          {kind === 'fomc' && (
+            <FomcDetailBody
+              expanded={expanded}
+              transitionEnded={transitionEnded}
+              insightPhase={insightPhase}
+              insightText={insightText}
+            />
+          )}
+          {kind === 'cpi' && <CpiDetailBody {...bodyProps} insightPhase={insightPhase} insightText={insightText} />}
+          {kind === 'unemployment' && (
+            <UnemploymentDetailBody {...bodyProps} insightPhase={insightPhase} insightText={insightText} />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function MacroSection({ phase, macro, onPageChange }) {
+function MacroSection({ phase, macro, onPageChange, insightPhase, insight }) {
   // expandedCard: 'fomc' | 'cpi' | 'unemployment' | null — 값 하나로 세 카드의
   // "동시 1개만 펼침"이 자동으로 보장된다.
   const [expandedCard, setExpandedCard] = useState(null);
@@ -899,7 +958,15 @@ function MacroSection({ phase, macro, onPageChange }) {
             )}
           </div>
         )}
-        {fomc?.rate && <MacroDetailPanel kind="fomc" expanded={fomcExpanded} orderValue={15} />}
+        {fomc?.rate && (
+          <MacroDetailPanel
+            kind="fomc"
+            expanded={fomcExpanded}
+            orderValue={15}
+            insightPhase={insightPhase}
+            insightText={insight?.fomc}
+          />
+        )}
 
         {cpi && (
           <div
@@ -940,6 +1007,8 @@ function MacroSection({ phase, macro, onPageChange }) {
             cpi={cpi}
             cpiDir={cpiDir}
             cpiSparkHistory={cpiSparkHistory}
+            insightPhase={insightPhase}
+            insightText={insight?.cpi}
           />
         )}
 
@@ -962,7 +1031,14 @@ function MacroSection({ phase, macro, onPageChange }) {
           </div>
         )}
         {unemployment && (
-          <MacroDetailPanel kind="unemployment" expanded={unemploymentExpanded} orderValue={35} unemployment={unemployment} />
+          <MacroDetailPanel
+            kind="unemployment"
+            expanded={unemploymentExpanded}
+            orderValue={35}
+            unemployment={unemployment}
+            insightPhase={insightPhase}
+            insightText={insight?.unemployment}
+          />
         )}
       </div>
     </section>
