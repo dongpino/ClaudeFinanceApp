@@ -402,6 +402,18 @@ export default function BriefingPage({ activePage, onPageChange }) {
     setHistoryDetailError(null);
   }
 
+  // 지난 브리핑 칩 줄 — 브리핑 카드 안(버튼 아래 또는 헤더-본문 사이)에 인라인으로
+  // 삽입할 노드. 로딩 중(깜빡임 방지) 또는 목록이 비어있으면 렌더하지 않는다.
+  const historyChipsNode = historyPhase === 'done' && historyDates.length > 0 ? (
+    <HistoryChipRow
+      dates={historyDates}
+      selectedDate={selectedDate}
+      showAll={historyShowAll}
+      onToggleShowAll={() => setHistoryShowAll(v => !v)}
+      onSelectDate={selectHistoryDate}
+    />
+  ) : null;
+
   return (
     <>
       <Header />
@@ -420,38 +432,40 @@ export default function BriefingPage({ activePage, onPageChange }) {
 
             <div className="brf-ai-card">
               {selectedDate ? (
-                <HistoryDetailBody
-                  phase={historyDetailPhase}
-                  date={selectedDate}
-                  data={historyDetail}
-                  viewSlot={historyViewSlot}
-                  onToggleSlot={toggleHistorySlot}
-                  error={historyDetailError}
-                />
+                <>
+                  <HistoryDetailBody
+                    phase={historyDetailPhase}
+                    date={selectedDate}
+                    data={historyDetail}
+                    viewSlot={historyViewSlot}
+                    onToggleSlot={toggleHistorySlot}
+                    error={historyDetailError}
+                    historyChips={historyChipsNode}
+                  />
+                  <button className="brf-gen-btn brf-gen-btn-secondary" onClick={backToTodayBriefing}>
+                    오늘 브리핑으로 돌아가기
+                  </button>
+                </>
               ) : (
-                <AiBody
-                  phase={aiPhase}
-                  briefing={aiBriefing}
-                  meta={aiMeta}
-                  error={aiError}
-                />
-              )}
-
-              {selectedDate ? (
-                <button className="brf-gen-btn brf-gen-btn-secondary" onClick={backToTodayBriefing}>
-                  오늘 브리핑으로 돌아가기
-                </button>
-              ) : (
-                <button
-                  className={`brf-gen-btn${aiPhase === 'loading' ? ' loading' : ''}`}
-                  onClick={generateBriefing}
-                  disabled={aiPhase === 'loading'}
-                >
-                  {aiPhase === 'loading' ? '생성 중…' :
-                   aiPhase === 'done'    ? '다시 생성' :
-                   aiPhase === 'error'   ? '다시 시도' :
-                   'AI 브리핑 생성'}
-                </button>
+                <>
+                  <AiBody
+                    phase={aiPhase}
+                    briefing={aiBriefing}
+                    meta={aiMeta}
+                    error={aiError}
+                  />
+                  <button
+                    className={`brf-gen-btn${aiPhase === 'loading' ? ' loading' : ''}`}
+                    onClick={generateBriefing}
+                    disabled={aiPhase === 'loading'}
+                  >
+                    {aiPhase === 'loading' ? '생성 중…' :
+                     aiPhase === 'done'    ? '다시 생성' :
+                     aiPhase === 'error'   ? '다시 시도' :
+                     'AI 브리핑 생성'}
+                  </button>
+                  {historyChipsNode}
+                </>
               )}
             </div>
           </section>
@@ -461,16 +475,6 @@ export default function BriefingPage({ activePage, onPageChange }) {
 
           {/* ── 주요 이슈 섹션 ─────────────────────── */}
           <IssueSection phase={issuesPhase} issues={issues} />
-
-          {/* ── 지난 브리핑 섹션 ───────────────────── */}
-          <HistorySection
-            phase={historyPhase}
-            dates={historyDates}
-            selectedDate={selectedDate}
-            showAll={historyShowAll}
-            onToggleShowAll={() => setHistoryShowAll(v => !v)}
-            onSelectDate={selectHistoryDate}
-          />
 
           {/* ── RSS 뉴스 섹션 ──────────────────────── */}
           <section className="brf-section">
@@ -711,37 +715,32 @@ function IssueSection({ phase, issues }) {
   );
 }
 
-// ── 지난 브리핑 섹션 ────────────────────────────────────────────
-// 목록 로딩 중이거나(깜빡임 방지 위해 조용히 비표시) 실패/빈 목록이면 섹션 자체를 숨긴다 —
-// 요구사항 4번대로 오늘의 AI 브리핑·뉴스 기능에는 전혀 영향을 주지 않는다.
-function HistorySection({ phase, dates, selectedDate, showAll, onToggleShowAll, onSelectDate }) {
-  if (phase !== 'done' || dates.length === 0) return null;
-
-  const visible  = dates.slice(0, showAll ? 30 : 7);
-  const hasMore  = !showAll && dates.length > 7;
+// ── 지난 브리핑 칩 줄 ────────────────────────────────────────────
+// 예전엔 "지난 브리핑" 제목을 단 독립 섹션이었으나, 이제 브리핑 카드(.brf-ai-card)
+// 안으로 이동해 버튼 바로 아래(미생성 상태) 또는 헤더와 본문 사이(표시 상태)에
+// 인라인으로 삽입된다 — 호출부(BriefingPage 본체/HistoryDetailBody)에서
+// historyPhase==='done' && dates.length>0일 때만 렌더하도록 가드한다.
+function HistoryChipRow({ dates, selectedDate, showAll, onToggleShowAll, onSelectDate }) {
+  const visible = dates.slice(0, showAll ? 30 : 7);
+  const hasMore = !showAll && dates.length > 7;
 
   return (
-    <section className="brf-section">
-      <div className="brf-section-head">
-        <span className="brf-section-title">지난 브리핑</span>
-      </div>
-      <div className="brf-history-scroll">
-        {visible.map(date => (
-          <button
-            key={date}
-            className={`brf-history-chip${selectedDate === date ? ' active' : ''}`}
-            onClick={() => onSelectDate(date)}
-          >
-            {formatHistoryChipDate(date)}
-          </button>
-        ))}
-        {hasMore && (
-          <button className="brf-history-chip brf-history-more" onClick={onToggleShowAll}>
-            더보기
-          </button>
-        )}
-      </div>
-    </section>
+    <div className="brf-history-scroll">
+      {visible.map(date => (
+        <button
+          key={date}
+          className={`brf-history-chip${selectedDate === date ? ' active' : ''}`}
+          onClick={() => onSelectDate(date)}
+        >
+          {formatHistoryChipDate(date)}
+        </button>
+      ))}
+      {hasMore && (
+        <button className="brf-history-chip brf-history-more" onClick={onToggleShowAll}>
+          더보기
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -755,24 +754,33 @@ function slotTimeLabel(slot, entry) {
   return slot === 'morning' ? `아침 보고 ${time}` : `수동 생성 ${time}`;
 }
 
-function HistoryDetailBody({ phase, date, data, viewSlot, onToggleSlot, error }) {
+// historyChips: 지난 브리핑 칩 줄(HistoryChipRow, 없으면 null) — 날짜/헤더가 있는
+// 'done' 단계에서는 헤더 바로 아래·본문 위에, 로딩/에러 단계에서는 상단에 그대로
+// 얹어서 날짜 탐색을 계속할 수 있게 한다.
+function HistoryDetailBody({ phase, date, data, viewSlot, onToggleSlot, error, historyChips }) {
   if (phase === 'loading') {
     return (
-      <div className="brf-ai-loading">
-        <span className="brf-dot" />
-        <span className="brf-dot" />
-        <span className="brf-dot" />
-        <span>{date} 브리핑을 불러오는 중…</span>
-      </div>
+      <>
+        {historyChips}
+        <div className="brf-ai-loading">
+          <span className="brf-dot" />
+          <span className="brf-dot" />
+          <span className="brf-dot" />
+          <span>{date} 브리핑을 불러오는 중…</span>
+        </div>
+      </>
     );
   }
 
   if (phase === 'error') {
     return (
-      <div className="brf-ai-error">
-        <p className="brf-error-title">{date} 브리핑을 불러올 수 없습니다</p>
-        <p className="brf-error-detail">{error}</p>
-      </div>
+      <>
+        {historyChips}
+        <div className="brf-ai-error">
+          <p className="brf-error-title">{date} 브리핑을 불러올 수 없습니다</p>
+          <p className="brf-error-detail">{error}</p>
+        </div>
+      </>
     );
   }
 
@@ -787,6 +795,7 @@ function HistoryDetailBody({ phase, date, data, viewSlot, onToggleSlot, error })
           <span className="brf-history-label">{date} 브리핑</span>
           <span className={`brf-slot-badge brf-slot-${viewSlot}`}>{slotTimeLabel(viewSlot, current)}</span>
         </div>
+        {historyChips}
         <div className="brf-ai-text">{renderBriefingMarkdown(current.briefing)}</div>
         <div className="brf-ai-meta">
           <span>{current.generated_at}</span>
