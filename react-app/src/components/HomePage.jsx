@@ -26,6 +26,15 @@ const DRAG_FLICK_VELOCITY  = 0.3;  // 이보다 빠른 스와이프는 이동량
 const RUBBER_BAND_RATIO    = 0.3;  // 첫/마지막 패널을 넘어가려 할 때 저항(끌림 대비 실제 이동 비율)
 const EDGE_GUARD_PX        = 24;   // 화면 좌우 이 폭 안에서 시작하면 iOS 엣지 뒤로가기 제스처에 양보
 
+// 드래그 커밋/복귀 안착 애니메이션 — CSS transition이 아니라 rAF로 매 프레임 transform을
+// 직접 계산해서 구동한다(감쇠 스프링). 손을 뗀 시점의 속도를 초기 속도로 그대로 이어받아
+// CSS transition으로는 안 나오는 "관성이 자연스럽게 이어지는" 느낌을 낸다.
+const SPRING_STIFFNESS    = 340;   // 강성 — 클수록 목표 지점으로 빠르고 팽팽하게 당겨짐
+const SPRING_DAMPING      = 34;    // 감쇠 — 임계감쇠(2*sqrt(340)≈36.9)보다 살짝 낮춰 아주 미세한 오버슈트 허용
+const SPRING_REST_DIST    = 0.5;   // px — 목표와의 위치 오차가 이 밑으로 내려가야 정지 후보
+const SPRING_REST_VEL     = 0.01;  // px/ms — 속도도 이 밑이어야(AND) 완전히 멈춘 것으로 판정
+const VELOCITY_WINDOW_MS  = 100;   // 손을 뗄 때 속도 계산에 쓰는 최근 pointermove 샘플 윈도우
+
 // 홈 상단 돌발 이슈 스트립 — 실패/로딩/이슈 없음이면 조용히 숨긴다(홈 본 기능과 완전 분리).
 function IssueStrip({ issues, onClick }) {
   const majorIssues = issues.filter(it => it.importance >= 2);
@@ -76,19 +85,36 @@ export default function HomePage({ activePage, onPageChange }) {
   // 여러 번 발생해도 리렌더 없이 값을 갱신하고, transform은 rAF에서 직접 DOM에 쓴다.
   const viewportRef = useRef(null);
   const trackRef    = useRef(null);
+  // 트랙의 "지금 실제" translate3d X(px) — 드래그의 매 프레임과 스프링의 매 프레임이
+  // 공통으로 이 값을 읽고 쓴다. 스프링 도중 새 드래그가 시작되면(요구사항4) 여기서
+  // 그대로 이어받아, 원위치로 스냅하지 않고 현재 위치에서 드래그를 계속한다.
+  const posRef  = useRef(0);
   const dragRef = useRef({
     pointerId: null,
     active: false,
     locked: null,     // null(미판정) | 'x'(가로 드래그) | 'y'(세로 스크롤에 양보)
     startX: 0, startY: 0,
+    baseX: 0,          // 드래그 시작 시점의 트랙 실제 위치(px, posRef에서 캡처)
     dx: 0,
     panelWidth: 0,
-    lastX: 0, lastT: 0, velocity: 0,
+    samples: [],       // {x, t} 링버퍼(최근 VELOCITY_WINDOW_MS) — 손 뗄 때 속도 계산용(요구사항1)
     rafId: null,
   });
+  const springRef = useRef({ rafId: null, active: false, target: 0 });
+
+  // activeIndex가 드래그/스프링이 아닌 경로(칩 탭)로 바뀌면 posRef도 같이 동기화해서
+  // 다음 드래그가 실제 위치에서 정확히 시작하게 한다. 우리 쪽 흐름(드래그/스프링) 중에
+  // setActiveCat이 불린 경우는 이 시점에 springRef.current.active가 이미 true라 건드리지
+  // 않는다(스프링이 계산 중인 posRef를 여기서 되돌려버리면 안 됨).
+  useEffect(() => {
+    if (dragRef.current.active || springRef.current.active) return;
+    const pw = viewportRef.current?.clientWidth;
+    if (pw) posRef.current = -(activeIndex * pw);
+  }, [activeIndex]);
 
   function applyTrackTransform(px) {
-    if (trackRef.current) trackRef.current.style.transform = `translateX(${px}px)`;
+    posRef.current = px;
+    if (trackRef.current) trackRef.current.style.transform = `translate3d(${px}px,0,0)`;
   }
 
   // 드래그 중 프레임마다 여러 pointermove가 몰려도 rAF 1회로 합쳐서 반영.
@@ -98,11 +124,15 @@ export default function HomePage({ activePage, onPageChange }) {
     st.rafId = requestAnimationFrame(() => {
       st.rafId = null;
       if (!st.active || st.locked !== 'x') return;
-      let dx = st.dx;
-      // 고무줄 저항 — 첫 패널에서 더 오른쪽으로, 마지막 패널에서 더 왼쪽으로 끌 때만.
-      if (activeIndex === 0 && dx > 0) dx *= RUBBER_BAND_RATIO;
-      if (activeIndex === CATEGORY_TABS.length - 1 && dx < 0) dx *= RUBBER_BAND_RATIO;
-      applyTrackTransform(-(activeIndex * st.panelWidth) + dx);
+      const count = CATEGORY_TABS.length;
+      const minX = -((count - 1) * st.panelWidth);
+      const maxX = 0;
+      let pos = st.baseX + st.dx;
+      // 고무줄 저항 — baseX가 항상 "도킹된" 위치라는 보장이 없으므로(스프링 인터럽트
+      // 직후일 수 있음, 요구사항4) activeIndex가 아니라 실제 절대 경계로 판정한다.
+      if (pos > maxX) pos = maxX + (pos - maxX) * RUBBER_BAND_RATIO;
+      if (pos < minX) pos = minX + (pos - minX) * RUBBER_BAND_RATIO;
+      applyTrackTransform(pos);
     });
   }
 
@@ -113,7 +143,84 @@ export default function HomePage({ activePage, onPageChange }) {
     st.active = false;
     st.locked = null;
     st.dx = 0;
+    st.samples = [];
     viewportRef.current?.classList.remove('dragging');
+  }
+
+  function cancelSpring() {
+    const sp = springRef.current;
+    if (sp.rafId != null) cancelAnimationFrame(sp.rafId);
+    sp.rafId = null;
+    if (sp.active && trackRef.current) {
+      // 안착 전에 강제로 끊겼다 — 유휴 상태로 되돌린다. 이 직후 새 제스처가 가로로
+      // 락되면 handleTrackPointerMove가 transition:none/will-change를 다시 켠다.
+      trackRef.current.style.willChange = '';
+      trackRef.current.style.transition = '';
+    }
+    sp.active = false;
+  }
+
+  function pushVelocitySample(st, x, t) {
+    st.samples.push({ x, t });
+    while (st.samples.length > 1 && t - st.samples[0].t > VELOCITY_WINDOW_MS) {
+      st.samples.shift();
+    }
+  }
+
+  // 최근 VELOCITY_WINDOW_MS 윈도우 전체의 평균 속도(px/ms, dx와 부호가 같다 — 요구사항6).
+  // 마지막 두 샘플만 쓰면 손을 떼기 직전 미세하게 멈칫하는 순간의 값(종종 0에 가까움)을
+  // 그대로 속도로 오인해 플릭이 플릭으로 인식되지 않는 문제가 생긴다(요구사항1).
+  function computeWindowVelocity(st) {
+    const s = st.samples;
+    if (s.length < 2) return 0;
+    const first = s[0];
+    const last = s[s.length - 1];
+    const dt = last.t - first.t;
+    if (dt <= 0) return 0;
+    return (last.x - first.x) / dt;
+  }
+
+  // 목표 위치(targetPx)까지 감쇠 스프링으로 안착시킨다 — CSS transition이 아니라 매
+  // 프레임 transform: translate3d()를 직접 계산해서 쓴다(요구사항3). 초기 속도
+  // (initialVelocityPxMs)는 손을 뗄 때 링버퍼로 계산한 값을 그대로 이어받는다(요구사항2).
+  // 부호 확인(요구사항6): dx>0(오른쪽 드래그)일 때 pos(=posRef/transform X)도 커지는
+  // 방향이므로, velocity도 같은 부호를 그대로 쓰면 된다 — 여기서 뒤집지 않는다.
+  function startSpring(targetPx, initialVelocityPxMs) {
+    cancelSpring();
+    const sp = springRef.current;
+    sp.active = true;
+    sp.target = targetPx;
+
+    let pos = posRef.current;
+    let velocity = initialVelocityPxMs * 1000; // px/ms -> px/s (적분을 초 단위로 통일)
+    let lastT = performance.now();
+
+    function tick(now) {
+      const dt = Math.min((now - lastT) / 1000, 1 / 30); // 초 단위, 프레임 드롭 시 스프링이 튀지 않게 상한
+      lastT = now;
+
+      const accel = -SPRING_STIFFNESS * (pos - sp.target) - SPRING_DAMPING * velocity;
+      velocity += accel * dt;
+      pos += velocity * dt;
+
+      const velocityPxMs = velocity / 1000;
+      const settled = Math.abs(pos - sp.target) < SPRING_REST_DIST && Math.abs(velocityPxMs) < SPRING_REST_VEL;
+      if (settled) {
+        applyTrackTransform(sp.target);
+        sp.active = false;
+        sp.rafId = null;
+        if (trackRef.current) {
+          trackRef.current.style.willChange = ''; // 요구사항5 — 애니메이션 종료, 합성 레이어 승격 해제
+          trackRef.current.style.transition = '';  // 이후 칩 탭 전환은 다시 CSS transition으로 처리
+        }
+        return;
+      }
+
+      applyTrackTransform(pos);
+      sp.rafId = requestAnimationFrame(tick);
+    }
+
+    sp.rafId = requestAnimationFrame(tick);
   }
 
   function handleTrackPointerDown(e) {
@@ -123,17 +230,20 @@ export default function HomePage({ activePage, onPageChange }) {
     // 시작한 제스처는 아예 추적하지 않는다.
     if (e.clientX <= EDGE_GUARD_PX || e.clientX >= window.innerWidth - EDGE_GUARD_PX) return;
 
+    // 스프링 안착 중이었다면 그 자리에서 즉시 끊고 이어받는다 — 원위치로 스냅하지
+    // 않는다(요구사항4). posRef.current가 바로 "지금 실제 위치"라 baseX로 그대로 쓴다.
+    cancelSpring();
+
     const st = dragRef.current;
     st.pointerId = e.pointerId;
     st.active = true;
     st.locked = null;
     st.startX = e.clientX;
     st.startY = e.clientY;
+    st.baseX = posRef.current;
     st.dx = 0;
-    st.lastX = e.clientX;
-    st.lastT = performance.now();
-    st.velocity = 0;
     st.panelWidth = viewportRef.current.clientWidth;
+    st.samples = [{ x: e.clientX, t: performance.now() }];
     // setPointerCapture는 여기서 곧장 걸지 않는다 — Chromium은 캡처된 포인터의 이후
     // click(호환 마우스 이벤트)까지 캡처 요소로 재타겟팅해서, 이동이 전혀 없는 순수 탭조차
     // 카드의 onClick(상세 페이지 이동)이 뷰포트로 흡수돼 통째로 먹혀버린다. 그래서 가로
@@ -156,6 +266,7 @@ export default function HomePage({ activePage, onPageChange }) {
         st.locked = 'x';
         e.currentTarget.setPointerCapture(e.pointerId); // 이 시점부터 뷰포트 밖으로 나가도 계속 추적
         trackRef.current.style.transition = 'none';
+        trackRef.current.style.willChange = 'transform'; // 드래그+스프링 구간에서만 합성 레이어 승격(스프링 종료 시 해제 — 요구사항5)
         viewportRef.current.classList.add('dragging'); // 드래그 중 카드 텍스트 선택 방지(CSS)
       } else if (Math.abs(dy) >= Math.abs(dx) / DRAG_ANGLE_BIAS) {
         // 세로 의도로 판정 — 제스처를 포기하고 .grid의 overflow-y:auto(또는 touch-action:pan-y
@@ -174,25 +285,21 @@ export default function HomePage({ activePage, onPageChange }) {
     // 가로 드래그로 확정된 뒤부터만 preventDefault — pan-y 세로 스크롤과의 충돌을 피한다.
     e.preventDefault();
 
-    const now = performance.now();
-    const dt = now - st.lastT;
-    if (dt > 0) st.velocity = (e.clientX - st.lastX) / dt; // px/ms
-    st.lastX = e.clientX;
-    st.lastT = now;
+    pushVelocitySample(st, e.clientX, performance.now()); // 링버퍼에 샘플 적재(요구사항1) — 실제 속도 계산은 손 뗄 때
     st.dx = dx;
 
     scheduleDragFrame();
   }
 
-  // 트랙을 목표 인덱스로 스냅(트랜지션 재활성화 + transform 적용 + activeCat 갱신).
-  // pointerup(정상 릴리스)과 pointercancel(가로챔, 아래 handleTrackPointerCancel 참고)이
-  // 계산한 targetIndex를 각자 다른 기준으로 넘겨 공유해서 쓴다.
-  function snapTrackTo(targetIndex, panelWidth) {
-    if (trackRef.current) trackRef.current.style.transition = ''; // 스냅 애니메이션을 위해 트랜지션 재활성화
-    applyTrackTransform(-(targetIndex * panelWidth));
+  // 트랙을 목표 인덱스로 스프링 안착시킨다(칩 활성 표시는 즉시 동기화, 시각적 이동은
+  // 스프링이 이어서 처리 — 요구사항2/3). pointerup(정상 릴리스)과 pointercancel(가로챔,
+  // 아래 handleTrackPointerCancel 참고)이 계산한 targetIndex를 각자 다른 기준으로
+  // 넘겨 공유해서 쓴다.
+  function settleTrackTo(targetIndex, panelWidth, initialVelocityPxMs) {
     if (targetIndex !== activeIndex) {
       setActiveCat(CATEGORY_TABS[targetIndex].key); // 칩 활성 표시는 activeCat prop으로 자동 동기화
     }
+    startSpring(-(targetIndex * panelWidth), initialVelocityPxMs);
   }
 
   function commitIndexFor(dx) {
@@ -207,18 +314,19 @@ export default function HomePage({ activePage, onPageChange }) {
     if (!st.active || e.pointerId !== st.pointerId) { resetDrag(); return; }
 
     const wasDragging = st.locked === 'x';
-    const { dx, velocity, panelWidth } = st;
+    const { dx, panelWidth } = st;
+    const velocity = computeWindowVelocity(st); // resetDrag가 samples를 비우기 전에 계산(요구사항1)
     resetDrag();
     if (!wasDragging) return; // 순수 탭 — 캡처를 건 적이 없으므로 카드의 onClick이 정상적으로 그대로 발생한다
 
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
 
     // 정상 릴리스(pointerup) — 사용자가 스스로 놓은 시점이므로 거리/속도 임계값으로
-    // "충분히 끌었는지"를 판정한다. 미달이면 원위치로 스냅.
+    // "충분히 끌었는지"를 판정한다(기존 로직 그대로 — 요구사항7). 미달이면 원위치로 스프링 복귀.
     const pastThreshold = Math.abs(dx) > panelWidth * DRAG_COMMIT_RATIO;
     const fastFlick = Math.abs(velocity) > DRAG_FLICK_VELOCITY;
     const targetIndex = (pastThreshold || fastFlick) ? commitIndexFor(dx) : activeIndex;
-    snapTrackTo(targetIndex, panelWidth);
+    settleTrackTo(targetIndex, panelWidth, velocity);
 
     // 카드를 스치며 드래그가 끝나면 pointerup 뒤에 이어지는 click(특히 마우스는
     // preventDefault로 막히지 않음)이 카드 상세 페이지로 오내비게이션하는 걸 막는다.
@@ -249,9 +357,10 @@ export default function HomePage({ activePage, onPageChange }) {
     const st = dragRef.current;
     const wasDragging = st.active && st.locked === 'x';
     const { dx, panelWidth } = st;
+    const velocity = computeWindowVelocity(st); // 스프링 초기 속도용 — 커밋 방향 판정에는 안 씀(요구사항7)
     resetDrag();
     if (!wasDragging) return;
-    snapTrackTo(commitIndexFor(dx), panelWidth);
+    settleTrackTo(commitIndexFor(dx), panelWidth, velocity);
   }
 
   // 이상 종목 집계 (데이터가 있는 경우에만 검사)

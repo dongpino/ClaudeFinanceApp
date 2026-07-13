@@ -324,7 +324,9 @@ body {
   display: flex;
   width: 500%;
   height: 100%;
-  will-change: transform; /* 드래그 중 매 프레임 바뀌는 transform을 합성 레이어로 승격 */
+  /* will-change:transform은 정적으로 걸어두지 않는다 — HomePage.jsx가 드래그 락/스프링
+     구간에서만 인라인으로 켜고, 스프링이 안착하면 다시 끈다(항상 켜두면 불필요한 합성
+     레이어를 상시 점유한다). */
   touch-action: pan-y;    /* 세로 스크롤은 브라우저가 네이티브로 처리 — 가로 판정 전엔 JS가 손대지 않는다 */
   transition: transform .3s cubic-bezier(.25, .8, .25, 1);
 }
