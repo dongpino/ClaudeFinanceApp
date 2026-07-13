@@ -324,9 +324,11 @@ body {
   display: flex;
   width: 500%;
   height: 100%;
-  /* will-change:transform은 정적으로 걸어두지 않는다 — HomePage.jsx가 드래그 락/스프링
-     구간에서만 인라인으로 켜고, 스프링이 안착하면 다시 끈다(항상 켜두면 불필요한 합성
-     레이어를 상시 점유한다). */
+  /* will-change:transform을 정적으로 상시 걸어둔다(제스처마다 켜고 끄지 않음) — 합성
+     레이어를 드래그/스프링 때마다 새로 만들고 부수면 iOS Safari가 그 안에 중첩된
+     .grid(overflow-y:auto)의 터치 스크롤 인식을 잃어버리는 회귀가 있었다. GPU 레이어를
+     상시 점유하는 비용보다 스크롤이 깨지지 않는 쪽이 훨씬 중요해 되돌렸다. */
+  will-change: transform;
   touch-action: pan-y;    /* 세로 스크롤은 브라우저가 네이티브로 처리 — 가로 판정 전엔 JS가 손대지 않는다 */
   transition: transform .3s cubic-bezier(.25, .8, .25, 1);
 }

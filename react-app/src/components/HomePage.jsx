@@ -152,9 +152,9 @@ export default function HomePage({ activePage, onPageChange }) {
     if (sp.rafId != null) cancelAnimationFrame(sp.rafId);
     sp.rafId = null;
     if (sp.active && trackRef.current) {
-      // 안착 전에 강제로 끊겼다 — 유휴 상태로 되돌린다. 이 직후 새 제스처가 가로로
-      // 락되면 handleTrackPointerMove가 transition:none/will-change를 다시 켠다.
-      trackRef.current.style.willChange = '';
+      // 안착 전에 강제로 끊겼다 — transition만 유휴 상태로 되돌린다(will-change는 CSS에
+      // 정적으로 걸려있어 건드릴 필요가 없다 — iOS 중첩 스크롤 회귀로 동적 토글은 폐기).
+      // 이 직후 새 제스처가 가로로 락되면 handleTrackPointerMove가 transition:none을 다시 켠다.
       trackRef.current.style.transition = '';
     }
     sp.active = false;
@@ -210,8 +210,10 @@ export default function HomePage({ activePage, onPageChange }) {
         sp.active = false;
         sp.rafId = null;
         if (trackRef.current) {
-          trackRef.current.style.willChange = ''; // 요구사항5 — 애니메이션 종료, 합성 레이어 승격 해제
           trackRef.current.style.transition = '';  // 이후 칩 탭 전환은 다시 CSS transition으로 처리
+          // will-change는 여기서 끄지 않는다 — CSS에 정적으로 걸려있다(합성 레이어를
+          // 제스처마다 만들고 부수면 iOS Safari에서 중첩된 .grid의 스크롤이 깨지는
+          // 회귀가 있었음, 아래 index.css의 .home-cat-track 참고).
         }
         return;
       }
@@ -266,7 +268,9 @@ export default function HomePage({ activePage, onPageChange }) {
         st.locked = 'x';
         e.currentTarget.setPointerCapture(e.pointerId); // 이 시점부터 뷰포트 밖으로 나가도 계속 추적
         trackRef.current.style.transition = 'none';
-        trackRef.current.style.willChange = 'transform'; // 드래그+스프링 구간에서만 합성 레이어 승격(스프링 종료 시 해제 — 요구사항5)
+        // will-change는 여기서 켜지 않는다 — index.css의 .home-cat-track에 정적으로
+        // 걸려있다(제스처마다 합성 레이어를 만들고 부수면 iOS Safari에서 중첩된 .grid의
+        // 스크롤이 깨지는 회귀가 있었음).
         viewportRef.current.classList.add('dragging'); // 드래그 중 카드 텍스트 선택 방지(CSS)
       } else if (Math.abs(dy) >= Math.abs(dx) / DRAG_ANGLE_BIAS) {
         // 세로 의도로 판정 — 제스처를 포기하고 .grid의 overflow-y:auto(또는 touch-action:pan-y
