@@ -303,6 +303,47 @@ body {
 .major-edit-done-btn:hover { opacity: .88; }
 .major-edit-done-btn:active { transform: scale(.98); }
 
+/* ── 홈 카테고리 슬라이드 트랙 ──────────────── */
+/* 뷰포트(overflow:hidden) 안에 5개 카테고리 패널을 가로로 나란히 두고(트랙
+   width:500%, 패널 width:20%) translateX로 밀어 전환한다.
+   구 .main.grid는 .page.active(flex column, #root의 확정 100dvh에서 내려오는 높이)의
+   직계 자식이어서 flex:1이 진짜 높이로 resolve됐고, 그 위에서 grid-auto-rows:
+   calc(50% - 4px)와 .card-spark의 flex:1이 안정적으로 계산됐다. 뷰포트/트랙/패널을
+   끼워넣으면서 이 flex 높이 체인이 끊기면 grid-auto-rows가 indefinite 컨테이너를
+   기준으로 auto 폴백되어 카테고리마다(아이템 개수·행 수에 따라) 카드/차트 높이가
+   들쭉날쭉해진다 — 그래서 viewport→track→panel 각 단계가 모두 확정 높이를 명시적으로
+   물려받도록(flex:1/height:100%) 체인을 그대로 복원한다. (align-items:flex-start +
+   패널별 자연 높이 실험은 이 높이 버그 때문에 폐기 — 모든 패널이 뷰포트 높이를
+   stretch로 꽉 채우는 이전 동작으로 되돌린다.) */
+.home-cat-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.home-cat-track {
+  display: flex;
+  width: 500%;
+  height: 100%;
+  will-change: transform; /* 드래그 중 매 프레임 바뀌는 transform을 합성 레이어로 승격 */
+  touch-action: pan-y;    /* 세로 스크롤은 브라우저가 네이티브로 처리 — 가로 판정 전엔 JS가 손대지 않는다 */
+  transition: transform .3s cubic-bezier(.25, .8, .25, 1);
+}
+.home-cat-panel {
+  display: flex;
+  flex-direction: column;
+  width: 20%;
+  height: 100%;
+  min-height: 0;
+  flex-shrink: 0;
+  min-width: 0;
+}
+/* 가로 드래그가 확정된 동안(HomePage.jsx가 토글) 마우스로 카드를 스치며 끌 때
+   텍스트/카드 내용이 선택되는 것을 막는다. */
+.home-cat-viewport.dragging,
+.home-cat-viewport.dragging * {
+  user-select: none;
+}
+
 /* ── 카드 그리드 ──────────────────────────── */
 /* 행 높이를 "2행이 꽉 채운 상태"의 고정값(calc(50% - 절반 gap))으로 못박아, 아이템이
    몇 개든(3개든 7개든) 카드 높이가 "주요" 탭(항상 ≤4개=2행)과 완전히 같게 유지된다 —
