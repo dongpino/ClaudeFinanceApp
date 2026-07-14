@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useLayoutEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { calcMA, calcBB, calcRSIAligned } from '../indicators';
 import { useTheme } from '../ThemeContext';
@@ -539,7 +539,12 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   }, [item, showRSI]);
 
   // ── 테마 변경 시 차트 색상만 재적용 (barSpacing·minimumWidth 불변) ──
-  useEffect(() => {
+  // useEffect가 아니라 useLayoutEffect — ThemeContext.jsx의 toggle()이 View
+  // Transition 콜백을 flushSync로 감싸는데, flushSync는 레이아웃 이펙트만 동기
+  // 실행을 보장하고 패시브 이펙트(useEffect)는 보장하지 않는다. 이 캔버스 색상
+  // 재적용이 layout effect가 아니면 뷰 트랜지션이 "전/후" 스크린샷을 찍는 시점에
+  // 아직 구 테마 색상이 남아있어 크로스페이드 이후 차트만 뒤늦게 툭 바뀌어 보일 수 있다.
+  useLayoutEffect(() => {
     const opts = chartColorOpts(theme);
     priceChartRef.current?.applyOptions(opts);
     rsiChartRef.current?.applyOptions(opts);

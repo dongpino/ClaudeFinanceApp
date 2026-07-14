@@ -50,6 +50,38 @@
 
 html { background: var(--bg); touch-action: pan-x pan-y; }
 
+/* ── 화면 전환 크로스페이드(View Transitions API, viewTransition.js의
+   withViewTransition — 테마 토글·하단 탭 전환이 공유) ──────────────────
+   view-transition-name을 개별 요소에 주지 않았으므로 root 스냅샷 하나만 생기고,
+   화면 전체가 한 덩어리로 크로스페이드된다(배경/카드/캔버스 전부 포함).
+   기본값은 테마 전환 기준 300ms — 탭 전환은 바로 아래 html[data-vt="tab"]
+   스코프로 180ms를 덮어쓴다(withViewTransition이 kind:'tab'일 때만 잠깐
+   html에 data-vt="tab"을 세워둠, App.jsx의 changeTab 참고). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 300ms;
+  animation-timing-function: ease;
+  /* 스냅샷 오버레이가 실제 라이브 DOM 위에서 터치/클릭을 가로채지 않도록 —
+     전환 애니메이션이 끝나기 전에도(예: 홈 탭 진입 직후 바로 스와이프) 아래
+     실제 페이지가 제스처를 즉시 받아야 한다. */
+  pointer-events: none;
+}
+html[data-vt="tab"]::view-transition-old(root),
+html[data-vt="tab"]::view-transition-new(root) {
+  animation-duration: 180ms;
+}
+/* prefers-reduced-motion 사용자는 withViewTransition()이 애초에
+   startViewTransition을 타지 않고 즉시 전환한다 — 이 규칙은 혹시 모를 다른
+   경로로 뷰 트랜지션이 걸리더라도 애니메이션이 재생되지 않게 하는 이중
+   안전장치(defense in depth)다. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
 body {
   background: var(--bg);
   color: var(--text-1);

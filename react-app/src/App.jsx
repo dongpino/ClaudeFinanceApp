@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import HomePage from './components/HomePage';
 import DetailPage from './components/DetailPage';
@@ -6,6 +6,7 @@ import AnalysisPage from './components/AnalysisPage';
 import CalendarPage from './components/CalendarPage';
 import BriefingPage from './components/BriefingPage';
 import { installPinchZoomBlock } from './blockPinchZoom';
+import { withViewTransition } from './viewTransition';
 
 
 function MainContent({ activePage, onPageChange }) {
@@ -35,8 +36,29 @@ export default function App() {
   // 모바일 핀치줌·더블탭줌 차단 (iOS Safari user-scalable=no 무시 보강) — 앱 루트 1회 등록
   useEffect(() => installPinchZoomBlock(), []);
 
+  // 진행 중인 탭 전환 뷰 트랜지션 — 테마(ThemeContext.jsx)와 달리 탭은 값이 4개라
+  // "연속 이동이 자연스러운 동선"이므로 재클릭을 무시하지 않고 "마지막 클릭
+  // 우선"으로 처리한다: 진행 중인 전환이 있으면 skipTransition()으로 즉시
+  // 끝내고(애니메이션만 스킵, 실제 페이지는 그 시점 상태로 바로 반영됨) 새 전환을
+  // 그 상태에서부터 다시 시작한다.
+  const activeTabTransitionRef = useRef(null);
+
+  function changeTab(page) {
+    if (page === activePage) return; // 같은 탭 재클릭은 전환 없이 무동작(요구사항4)
+
+    if (activeTabTransitionRef.current) {
+      activeTabTransitionRef.current.skipTransition();
+    }
+
+    const transition = withViewTransition(() => setActivePage(page), { kind: 'tab' });
+    activeTabTransitionRef.current = transition; // 폴백 경로(기능 미지원/reduced-motion)면 null — 다음 클릭이 자연히 새로 시작
+    transition?.finished.finally(() => {
+      if (activeTabTransitionRef.current === transition) activeTabTransitionRef.current = null;
+    });
+  }
+
   function handlePageChange(page) {
-    setActivePage(page);
+    changeTab(page);
     navigate('/');
   }
 
@@ -54,7 +76,7 @@ export default function App() {
       />
       <Route
         path="*"
-        element={<MainContent activePage={activePage} onPageChange={setActivePage} />}
+        element={<MainContent activePage={activePage} onPageChange={changeTab} />}
       />
     </Routes>
   );
