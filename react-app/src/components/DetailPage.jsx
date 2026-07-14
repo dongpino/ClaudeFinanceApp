@@ -15,6 +15,9 @@ const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumF
 const fc   = n => { const v = nz(n); return (v > 0 ? '+' : '') + fp(v); };
 const fpct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 
+// MarketCard.jsx와 동일 — item.currency는 opt-in 필드(워치리스트 종목만 설정).
+const CURRENCY_PREFIX = { usd: '$', krw: '₩' };
+
 // 가격이 아니라 지수/점수 성격인 unit 3종 — MarketCard.jsx와 동일 규칙(그쪽 주석 참고).
 const NON_PRICE_UNITS = new Set(['percent', 'pct_pt', 'score']);
 
@@ -108,7 +111,7 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
   const item = detailItem ?? baseItem;
   const {
     direction: dir, name, category, price, change, change_pct, source, as_of, history_90d, unit, grade,
-    change_unavailable,
+    change_unavailable, currency,
   } = item;
   const s = stats90(history_90d);
   const gradeInfo = grade ? GRADE_MAP[grade] : null;
@@ -130,7 +133,7 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
         {/* 현재가 & 변동 */}
         <div className="detail-price-section">
           <div className="detail-price">
-            {fpUnit(price, unit)}
+            {CURRENCY_PREFIX[currency] ?? ''}{fpUnit(price, unit)}
             {gradeInfo && <span className={`detail-grade ${gradeInfo.tone}`}> · {gradeInfo.ko}</span>}
           </div>
           <div className={`detail-change ${dir}`}>

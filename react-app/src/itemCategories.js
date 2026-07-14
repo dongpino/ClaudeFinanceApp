@@ -13,6 +13,13 @@
  */
 
 export const ITEM_CATEGORIES = [
+  // "우미 투자" — 개인 워치리스트 고정 종목 4개(api/_collectors/watchlist.js).
+  // 사용자가 UI에서 추가/삭제하지 않으므로 'major'처럼 편집 패널이 없다 — 종목을
+  // 바꾸려면 이 배열과 watchlist.js의 WATCHLIST 배열을 함께 한 줄씩 고치면 된다.
+  { id: 'HYPR',       name: '하이퍼파인',          source: 'watchlist', categories: ['umi'] },
+  { id: '419530',     name: 'SAMG엔터',            source: 'watchlist', categories: ['umi'] },
+  { id: '028300',     name: 'HLB',                 source: 'watchlist', categories: ['umi'] },
+  { id: '080220',     name: '제주반도체',          source: 'watchlist', categories: ['umi'] },
   { id: 'nasdaq',     name: '나스닥',              source: 'us-indices', categories: ['major', 'index'] },
   { id: 'dow',        name: '다우존스',            source: 'us-indices', categories: ['major', 'index'] },
   { id: 'kospi',      name: '코스피',              source: 'kr',          categories: ['major', 'index'] },
@@ -31,7 +38,10 @@ export const ITEM_CATEGORIES = [
 ];
 
 // 홈 탭 카테고리 버튼 — key는 ITEM_CATEGORIES의 categories 값과 매칭, label은 화면 표시용.
+// 순서가 곧 칩/스와이프 패널 순서(HomePage.jsx가 CATEGORY_TABS.length 기반으로
+// 동작해 배열 길이가 몇 개든 자동으로 대응됨 — 하드코딩된 개수 가정 없음).
 export const CATEGORY_TABS = [
+  { key: 'umi',    label: '우미 투자' },
   { key: 'major',  label: '주요' },
   { key: 'index',  label: '지수' },
   { key: 'fx',     label: '환율' },

@@ -549,12 +549,19 @@ export default function HomePage({ activePage, onPageChange }) {
           <div
             className="home-cat-track"
             ref={trackRef}
-            style={{ transform: `translateX(-${activeIndex * 20}%)` }}
+            style={{
+              // --cat-count: index.css가 .home-cat-track/.home-cat-panel의 width를
+              // 여기에 맞춰 calc()로 계산한다 — 예전엔 500%/20%로 5개 고정이었는데,
+              // 카테고리가 늘어도(예: 우미 투자 추가로 5→6) 하드코딩을 다시 손대지
+              // 않도록 CATEGORY_TABS.length 기반으로 완전히 동적으로 바꿨다.
+              '--cat-count': CATEGORY_TABS.length,
+              transform: `translateX(-${activeIndex * (100 / CATEGORY_TABS.length)}%)`,
+            }}
           >
             {CATEGORY_TABS.map(({ key: catKey }, idx) => {
               // 성능: 현재 패널과 좌우 인접 패널만 카드(스파크라인 포함)를 실제로 마운트하고,
-              // 그 밖의 패널은 빈 placeholder로 둔다 — 5개 패널 전부를 항상 그리면
-              // 스파크라인 차트가 최대 15개 동시에 마운트돼 무거워진다.
+              // 그 밖의 패널은 빈 placeholder로 둔다 — CATEGORY_TABS 패널 전부를 항상
+              // 그리면 스파크라인 차트가 카테고리 수 × 카드 수만큼 동시에 마운트돼 무거워진다.
               const isNear = Math.abs(idx - activeIndex) <= 1;
               if (!isNear) {
                 return <div className="home-cat-panel" key={catKey}><div className="home-cat-placeholder" aria-hidden="true" /></div>;

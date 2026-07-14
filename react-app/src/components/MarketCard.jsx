@@ -11,6 +11,10 @@ const fp   = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumF
 const fc   = n => { const v = nz(n); return (v > 0 ? '+' : '') + fp(v); };
 const fpct = n => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
 
+// item.currency는 opt-in 필드다(현재는 워치리스트 종목만 설정, api/_collectors/
+// watchlist.js) — 기존 15종목은 이 필드가 없어 접두어 없이 그대로 렌더된다.
+const CURRENCY_PREFIX = { usd: '$', krw: '₩' };
+
 // 가격이 아니라 지수/점수 성격인 unit 3종 — 모두 detectIssues의 "등락 0 = 계산 실패"
 // 휴리스틱에서 예외 처리한다(각자 하루 변동이 0에 가깝거나 정확히 0인 날이 정상적으로
 // 존재하기 때문 — us10y에서 처음 발견된 문제의 일반화).
@@ -65,7 +69,7 @@ export default function MarketCard({ item }) {
   const navigate = useNavigate();
   const {
     direction: dir, name, category, price, change, change_pct, source, as_of, history, unit, grade,
-    history_bootstrapping, change_unavailable,
+    history_bootstrapping, change_unavailable, currency,
   } = item;
   const issues = detectIssues(item);
   const gradeInfo = grade ? GRADE_MAP[grade] : null;
@@ -94,7 +98,7 @@ export default function MarketCard({ item }) {
           </div>
         </div>
         <div className="card-price">
-          {fpUnit(price, unit)}
+          {CURRENCY_PREFIX[currency] ?? ''}{fpUnit(price, unit)}
           {gradeInfo && <span className={`card-grade ${gradeInfo.tone}`}> · {gradeInfo.ko}</span>}
         </div>
         <div className={`card-change ${dir}`}>

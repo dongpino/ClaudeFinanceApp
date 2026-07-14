@@ -242,7 +242,12 @@ body {
   flex-shrink: 0;
   display: flex; gap: 7px;
   padding: 6px 16px 9px;
+  /* 6번째 칩("우미 투자", 다른 라벨보다 긴 4글자) 추가로 좁은 화면에서 한 줄에
+     다 안 들어갈 수 있어 가로 스크롤로 폴백 — .home-issue-strip과 동일 패턴. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   padding: 5px 15px; border-radius: 16px;
   font-size: 12.5px; font-weight: 700;
@@ -371,7 +376,10 @@ body {
 }
 .home-cat-track {
   display: flex;
-  width: 500%;
+  /* --cat-count는 HomePage.jsx가 인라인으로 세운다(CATEGORY_TABS.length) — 예전엔
+     500%로 5개 고정이었으나, 카테고리 배열 길이가 바뀌어도 여기 손댈 필요 없게
+     calc()로 뺐다. 값이 없으면(이론상 없을 일 없지만 방어적으로) 5로 폴백. */
+  width: calc(var(--cat-count, 5) * 100%);
   height: 100%;
   /* will-change:transform을 정적으로 상시 걸어둔다(제스처마다 켜고 끄지 않음) — 합성
      레이어를 드래그/스프링 때마다 새로 만들고 부수면 iOS Safari가 그 안에 중첩된
@@ -384,7 +392,7 @@ body {
 .home-cat-panel {
   display: flex;
   flex-direction: column;
-  width: 20%;
+  width: calc(100% / var(--cat-count, 5));
   height: 100%;
   min-height: 0;
   flex-shrink: 0;

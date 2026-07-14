@@ -2,10 +2,11 @@
  * api/market-data.js — Vercel 서버리스 함수
  *
  * GET /api/market-data
- *   → 15종목 현재가 + 30일 history (history_90d 없음, 홈 화면용 경량)
+ *   → 19종목 현재가 + 30일 history (history_90d 없음, 홈 화면용 경량)
  *
  * GET /api/market-data?id=btc  (또는 nasdaq / dow / sp500 / sox / kospi / kosdaq / vix /
- *                                usdkrw / jpykrw / us10y / dxy / eth / dominance / feargreed)
+ *                                usdkrw / jpykrw / us10y / dxy / eth / dominance / feargreed /
+ *                                HYPR / 419530 / 028300 / 080220 — "우미 투자" 워치리스트)
  *   → 해당 1종목의 전체 데이터 (history_90d 포함, 상세 화면용)
  *
  * 캐싱: 인메모리 5분 + CDN s-maxage=300
@@ -17,6 +18,7 @@ import { collectKR }          from './_collectors/kr.js';
 import { collectETH }         from './_collectors/eth.js';
 import { collectBtcDominance } from './_collectors/btc-dominance.js';
 import { collectFearGreed }   from './_collectors/fear-greed.js';
+import { collectWatchlist, WATCHLIST_IDS } from './_collectors/watchlist.js';
 
 // ── 캐시 ────────────────────────────────────────────────
 let   cacheHome   = null;   // { data: { updated_at, items }, timestamp }
@@ -28,6 +30,7 @@ const ITEM_ORDER   = [
   'vix', 'usdkrw', 'jpykrw',
   'us10y', 'dxy',
   'dominance', 'feargreed',
+  ...WATCHLIST_IDS, // '우미 투자' 탭(홈, itemCategories.js) — HYPR/419530/028300/080220
 ];
 const US_INDICES_IDS = ['nasdaq', 'dow', 'sp500', 'sox', 'vix', 'us10y', 'dxy'];
 
@@ -65,19 +68,21 @@ async function handleHome(req, res) {
   const startMs = Date.now();
   console.log(`[market-data/home] Cache MISS — 수집 시작 (${fmtKST()})`);
 
-  const [usResult, btcResult, krResult, ethResult, dominanceResult, fngResult] = await Promise.allSettled([
+  const [usResult, btcResult, krResult, ethResult, dominanceResult, fngResult, watchlistResult] = await Promise.allSettled([
     collectUSIndices({ include90d: false }),
     collectBTC({ include90d: false }),
     collectKR({ include90d: false }),
     collectETH({ include90d: false }),
     collectBtcDominance({ include90d: false }),
     collectFearGreed({ include90d: false }),
+    collectWatchlist({ include90d: false }),
   ]);
 
   const itemsById = {};
   for (const [label, result] of [
     ['US 지수', usResult], ['BTC', btcResult], ['KR 지표', krResult],
     ['ETH', ethResult], ['BTC 도미넌스', dominanceResult], ['공포탐욕지수', fngResult],
+    ['우미 워치리스트', watchlistResult],
   ]) {
     if (result.status === 'fulfilled') {
       const arr = Array.isArray(result.value) ? result.value : [result.value];
@@ -131,6 +136,8 @@ async function handleDetail(req, res, id) {
       collected = [await collectFearGreed({ include90d: true })];
     } else if (US_INDICES_IDS.includes(id)) {
       collected = await collectUSIndices({ include90d: true });
+    } else if (WATCHLIST_IDS.includes(id)) {
+      collected = await collectWatchlist({ include90d: true });
     } else {
       collected = await collectKR({ include90d: true });
     }

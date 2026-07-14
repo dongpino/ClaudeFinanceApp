@@ -104,14 +104,16 @@ async function fetchOneKRQuote(code) {
 // ── 과거 일봉 히스토리 ────────────────────────────────────────────
 
 /**
- * 종목코드의 일봉 히스토리 (최근 250 거래일 목표)
- * pageSize 상한이 60~79 사이(실측: 60 성공, 80 실패)라 여러 페이지를 병렬 수집
+ * 종목코드의 일봉 히스토리 (기본 최근 250 거래일 목표 — 분석 탭 전체 차트용)
+ * pageSize 상한이 60~79 사이(실측: 60 성공, 80 실패)라 여러 페이지를 병렬 수집.
+ * totalRows를 줄이면(예: 홈 카드 스파크라인은 30일이면 충분) 그만큼 페이지 수도
+ * 줄어 요청이 가벼워진다 — 기본값은 기존 호출부(stock-adapter.js) 그대로 유지.
  * @param {string} code
+ * @param {{ totalRows?: number }} [opts]
  * @returns {Promise<{ history, ohlc_available: true, source: string }>}
  */
-export async function fetchKRDailyHistory(code) {
+export async function fetchKRDailyHistory(code, { totalRows = 250 } = {}) {
   const pageSize  = 60;
-  const totalRows = 250;
   const numPages  = Math.ceil(totalRows / pageSize) + 1;   // 여유 1페이지
 
   const pages = await Promise.all(
