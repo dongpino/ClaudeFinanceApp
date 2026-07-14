@@ -712,6 +712,22 @@ body {
   touch-action: pan-y;
 }
 
+/* "분석 탭에서 열기" — analysisLink.js가 지원 대상으로 판정한 종목에서만 렌더됨.
+   차트 바로 아래, 90일 통계 카드 위 — margin 규칙은 위아래 형제 블록(.detail-chart-wrap/
+   .detail-stats)과 동일한 리듬(Npx 16px 0)을 따른다. */
+.detail-analysis-link-row {
+  display: flex; justify-content: flex-end;
+  margin: 10px 16px 0;
+}
+.detail-analysis-link-btn {
+  font-size: 12px; font-weight: 700; color: var(--gold);
+  background: var(--gold-dim); border: 1px solid var(--gold);
+  border-radius: 8px; padding: 5px 12px;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background .15s, color .15s;
+}
+.detail-analysis-link-btn:hover { background: var(--gold); color: #1a0e00; }
+
 .detail-stats-loading {
   display: flex; align-items: center; gap: 8px;
   margin: 14px 16px 0;

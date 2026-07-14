@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useData } from '../DataContext';
 import Chart from './Chart';
 import BottomNav from './BottomNav';
+import { getAnalysisSelection } from '../analysisLink';
 
 const ARROW = { up: '▲', down: '▼', flat: '-' };
 const DETAIL_TIMEOUT_MS = 20_000;
@@ -58,7 +59,7 @@ function stats90(h90) {
   return { high, low, avg, last, pos };
 }
 
-export default function DetailPage({ onBack, activePage, onPageChange }) {
+export default function DetailPage({ onBack, activePage, onPageChange, onOpenAnalysis }) {
   const { items } = useData();
   const { id }    = useParams();
 
@@ -115,6 +116,10 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
   } = item;
   const s = stats90(history_90d);
   const gradeInfo = grade ? GRADE_MAP[grade] : null;
+  // 분석 탭이 이 종목을 지원할 때만 버튼을 보인다 — 지원 대상은 analysisLink.js에
+  // 명시적으로 등록된 것만(index 6종/eth/우미 워치리스트 4종). 대상이 아니면 null이라
+  // 버튼 자체가 렌더되지 않는다("눌리는데 실패하는 버튼 금지").
+  const analysisSelection = getAnalysisSelection(item);
 
   return (
     <div className="detail-page">
@@ -148,6 +153,18 @@ export default function DetailPage({ onBack, activePage, onPageChange }) {
         <div className="detail-chart-wrap">
           <Chart item={item} />
         </div>
+
+        {analysisSelection && (
+          <div className="detail-analysis-link-row">
+            <button
+              type="button"
+              className="detail-analysis-link-btn"
+              onClick={() => onOpenAnalysis(analysisSelection)}
+            >
+              분석 탭에서 열기 →
+            </button>
+          </div>
+        )}
 
         {/* 90일 통계 — 로딩 중 표시 또는 데이터 표시 */}
         {detailLoading ? (

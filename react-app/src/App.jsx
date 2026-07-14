@@ -9,13 +9,20 @@ import { installPinchZoomBlock } from './blockPinchZoom';
 import { withViewTransition } from './viewTransition';
 
 
-function MainContent({ activePage, onPageChange }) {
+function MainContent({ activePage, onPageChange, pendingAnalysisSelection, onConsumePendingAnalysisSelection }) {
   if (activePage === 'home') {
     return <HomePage activePage={activePage} onPageChange={onPageChange} />;
   }
 
   if (activePage === 'chart') {
-    return <AnalysisPage activePage={activePage} onPageChange={onPageChange} />;
+    return (
+      <AnalysisPage
+        activePage={activePage}
+        onPageChange={onPageChange}
+        pendingSelection={pendingAnalysisSelection}
+        onConsumePendingSelection={onConsumePendingAnalysisSelection}
+      />
+    );
   }
 
   if (activePage === 'calendar') {
@@ -62,6 +69,18 @@ export default function App() {
     navigate('/');
   }
 
+  // 상세화면 "분석 탭에서 열기" — 새 내비게이션 경로를 만들지 않고 기존
+  // handlePageChange(=changeTab 재사용 + navigate('/'))를 그대로 타되, 탭 전환과
+  // 함께 "분석 탭이 열리면 이 종목을 선택해라"는 페이로드만 하나 더 실어 보낸다.
+  // AnalysisPage가 마운트(또는 이미 마운트된 채 이 값이 바뀌면) 시점에 소비하고
+  // 스스로 null로 되돌린다(onConsumePendingAnalysisSelection).
+  const [pendingAnalysisSelection, setPendingAnalysisSelection] = useState(null);
+
+  function openInAnalysis(selection) {
+    setPendingAnalysisSelection(selection);
+    handlePageChange('chart');
+  }
+
   return (
     <Routes>
       <Route
@@ -71,12 +90,20 @@ export default function App() {
             onBack={() => navigate('/')}
             activePage={activePage}
             onPageChange={handlePageChange}
+            onOpenAnalysis={openInAnalysis}
           />
         }
       />
       <Route
         path="*"
-        element={<MainContent activePage={activePage} onPageChange={changeTab} />}
+        element={
+          <MainContent
+            activePage={activePage}
+            onPageChange={changeTab}
+            pendingAnalysisSelection={pendingAnalysisSelection}
+            onConsumePendingAnalysisSelection={() => setPendingAnalysisSelection(null)}
+          />
+        }
       />
     </Routes>
   );

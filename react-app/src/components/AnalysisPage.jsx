@@ -65,7 +65,7 @@ function analysisUrl(item, tf) {
   return `/api/analysis?id=${item.id}&tf=${tf}`;   // index (기존 6종목, 하위 호환)
 }
 
-export default function AnalysisPage({ activePage, onPageChange }) {
+export default function AnalysisPage({ activePage, onPageChange, pendingSelection, onConsumePendingSelection }) {
   const { items: homeItems } = useData();
   const { watchlist, add, remove, isWatched, patchItem, MAX_WATCHLIST } = useWatchlist();
 
@@ -137,12 +137,26 @@ export default function AnalysisPage({ activePage, onPageChange }) {
   // 빈 화면이 유지된다(재자동선택 없음). App.jsx가 activePage에 따라 AnalysisPage 자체를
   // 마운트/언마운트하므로, 다른 탭에 갔다가 돌아오면 ref가 초기화돼 "새 진입"으로 다시
   // 자동 선택된다 — 별도의 "재진입 감지" 로직 없이 마운트 생명주기만으로 요구사항 충족.
+  //
+  // pendingSelection(상세화면 "분석 탭에서 열기" 버튼, App.jsx가 넘김)이 있으면 코스피
+  // 기본값 대신 그 종목을 선택한다 — dep을 pendingSelection으로 둬서, 이미 분석 탭에
+  // 마운트돼 있는 상태에서 또 다른 "분석 탭에서 열기"가 눌려 이 값이 갱신되는 경우에도
+  // (드묾: 분석 탭에 있는 채로 상세화면에 왔다가 다시 여는 경우) 똑같이 반응한다.
+  // 소비 즉시 App.jsx에 알려 null로 되돌리므로, 그 다음 렌더에서 이 effect가 다시
+  // 돌아도 autoSelectedRef가 이미 true라 기본값 자동선택으로 덮어쓰지 않는다.
   const autoSelectedRef = useRef(false);
   useEffect(() => {
+    if (pendingSelection) {
+      selectItem(pendingSelection);
+      autoSelectedRef.current = true;
+      onConsumePendingSelection?.();
+      return;
+    }
     if (autoSelectedRef.current) return;
     autoSelectedRef.current = true;
     if (!selected) selectItem(DEFAULT_ITEM);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- 마운트 시 1회만 실행되어야 함
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pendingSelection 변화에만 반응하면 됨(마운트 1회 + 핸드오프)
+  }, [pendingSelection]);
 
   // 종목 전환 시 "선 지우기" 버튼 상태 리셋 — 새 종목의 실제 개수는
   // AnalysisChart 복원 완료 후 onLinesChange로 다시 채워진다.
