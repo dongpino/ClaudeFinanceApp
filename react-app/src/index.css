@@ -1209,11 +1209,23 @@ body {
 
 /* ── 매크로 현황 ──────────────────────────────────────────────── */
 .brf-macro-banner {
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
   padding: 8px 12px; border-radius: 10px;
   background: var(--gold-dim); border: 1px solid var(--gold);
   color: var(--gold); font-size: 12px; font-weight: 700;
-  white-space: nowrap; overflow-x: auto;
+  overflow-x: auto;
+}
+.brf-macro-banner-rows { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.brf-macro-banner-row { white-space: nowrap; }
+/* 인라인 브리핑 템플릿이 있는(CPI/FOMC/고용지표) 이벤트가 배너에 있을 때만 펼침
+   가능 — 그 외(선물옵션 만기·MSCI·실적)만 있으면 클릭 힌트를 주지 않는다. */
+.brf-macro-banner-expandable {
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: box-shadow .15s;
+}
+.brf-macro-banner-expandable.active { box-shadow: 0 0 0 1px var(--gold) inset; }
+.brf-macro-banner-chevron {
+  font-size: 10px; color: var(--gold); line-height: 1; flex-shrink: 0; margin-top: 2px;
 }
 
 /* 3열 그리드(데스크톱) — 아코디언 상세 패널(.brf-macro-detail)이 카드 줄 다음에
@@ -1366,8 +1378,6 @@ body {
     grid-template-columns: 1fr;
   }
 }
-.brf-macro-banner { cursor: pointer; }
-
 /* ── 매크로 카드 인라인 아코디언(1단계: FOMC만) ──────────────────
    grid-template-rows: 0fr → 1fr 트랜지션 — JS로 높이를 재지 않고도 "auto 높이로
    부드럽게 펼치기"가 되는 표준 기법. 바깥(.brf-macro-detail)이 1행짜리 그리드
@@ -1446,6 +1456,34 @@ body {
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* 이벤트 배너 인라인 브리핑(하이브리드: 고정 템플릿 + Haiku 맥락) — .brf-macro-detail*
+   아코디언 클래스를 그대로 재사용하되(.brf-macro-cards 그리드 밖에 있어 grid-column은
+   no-op) 3층 구조(이게 뭔가/왜 중요한가/관전 포인트) 전용 레이아웃만 추가한다. */
+.brf-eventbrief-detail .brf-macro-detail-body { gap: 14px; }
+.brf-eventbrief-section { display: flex; flex-direction: column; gap: 4px; }
+.brf-eventbrief-label {
+  font-size: 11px; font-weight: 800; color: var(--gold); letter-spacing: .02em;
+}
+.brf-eventbrief-text { font-size: 12.5px; color: var(--text-1); line-height: 1.6; }
+.brf-eventbrief-checklist {
+  list-style: none; display: flex; flex-direction: column; gap: 4px;
+  margin: 0; padding: 0;
+}
+.brf-eventbrief-checklist li {
+  font-size: 12px; color: var(--text-2); line-height: 1.5;
+  padding-left: 14px; position: relative;
+}
+.brf-eventbrief-checklist li::before {
+  content: '·'; position: absolute; left: 2px; color: var(--gold); font-weight: 800;
+}
+.brf-eventbrief-cal-link {
+  align-self: flex-start;
+  font-size: 11.5px; font-weight: 700; color: var(--gold);
+  background: none; border: none; padding: 4px 0 0; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.brf-eventbrief-cal-link:hover { text-decoration: underline; }
 
 /* ── 캘린더 탭 ──────────────────────────────────────────────── */
 /* .cal-scroll: 뷰포트에 맞춰 고정된 스크롤 "창" — flex:1로 .page 내에서 남는

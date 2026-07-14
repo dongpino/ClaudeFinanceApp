@@ -626,7 +626,134 @@ function formatDDay(n) {
 function EventBanner({ event }) {
   const weekday = koreanWeekday(event.date);
   const time = event.time ? ` ${event.time}` : '';
-  return <div>⚡ 이번 주 {weekday}{time} {event.title}</div>;
+  return <div className="brf-macro-banner-row">⚡ 이번 주 {weekday}{time} {event.title}</div>;
+}
+
+// ── 이벤트 배너 인라인 브리핑(하이브리드: 고정 템플릿 + Haiku 맥락) ──────────
+// 배너의 "다가오는 이벤트" 중 CPI/FOMC/고용지표로 매핑되는 것만 인라인 브리핑을
+// 지원한다(선물옵션 만기·MSCI·실적 등은 템플릿이 없어 배너가 펼쳐지지 않는다).
+const EVENT_BRIEF_TYPE_BY_CATEGORY = { fomc: 'fomc', cpi: 'cpi', employment: 'employment' };
+
+const EVENT_BRIEF_TEMPLATES = {
+  cpi: {
+    label: 'CPI (소비자물가지수)',
+    whatIsIt: 'CPI는 소비자가 실제로 구입하는 상품과 서비스의 평균 가격 변화를 측정하는 물가지표로, 미국 노동통계국(BLS)이 매달 발표합니다.',
+    whyTemplate: 'CPI는 연준의 금리 결정에 가장 직접적인 영향을 미치는 지표 중 하나라, 발표 때마다 시장이 촉각을 곤두세웁니다.',
+    watchTitle: '관전 포인트',
+    checklist: [
+      '전년동월비(YoY) 상승률이 예상치를 웃돌았는지 밑돌았는지',
+      '전월비(MoM) 흐름이 가속되는지 둔화되는지',
+      '식품·에너지를 뺀 근원물가와의 괴리',
+    ],
+  },
+  fomc: {
+    label: 'FOMC 회의',
+    whatIsIt: 'FOMC(연방공개시장위원회)는 미국의 기준금리를 결정하는 연준 내 최고 의사결정 기구로, 연 8회 정기 회의를 엽니다.',
+    whyTemplate: '금리 결정 자체뿐 아니라 위원들의 향후 금리 전망을 담은 점도표와 의장 기자회견까지 함께 나와, 시장 방향성에 큰 영향을 줍니다.',
+    watchTitle: '관전 포인트',
+    checklist: [
+      '기준금리 동결·인상·인하 여부',
+      '점도표(dot plot)에 반영된 위원들의 향후 금리 전망 변화',
+      '기자회견에서 나오는 의장의 발언 톤',
+    ],
+  },
+  employment: {
+    label: '고용지표',
+    whatIsIt: '고용지표는 비농업 부문 고용자수와 실업률 등 미국 노동시장 상황을 보여주는 대표 지표로, 매달 노동통계국이 발표합니다.',
+    whyTemplate: '고용은 연준이 물가안정과 함께 추구하는 두 가지 책무(듀얼 매데이트) 중 하나라, 노동시장의 변화는 통화정책 판단에 곧바로 반영됩니다.',
+    watchTitle: '관전 포인트',
+    checklist: [
+      '비농업 고용자수 증감이 예상치를 웃돌았는지 밑돌았는지',
+      '실업률이 전월 대비 오르는지 내리는지',
+      '임금 상승률(시간당 평균임금) 흐름',
+    ],
+  },
+};
+
+// 관전 포인트 아래 "현재 수치 · D-day" 한 줄 — 기존 매크로 카드가 쓰는 macro 데이터를
+// 그대로 재사용한다(별도 조회 없음).
+function EventBriefCurrentStat({ type, macro, event }) {
+  if (type === 'cpi' && macro?.cpi) {
+    return (
+      <div className="brf-macro-next">
+        현재 {macro.cpi.yoy.toFixed(1)}% YoY · 전월비 {macro.cpi.mom > 0 ? '+' : ''}{macro.cpi.mom.toFixed(1)}% ({macro.cpi.refMonth} 기준)
+        <span className="brf-macro-dday">{formatDDay(event.dDay)}</span>
+      </div>
+    );
+  }
+  if (type === 'fomc' && macro?.fomc?.rate) {
+    return (
+      <div className="brf-macro-next">
+        현재 목표범위 {macro.fomc.rate.lower.toFixed(2)}–{macro.fomc.rate.upper.toFixed(2)}%
+        <span className="brf-macro-dday">{formatDDay(event.dDay)}</span>
+      </div>
+    );
+  }
+  if (type === 'employment' && macro?.unemployment) {
+    return (
+      <div className="brf-macro-next">
+        현재 실업률 {macro.unemployment.rate.toFixed(1)}% ({macro.unemployment.refMonth} 기준)
+        <span className="brf-macro-dday">{formatDDay(event.dDay)}</span>
+      </div>
+    );
+  }
+  return null;
+}
+
+// Haiku 맥락 문단(/api/event-brief) — 로딩 중엔 스켈레톤 한 줄, 응답이 null(실패 포함)
+// 이면 조용히 아무것도 렌더하지 않는다(MacroInsightNote와 동일 원칙).
+function EventBriefAiNote({ phase, text }) {
+  if (phase === 'loading') {
+    return <div className="brf-macro-insight-skeleton" aria-hidden="true" />;
+  }
+  if (!text) return null;
+  return <p className="brf-macro-insight">{text}</p>;
+}
+
+// 패널 본문 — [이게 뭔가] → [왜 중요한가](템플릿 문장 + Haiku 문단) → [관전 포인트]
+// (체크리스트 + 현재 수치·D-day) 3층 구조.
+function EventBriefBody({ type, macro, event, briefPhase, briefText }) {
+  const tpl = EVENT_BRIEF_TEMPLATES[type];
+  if (!tpl) return null;
+  return (
+    <>
+      <div className="brf-eventbrief-section">
+        <div className="brf-eventbrief-label">이게 뭔가</div>
+        <p className="brf-eventbrief-text">{tpl.whatIsIt}</p>
+      </div>
+      <div className="brf-eventbrief-section">
+        <div className="brf-eventbrief-label">왜 중요한가</div>
+        <p className="brf-eventbrief-text">{tpl.whyTemplate}</p>
+        <EventBriefAiNote phase={briefPhase} text={briefText} />
+      </div>
+      <div className="brf-eventbrief-section">
+        <div className="brf-eventbrief-label">{tpl.watchTitle}</div>
+        <ul className="brf-eventbrief-checklist">
+          {tpl.checklist.map((item, i) => <li key={i}>{item}</li>)}
+        </ul>
+        <EventBriefCurrentStat type={type} macro={macro} event={event} />
+      </div>
+    </>
+  );
+}
+
+// 배너 아코디언 래퍼 — MacroDetailPanel과 같은 useAccordionTransition을 공유하지만
+// .brf-macro-cards 그리드 바깥(배너 바로 아래)에 놓이므로 order는 쓰지 않는다.
+// 하단에 "캘린더에서 보기 →" 링크로 기존 캘린더 이동 기능을 그대로 보존한다(요구사항2).
+function EventBriefPanel({ expanded, type, macro, event, briefPhase, briefText, onViewCalendar }) {
+  const { wrapRef } = useAccordionTransition(expanded);
+  return (
+    <div className={`brf-macro-detail brf-eventbrief-detail${expanded ? ' expanded' : ''}`} ref={wrapRef}>
+      <div className="brf-macro-detail-inner">
+        <div className="brf-macro-detail-body">
+          <EventBriefBody type={type} macro={macro} event={event} briefPhase={briefPhase} briefText={briefText} />
+          <button type="button" className="brf-eventbrief-cal-link" onClick={onViewCalendar}>
+            캘린더에서 보기 →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── 매크로 카드 인라인 아코디언 상세(컨테이너 패턴) ──────────────────────────
@@ -825,9 +952,9 @@ function UnemploymentDetailBody({ unemployment, insightPhase, insightText }) {
   );
 }
 
-// 공용 아코디언 래퍼 — kind에 따라 본문만 바꿔 끼운다. 펼침/접힘 메커니즘(트랜지션
-// 감지, 스크롤)은 여기 한 곳에만 있고 세 indicator가 그대로 공유한다.
-function MacroDetailPanel({ kind, expanded, orderValue, insightPhase, insightText, ...bodyProps }) {
+// 펼침/접힘 공용 훅 — grid-template-rows 트랜지션 감지 + 펼칠 때 스크롤. 매크로 카드
+// 아코디언(MacroDetailPanel)과 이벤트 배너 아코디언(EventBriefPanel)이 동일하게 공유한다.
+function useAccordionTransition(expanded) {
   const wrapRef = useRef(null); // grid-template-rows 트랜지션을 감지할 바깥 래퍼
   const [transitionEnded, setTransitionEnded] = useState(false);
 
@@ -850,6 +977,14 @@ function MacroDetailPanel({ kind, expanded, orderValue, insightPhase, insightTex
     el.addEventListener('transitionend', onTransitionEnd);
     return () => el.removeEventListener('transitionend', onTransitionEnd);
   }, [expanded]);
+
+  return { wrapRef, transitionEnded };
+}
+
+// 공용 아코디언 래퍼 — kind에 따라 본문만 바꿔 끼운다. 펼침/접힘 메커니즘은
+// useAccordionTransition 한 곳에만 있고 세 indicator가 그대로 공유한다.
+function MacroDetailPanel({ kind, expanded, orderValue, insightPhase, insightText, ...bodyProps }) {
+  const { wrapRef, transitionEnded } = useAccordionTransition(expanded);
 
   return (
     <div className={`brf-macro-detail${expanded ? ' expanded' : ''}`} style={{ order: orderValue }} ref={wrapRef}>
@@ -874,17 +1009,29 @@ function MacroDetailPanel({ kind, expanded, orderValue, insightPhase, insightTex
 }
 
 function MacroSection({ phase, macro, onPageChange, insightPhase, insight }) {
-  // expandedCard: 'fomc' | 'cpi' | 'unemployment' | null — 값 하나로 세 카드의
-  // "동시 1개만 펼침"이 자동으로 보장된다.
+  // expandedCard: 'banner' | 'fomc' | 'cpi' | 'unemployment' | null — 값 하나로
+  // 배너 브리핑 패널까지 포함한 "동시 1개만 펼침"이 자동으로 보장된다(요구사항4).
   const [expandedCard, setExpandedCard] = useState(null);
 
-  if (phase !== 'done' || !macro || (!macro.fomc?.rate && !macro.cpi)) return null;
+  // /api/event-brief 응답 — 첫 펼침에만 fetch, 이후 재펼침은 세션(이 탭 마운트) 내
+  // 재사용한다(요구사항: "응답은 세션 내 재사용"). 실패해도 phase만 done+null로
+  // 끝나고 던지지 않아 배너·매크로 카드 렌더에는 전혀 영향을 주지 않는다.
+  const [briefPhase, setBriefPhase] = useState('idle'); // idle | loading | done
+  const [briefText, setBriefText] = useState(null);
+  const briefCacheRef = useRef({}); // { "type:date": context|null }
 
-  const { fomc, cpi, unemployment, upcoming } = macro;
+  // 훅은 항상 같은 순서로 호출돼야 하므로, "데이터 아직 없음" 조기 리턴은 모든 훅을
+  // 호출한 뒤(맨 아래)로 미루고 그 전까지는 macro가 null이어도 안전하게 계산한다.
+  const ready = phase === 'done' && !!macro && (!!macro.fomc?.rate || !!macro.cpi);
+
+  const { fomc, cpi, unemployment, upcoming } = macro ?? {};
 
   // 임박 배너 — "다가오는 이벤트"(FOMC/CPI/만기/MSCI/실적 통합) 중 D-3 이내인 것 전부 표시.
-  // 이벤트 상세 목록 자체는 캘린더 탭으로 이사했으므로, 배너를 탭하면 그쪽으로 이동한다.
-  const urgentEvents = (upcoming ?? []).filter(e => e.dDay <= 3);
+  const urgentEvents = ready ? (upcoming ?? []).filter(e => e.dDay <= 3) : [];
+  // 그 중 인라인 브리핑 템플릿이 있는(CPI/FOMC/고용지표) 첫 이벤트만 펼침 대상으로 삼는다.
+  const briefableEvent = urgentEvents.find(e => EVENT_BRIEF_TYPE_BY_CATEGORY[e.category]) ?? null;
+  const briefableType = briefableEvent ? EVENT_BRIEF_TYPE_BY_CATEGORY[briefableEvent.category] : null;
+  const briefDate = briefableEvent?.date ?? null;
 
   const cpiDir = cpi?.trend?.length >= 2
     ? (cpi.trend.at(-1).yoy >= cpi.trend[0].yoy ? 'up' : 'down')
@@ -901,9 +1048,37 @@ function MacroSection({ phase, macro, onPageChange, insightPhase, insight }) {
     }
   }
 
+  const bannerExpanded = expandedCard === 'banner';
   const fomcExpanded = expandedCard === 'fomc';
   const cpiExpanded = expandedCard === 'cpi';
   const unemploymentExpanded = expandedCard === 'unemployment';
+
+  useEffect(() => {
+    if (!bannerExpanded || !briefableType || !briefDate) return;
+    const key = `${briefableType}:${briefDate}`;
+    if (Object.prototype.hasOwnProperty.call(briefCacheRef.current, key)) {
+      setBriefText(briefCacheRef.current[key]);
+      setBriefPhase('done');
+      return;
+    }
+    setBriefPhase('loading');
+    fetch(`/api/event-brief?type=${briefableType}&date=${briefDate}`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        const context = data?.context ?? null;
+        briefCacheRef.current[key] = context;
+        setBriefText(context);
+        setBriefPhase('done');
+      })
+      .catch(() => {
+        briefCacheRef.current[key] = null;
+        setBriefText(null);
+        setBriefPhase('done');
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bannerExpanded, briefableType, briefDate]);
+
+  if (!ready) return null;
 
   return (
     <section className="brf-section">
@@ -912,14 +1087,34 @@ function MacroSection({ phase, macro, onPageChange, insightPhase, insight }) {
       </div>
 
       {urgentEvents.length > 0 && (
-        <div
-          className="brf-macro-banner"
-          role="button"
-          tabIndex={0}
-          onClick={() => onPageChange('calendar')}
-        >
-          {urgentEvents.map((e, i) => <EventBanner key={i} event={e} />)}
-        </div>
+        <>
+          <div
+            className={`brf-macro-banner${briefableEvent ? ' brf-macro-banner-expandable' : ''}${bannerExpanded ? ' active' : ''}`}
+            role={briefableEvent ? 'button' : undefined}
+            tabIndex={briefableEvent ? 0 : undefined}
+            aria-expanded={briefableEvent ? bannerExpanded : undefined}
+            onClick={briefableEvent ? () => toggleCard('banner') : undefined}
+            onKeyDown={briefableEvent ? e => handleCardKeyDown(e, 'banner') : undefined}
+          >
+            <div className="brf-macro-banner-rows">
+              {urgentEvents.map((e, i) => <EventBanner key={i} event={e} />)}
+            </div>
+            {briefableEvent && (
+              <span className="brf-macro-banner-chevron" aria-hidden="true">{bannerExpanded ? '▴' : '▾'}</span>
+            )}
+          </div>
+          {briefableEvent && (
+            <EventBriefPanel
+              expanded={bannerExpanded}
+              type={briefableType}
+              macro={macro}
+              event={briefableEvent}
+              briefPhase={briefPhase}
+              briefText={briefText}
+              onViewCalendar={() => onPageChange('calendar')}
+            />
+          )}
+        </>
       )}
 
       {/*
