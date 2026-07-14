@@ -1390,6 +1390,39 @@ body {
 }
 .brf-issue-row.brf-issue-major .brf-issue-title { font-weight: 800; color: var(--gold); }
 
+/* sources가 1개 이상인 이슈만 펼침 가능 — 화살표(브러 카드/배너와 같은 문자)와
+   호버가 붙는다. major 배경(위)과 충돌하지 않도록 major는 호버 배경을 별도로 주지
+   않는다(이미 gold-dim이 충분히 강조돼 있어 hover 배경을 얹으면 오히려 탁해짐). */
+.brf-issue-row-expandable {
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background .15s;
+}
+.brf-issue-row-expandable:not(.brf-issue-major):hover { background: var(--surface-tint); }
+.brf-issue-chevron {
+  font-size: 10px; color: var(--text-3); line-height: 1; flex-shrink: 0;
+}
+.brf-issue-row-expandable.brf-issue-major .brf-issue-chevron { color: var(--gold); }
+
+/* 근거 기사 목록 — .brf-macro-detail*(그리드 트랜지션)을 그대로 재사용하고
+   본문 스타일도 .brf-macro-detail-body를 재사용, 링크 목록만 여기서 추가한다. */
+.brf-issue-sources {
+  list-style: none; display: flex; flex-direction: column; gap: 4px;
+  margin: 0; padding: 0;
+}
+.brf-issue-source-link {
+  display: flex; align-items: center; gap: 5px;
+  min-height: 44px; /* 모바일 터치 타깃 확보(Apple HIG 44pt 기준) */
+  padding: 6px 8px; border-radius: 8px;
+  font-size: 12px; color: var(--text-1); text-decoration: none; line-height: 1.4;
+  transition: background .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.brf-issue-source-link:hover, .brf-issue-source-link:active { background: var(--surface-tint); }
+.brf-issue-source-media { font-weight: 700; color: var(--gold); flex-shrink: 0; white-space: nowrap; }
+.brf-issue-source-sep { color: var(--text-3); flex-shrink: 0; }
+.brf-issue-source-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.brf-issue-source-arrow { color: var(--text-3); flex-shrink: 0; font-size: 11px; }
+
 @media (max-width: 768px) {
   /* 모바일: 가로 스크롤 대신 세로 스택(요구사항2) — 카드를 펼치면 아코디언 패널이
      바로 그 카드 아래(다음 grid row, 1열이라 항상 카드 바로 아래)에 나타난다. */

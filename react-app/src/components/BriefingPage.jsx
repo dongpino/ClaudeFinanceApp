@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { createChart, LineType } from 'lightweight-charts';
 import Header from './Header';
 import BottomNav from './BottomNav';
@@ -1249,7 +1249,55 @@ const ISSUE_CATEGORY_ICON = {
   earnings: '📈', macro_shock: '💥', other_major: '🔔',
 };
 
+// 근거 기사 목록 — "매체명 · 제목 ↗" 한 줄 전체가 링크(터치 타깃 확보), 새 탭으로 연다.
+function IssueSourceList({ sources }) {
+  return (
+    <ul className="brf-issue-sources">
+      {sources.map((s, i) => (
+        <li key={i}>
+          <a className="brf-issue-source-link" href={s.url} target="_blank" rel="noopener noreferrer">
+            <span className="brf-issue-source-media">{s.media}</span>
+            <span className="brf-issue-source-sep">·</span>
+            <span className="brf-issue-source-title">{s.title}</span>
+            <span className="brf-issue-source-arrow" aria-hidden="true">↗</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// 이슈 아코디언 패널 — MacroDetailPanel/EventBriefPanel과 같은 useAccordionTransition을
+// 공유한다. .brf-issue-list가 grid가 아니라 flex-column이라 order 트릭이 필요 없고,
+// 그냥 해당 이슈 행 바로 뒤 형제로 렌더하면 DOM 순서만으로 바로 아래에 놓인다.
+function IssueDetailPanel({ expanded, sources }) {
+  const { wrapRef } = useAccordionTransition(expanded);
+  return (
+    <div className={`brf-macro-detail${expanded ? ' expanded' : ''}`} ref={wrapRef}>
+      <div className="brf-macro-detail-inner">
+        <div className="brf-macro-detail-body">
+          <IssueSourceList sources={sources} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function IssueSection({ phase, issues }) {
+  // expandedIssue: 이슈 배열 인덱스 | null — 이 섹션 전용 상태로, 매크로 카드/이벤트
+  // 배너의 expandedCard와는 완전히 독립적이다(섹션이 달라 서로 접을 필요 없음, 요구사항4).
+  const [expandedIssue, setExpandedIssue] = useState(null);
+
+  function toggleIssue(i) {
+    setExpandedIssue(prev => (prev === i ? null : i));
+  }
+  function handleIssueKeyDown(e, i) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleIssue(i);
+    }
+  }
+
   if (phase !== 'done') return null;
 
   return (
@@ -1261,12 +1309,31 @@ function IssueSection({ phase, issues }) {
         <p className="brf-issue-empty">오늘은 특이 이슈가 감지되지 않았습니다.</p>
       ) : (
         <div className="brf-issue-list">
-          {issues.map((it, i) => (
-            <div key={i} className={`brf-issue-row${it.importance === 3 ? ' brf-issue-major' : ''}`}>
-              <span className="brf-issue-icon">{ISSUE_CATEGORY_ICON[it.category] ?? '🔔'}</span>
-              <span className="brf-issue-title">{it.title_ko}</span>
-            </div>
-          ))}
+          {issues.map((it, i) => {
+            // sources 없거나 빈 이슈(구버전 캐시 포함) — 화살표 없이 비인터랙티브,
+            // 이벤트 배너의 미지원 타입과 동일 규칙(요구사항2).
+            const hasSources = Array.isArray(it.sources) && it.sources.length > 0;
+            const expanded = hasSources && expandedIssue === i;
+            return (
+              <Fragment key={i}>
+                <div
+                  className={`brf-issue-row${it.importance === 3 ? ' brf-issue-major' : ''}${hasSources ? ' brf-issue-row-expandable' : ''}`}
+                  role={hasSources ? 'button' : undefined}
+                  tabIndex={hasSources ? 0 : undefined}
+                  aria-expanded={hasSources ? expanded : undefined}
+                  onClick={hasSources ? () => toggleIssue(i) : undefined}
+                  onKeyDown={hasSources ? e => handleIssueKeyDown(e, i) : undefined}
+                >
+                  <span className="brf-issue-icon">{ISSUE_CATEGORY_ICON[it.category] ?? '🔔'}</span>
+                  <span className="brf-issue-title">{it.title_ko}</span>
+                  {hasSources && (
+                    <span className="brf-issue-chevron" aria-hidden="true">{expanded ? '▴' : '▾'}</span>
+                  )}
+                </div>
+                {hasSources && <IssueDetailPanel expanded={expanded} sources={it.sources} />}
+              </Fragment>
+            );
+          })}
         </div>
       )}
     </section>
