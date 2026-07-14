@@ -49,7 +49,7 @@ export const CATEGORY_TABS = [
   { key: 'macro',  label: '매크로' },
 ];
 
-export const DEFAULT_CATEGORY = 'major';
+export const DEFAULT_CATEGORY = 'umi';
 
 // 'major'(주요) 탭의 기본값 — ITEM_CATEGORIES에 categories:['major']로 태그된 종목들.
 // 사용자가 홈 탭에서 직접 선택을 저장하면(homeMajorStore.js) 이 기본값 대신 그 선택을
