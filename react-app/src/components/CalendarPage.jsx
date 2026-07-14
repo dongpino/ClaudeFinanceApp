@@ -138,7 +138,7 @@ export default function CalendarPage({ activePage, onPageChange }) {
 
   return (
     <>
-      <PhotoBackground src="/bg/forest-calendar.webp" scrollContainerRef={scrollRef} />
+      <PhotoBackground scrollContainerRef={scrollRef} />
       <Header />
       <div className="page active">
         <div className="cal-scroll" ref={scrollRef}>

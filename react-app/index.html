@@ -5,6 +5,14 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>오늘의 시황</title>
+    <!-- 캘린더 탭 배경(PhotoBackground.jsx, index.css의 [data-theme] 스왑) 미리 받기 —
+         테마 토글이 CSS만으로 즉시 일어나므로, 두 테마의 이미지를 전부(라이트는
+         데스크톱/모바일 크롭 둘 다) 여기서 미리 받아두지 않으면 토글 순간 네트워크
+         왕복이 끼어들어 배경이 잠깐 비거나 깜빡인다. media 조건을 걸지 않고 항상
+         셋 다 받는다 — 뷰포트 리사이즈로 모바일↔데스크톱 크롭이 바뀔 때도 마찬가지. -->
+    <link rel="preload" as="image" href="/bg/forest-calendar.webp" />
+    <link rel="preload" as="image" href="/bg/forest-calendar-light.webp" />
+    <link rel="preload" as="image" href="/bg/forest-calendar-light-mobile.webp" />
   </head>
   <body>
     <div id="root"></div>
