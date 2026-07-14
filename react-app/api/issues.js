@@ -15,6 +15,18 @@
  *       Redis 실패 시에는 캐시 없이 매번 새로 분류하는 방식으로 폴백한다.
  * 일일 상한: 하루 24회 분류 — 초과 시 새로 호출하지 않고 최신 캐시를 반환한다.
  * 환경변수: ANTHROPIC_API_KEY (필수), KV_REST_API_URL / KV_REST_API_TOKEN (선택)
+ *
+ * ── 근거 기사 저장(sources) ──────────────────────────────────────
+ * Haiku에게 헤드라인을 "1. [출처] 제목" 형태로 번호를 매겨 보여주고(buildUserPrompt),
+ * 이슈마다 그 번호를 source_indices로 되돌려받는다(최대 3개, 여러 헤드라인을
+ * 종합한 이슈는 관련 번호 전부). 이 인덱스를 핸들러가 가진 headlines 배열에
+ * 그대로 대입해 각 이슈에 sources: [{title, media, url}]를 붙여 저장한다 —
+ * Haiku에게 URL 문자열 자체를 그대로 베껴 쓰게 하지 않는다(긴 URL을 정확히
+ * 재현하지 못하고 환각을 일으킬 위험이 큼). source_indices가 검증에 실패하거나
+ * (배열이 아님, 범위 밖, 모델이 근거 불명으로 비워둠) 아예 없으면 그 이슈의
+ * sources는 조용히 빈 배열이 된다 — 근거 저장 실패가 이슈 자체(category/
+ * title_ko 등) 표시를 막지는 않는다. sources가 비어있는 이슈(이 필드 도입
+ * 이전에 캐시된 데이터 포함)는 프론트에서 비인터랙티브로 취급될 예정이다.
  */
 
 import { Redis } from '@upstash/redis';
@@ -145,10 +157,14 @@ function buildSystemPrompt() {
 
 [출력 형식]
 설명, 인사말, 마크다운 코드블록 없이 아래 JSON 배열만 출력하십시오:
-[{"category": "regulation", "title_ko": "한국어 한 줄 요약(30자 내외)", "importance": 2, "source_hint": "매체명 또는 원문 제목 일부"}]
+[{"category": "regulation", "title_ko": "한국어 한 줄 요약(30자 내외)", "importance": 2, "source_hint": "매체명 또는 원문 제목 일부", "source_indices": [3]}]
 
 - category는 위 6개 값 중 하나만 사용
 - importance: 3=시장 전체에 즉각 영향 가능, 2=해당 섹터·자산에 중요, 1=참고할 만한 수준
+- source_indices: 이 이슈의 근거가 된 헤드라인 번호(아래 목록의 번호, 1부터 시작)를 배열로
+  쓰십시오. 헤드라인 하나에서 나온 이슈면 원소 1개, 여러 헤드라인을 종합했다면 관련 번호를
+  전부 포함(최대 3개)하십시오. 실제로 참고한 번호만 쓰고, 근거가 불분명하면 빈 배열로
+  남기십시오 — 번호를 지어내지 마십시오.
 - 반드시 유효한 JSON 배열만 출력(순수 JSON, 다른 텍스트 없이)`;
 }
 
@@ -190,9 +206,32 @@ async function callAnthropicAPI(apiKey, systemPrompt, userPrompt) {
   }
 }
 
+const MAX_SOURCE_INDICES = 3;
+
+// source_indices 검증 — 정수 배열, 1..headlineCount 범위, 중복 제거, 최대
+// MAX_SOURCE_INDICES개로 캡. 모델이 형식을 어기거나(배열이 아님, 범위 밖 값,
+// 구버전 프롬프트 캐시 등) 통째로 비웠으면 빈 배열로 폴백한다 — 이 검증은
+// 이슈 자체(category/title_ko 등)의 유지 여부와 무관하다(근거 저장 실패가
+// 이슈 표시를 막으면 안 된다는 요구사항 그대로).
+function parseSourceIndices(raw, headlineCount) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const valid = [];
+  for (const v of raw) {
+    if (!Number.isInteger(v) || v < 1 || v > headlineCount) continue;
+    if (seen.has(v)) continue;
+    seen.add(v);
+    valid.push(v);
+    if (valid.length >= MAX_SOURCE_INDICES) break;
+  }
+  return valid;
+}
+
 // 모델 응답 텍스트 → 이슈 배열. 코드펜스가 섞여 나올 가능성에 대비해 벗겨내고,
 // 파싱 실패나 형식이 어긋난 항목은 조용히 걸러낸다(빈 배열로 안전하게 폴백).
-function parseIssues(text) {
+// headlineCount는 source_indices 범위 검증에만 쓰인다(프롬프트에 실은 헤드라인
+// 개수 — buildUserPrompt의 1..N 번호와 정확히 같은 기준).
+function parseIssues(text, headlineCount) {
   try {
     const stripped = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
     const parsed = JSON.parse(stripped);
@@ -208,11 +247,26 @@ function parseIssues(text) {
         title_ko:    it.title_ko.trim(),
         importance:  it.importance,
         source_hint: typeof it.source_hint === 'string' ? it.source_hint.trim() : '',
+        source_indices: parseSourceIndices(it.source_indices, headlineCount),
       }));
   } catch (e) {
     console.warn('[issues] JSON 파싱 실패 — 빈 배열로 폴백:', e.message);
     return [];
   }
+}
+
+// source_indices(1-based, headlines 배열 기준) → 실제 근거 기사 정보로 매핑해
+// 저장용 sources 필드로 바꿔치기한다. source_indices가 비어 있으면(검증 실패
+// 또는 모델이 근거 불명으로 비워둔 경우) sources도 그냥 빈 배열 — 이슈 자체
+// (category/title_ko 등)는 그대로 유지된다(요구사항 2).
+function attachSources(issues, headlines) {
+  return issues.map(({ source_indices, ...rest }) => ({
+    ...rest,
+    sources: source_indices.map(i => {
+      const h = headlines[i - 1];
+      return { title: h.title, media: h.source, url: h.link };
+    }),
+  }));
 }
 
 // ── 핸들러 ─────────────────────────────────────────────────
@@ -265,7 +319,7 @@ export default async function handler(req, res) {
     const userPrompt    = buildUserPrompt(headlines);
     const aiData = await callAnthropicAPI(apiKey, systemPrompt, userPrompt);
     const text   = aiData?.content?.[0]?.text ?? '[]';
-    const issues = parseIssues(text);
+    const issues = attachSources(parseIssues(text, headlines.length), headlines);
     const usage  = aiData?.usage ?? {};
 
     const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
