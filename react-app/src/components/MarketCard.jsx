@@ -24,6 +24,14 @@ const CURRENCY_PREFIX = { usd: '$', krw: '₩' };
 //   - score   : 공포탐욕지수 등, 값 "72"(단위 없는 0~100 점수) / 등락 포인트 차
 const NON_PRICE_UNITS = new Set(['percent', 'pct_pt', 'score']);
 
+// "이름 (심볼)" 구조 감지 — 이름 본문과 마지막 괄호 사이에 공백이 있어야만 분리
+// 대상으로 본다. 공백 없이 붙은 괄호(예: "원/엔(100엔)")는 심볼이 아니라 이름
+// 자체의 단위 표기라 분리하면 의미가 깨진다 — 이 구분이 핵심.
+function splitNameSymbol(fullName) {
+  const m = fullName.match(/^(.+) (\([^)]+\))$/);
+  return m ? [m[1], m[2]] : [fullName, null];
+}
+
 // 장 시작 전(동시호가 포함) 상태값 — 이 구간에서는 Naver 개별종목 quote 자체가
 // compareToPreviousClosePrice/fluctuationsRatio를 0으로 반환한다(오늘 실측 확인,
 // 삼성전자로도 재현됨 — 우미 투자 3종목만의 문제가 아니라 이 엔드포인트의 정상 동작).
@@ -90,6 +98,7 @@ export default function MarketCard({ item }) {
   const avgPrice = getAvgPrice(item.id);
   const avgPct = avgPrice != null ? ((price - avgPrice) / avgPrice) * 100 : null;
   const avgDir = avgPct == null ? null : (avgPct > 0 ? 'up' : avgPct < 0 ? 'down' : 'flat');
+  const [nameMain, nameSymbol] = splitNameSymbol(name);
 
   return (
     <article
@@ -99,7 +108,10 @@ export default function MarketCard({ item }) {
     >
       <div className="card-top">
         <div className="card-name-row">
-          <span className="card-name">{name}</span>
+          <span className="card-name">
+            <span className="card-name-main">{nameMain}</span>
+            {nameSymbol && <span className="card-name-symbol"> {nameSymbol}</span>}
+          </span>
           <div className="card-top-right">
             {issues.length > 0 && (
               <span
