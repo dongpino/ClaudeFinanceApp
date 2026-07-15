@@ -98,8 +98,8 @@ export default function Sparkline({ history, dir, avgPrice, currency }) {
         <line
           x1="0" x2={W} y1={avgLine.y} y2={avgLine.y}
           style={{ stroke: 'var(--gold)' }}
-          strokeWidth="1.5"
-          strokeDasharray="4 3"
+          strokeWidth="0.75"
+          strokeDasharray="2 1.5"
         />
       )}
     </svg>
