@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import Header from './Header';
 import CategoryTabs from './CategoryTabs';
 import MajorEditPanel from './MajorEditPanel';
@@ -61,18 +61,56 @@ function SwipeDebugHUD({ history }) {
   );
 }
 
-// 홈 상단 돌발 이슈 스트립 — 실패/로딩/이슈 없음이면 조용히 숨긴다(홈 본 기능과 완전 분리).
-function IssueStrip({ issues, onClick }) {
+// 홈 하단 뉴스 티커(전광판) — 실패/로딩/이슈 없음이면 조용히 숨긴다(홈 본 기능과 완전 분리).
+// Header/BottomNav와 마찬가지로 #root(100dvh flex column, index.css)의 flex-shrink:0
+// 형제로 배치한다(HomePage 리턴문에서 .page와 BottomNav 사이) — 이 구조에서는
+// position:fixed 없이도 이미 "항상 보이는 고정 띠"가 된다. 스크롤은 .grid 내부에서만
+// 일어나고 .page/티커/BottomNav 자신은 스크롤되지 않기 때문. BottomNav의
+// safe-area-inset-bottom 처리도 그대로 유지되며 티커는 그 위에 자연히 얹힌다 —
+// 별도 안전영역 패딩이나 콘텐츠 쪽 하단 여백 보정이 필요 없다(flex:1 체인이 티커
+// 높이만큼 .grid 가용 높이를 자동으로 줄여준다, index.css 상단 "홈 카테고리 슬라이드
+// 트랙" 주석 참고).
+function NewsTicker({ issues, onClick }) {
   const majorIssues = issues.filter(it => it.importance >= 2);
+  const setRef = useRef(null);
+  const [duration, setDuration] = useState(20); // 측정 전 폴백값
+  const [paused, setPaused] = useState(false);
+
+  // 이슈 목록이 바뀔 때만 재측정 — length가 같아도 내용(title_ko)이 바뀌면 폭이
+  // 달라질 수 있어 배열 identity 대신 내용 기반 키를 쓴다.
+  const contentKey = majorIssues.map(it => `${it.category}:${it.title_ko}`).join('|');
+  useLayoutEffect(() => {
+    if (!setRef.current) return;
+    const TICKER_SPEED_PX_S = 60; // 시작값 — 조정 예정
+    setDuration(setRef.current.scrollWidth / TICKER_SPEED_PX_S);
+  }, [contentKey]);
+
   if (majorIssues.length === 0) return null;
 
+  const renderItems = keyPrefix => majorIssues.map((it, i) => (
+    <span key={`${keyPrefix}${i}`} className="news-ticker-item">
+      {ISSUE_ICON[it.category] ?? '🔔'} {it.title_ko}
+    </span>
+  ));
+
   return (
-    <div className="home-issue-strip" onClick={onClick} role="button" tabIndex={0}>
-      {majorIssues.map((it, i) => (
-        <span key={i} className="home-issue-chip">
-          {ISSUE_ICON[it.category] ?? '🔔'} {it.title_ko}
-        </span>
-      ))}
+    <div
+      className={`news-ticker${paused ? ' paused' : ''}`}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onPointerDown={() => setPaused(true)}
+      onPointerUp={() => setPaused(false)}
+      onPointerCancel={() => setPaused(false)}
+      onPointerLeave={() => setPaused(false)}
+    >
+      <div className="news-ticker-track" style={{ '--ticker-duration': `${duration}s` }}>
+        {/* 두 벌을 이어붙여 0→-50% 루프 — 아래 두 세트는 내용이 완전히 같아야
+            이음새가 안 보인다(폭이 달라지면 -50% 지점이 두 번째 세트 시작과 어긋남).
+            두 번째 세트는 스크린리더에 중복 낭독되지 않게 aria-hidden. */}
+        <div className="news-ticker-set" ref={setRef}>{renderItems('a')}</div>
+        <div className="news-ticker-set" aria-hidden="true">{renderItems('b')}</div>
+      </div>
     </div>
   );
 }
@@ -531,8 +569,6 @@ export default function HomePage({ activePage, onPageChange }) {
           </div>
         )}
 
-        <IssueStrip issues={issues} onClick={() => onPageChange('briefing')} />
-
         <CategoryTabs
           activeCat={activeCat}
           onChange={setActiveCat}
@@ -601,6 +637,7 @@ export default function HomePage({ activePage, onPageChange }) {
       {editingMajor && (
         <MajorEditPanel selectedIds={majorIds} onSave={handleSaveMajor} />
       )}
+      <NewsTicker issues={issues} onClick={() => onPageChange('briefing')} />
       <BottomNav activePage={activePage} onPageChange={onPageChange} />
     </>
   );

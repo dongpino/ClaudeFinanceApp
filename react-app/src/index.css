@@ -217,26 +217,6 @@ body {
   border-bottom: 1px solid rgba(249,115,22,.2);
 }
 
-/* ── 홈 돌발 이슈 스트립 ───────────────────── */
-.home-issue-strip {
-  flex-shrink: 0;
-  display: flex; gap: 8px;
-  padding: 7px 16px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-}
-.home-issue-strip::-webkit-scrollbar { display: none; }
-.home-issue-chip {
-  flex-shrink: 0;
-  display: inline-flex; align-items: center;
-  padding: 4px 11px; border-radius: 10px;
-  background: var(--gold-dim); border: 1px solid var(--gold);
-  color: var(--gold); font-size: 11.5px; font-weight: 700;
-  white-space: nowrap;
-}
-
 /* ── 카테고리 탭 ──────────────────────────── */
 .tabs {
   flex-shrink: 0;
@@ -601,6 +581,68 @@ body {
 .ph-icon { opacity: .3; }
 .ph-title { font-size: 15px; font-weight: 700; color: var(--text-2); }
 .ph-sub   { font-size: 12.5px; }
+
+/* ── 홈 하단 뉴스 티커(전광판) ───────────────── */
+/* HomePage.jsx가 Header/BottomNav와 같은 층위(#root flex column)의 flex-shrink:0
+   형제로 배치한다 — position:fixed 없이도 이 구조에서 이미 "고정 띠"가 되고,
+   BottomNav의 safe-area 처리 위에 자연히 얹힌다(자세한 설명은 HomePage.jsx의
+   NewsTicker 주석 참고). */
+.news-ticker {
+  flex-shrink: 0;
+  overflow: hidden;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-nav);
+  cursor: pointer;
+}
+.news-ticker-track {
+  display: flex;
+  width: max-content;
+  /* iOS 교훈(홈 스와이프 트랙과 동일 규칙, 위 "홈 카테고리 슬라이드 트랙" 주석 참고):
+     will-change는 제스처/상태에 따라 동적으로 켜고 끄지 않고 항상 걸어둔다. */
+  will-change: transform;
+  animation: news-ticker-scroll var(--ticker-duration, 20s) linear infinite;
+}
+@keyframes news-ticker-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+/* 호버(데스크톱)·터치(paused 클래스, HomePage.jsx가 pointer 이벤트로 토글) 중 정지 */
+.news-ticker:hover .news-ticker-track,
+.news-ticker.paused .news-ticker-track {
+  animation-play-state: paused;
+}
+.news-ticker-set {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px;
+  /* 이슈가 적어 세트 하나가 화면 폭보다 짧을 때도 루프 한 바퀴가 너무 짧아
+     어색해지지 않도록 최소 폭을 보장 — 두 세트 모두 동일하게 적용해야
+     translateX(-50%) 이음새가 안 어긋난다. */
+  min-width: 100vw;
+}
+.news-ticker-item {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center;
+  padding: 4px 11px; border-radius: 10px;
+  background: var(--gold-dim); border: 1px solid var(--gold);
+  color: var(--gold); font-size: 11.5px; font-weight: 700;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 마퀴 정지 — 기존 이슈 스트립처럼 가로 스크롤 가능한 정적 띠로 폴백.
+     복제된 두 번째 세트는 정적 모드에선 내용이 그대로 중복 노출되므로 숨긴다. */
+  .news-ticker {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .news-ticker-track {
+    animation: none;
+    width: auto;
+  }
+  .news-ticker-set { min-width: 0; }
+  .news-ticker-set[aria-hidden="true"] { display: none; }
+}
 
 /* ── 하단 내비게이션 ──────────────────────── */
 .bottom-nav {
