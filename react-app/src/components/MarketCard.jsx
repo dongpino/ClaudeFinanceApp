@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import Sparkline from './Sparkline';
+import { getAvgPrice } from '../avgPriceStore';
 
 const ARROW = { up: '▲', down: '▼', flat: '-' };
 
@@ -84,6 +85,12 @@ export default function MarketCard({ item }) {
   const gradeInfo = grade ? GRADE_MAP[grade] : null;
   const isCollecting = history_bootstrapping && (!history || history.length < 5);
 
+  // 평단가 수익률 배지 — 우미 투자 종목만 avgPrice가 붙는다(그 외는 getAvgPrice가
+  // 항상 null). null이면 아래 JSX가 완전히 건너뛰어 기존 렌더와 동일하다.
+  const avgPrice = getAvgPrice(item.id);
+  const avgPct = avgPrice != null ? ((price - avgPrice) / avgPrice) * 100 : null;
+  const avgDir = avgPct == null ? null : (avgPct > 0 ? 'up' : avgPct < 0 ? 'down' : 'flat');
+
   return (
     <article
       className={`card ${dir}`}
@@ -115,13 +122,18 @@ export default function MarketCard({ item }) {
             {change_unavailable ? '—' : <>{ARROW[dir]} {fcUnit(change, unit)}</>}
           </span>
           {!NON_PRICE_UNITS.has(unit) && !change_unavailable && <span className="change-pct">{fpct(change_pct)}</span>}
+          {avgPct != null && (
+            <span className={`avg-badge ${avgDir}`}>
+              평단 {avgPct > 0 ? '+' : ''}{avgPct.toFixed(1)}%
+            </span>
+          )}
         </div>
       </div>
 
       <div className="card-spark">
         {isCollecting
           ? <div className="spark-collecting">차트 데이터 수집 중 · {history?.length ?? 0}/5일</div>
-          : <Sparkline history={history || []} dir={dir} />}
+          : <Sparkline history={history || []} dir={dir} avgPrice={avgPrice} currency={currency} />}
       </div>
 
       <div className="card-bottom">

@@ -519,12 +519,39 @@ body {
 .card-change.flat .change-chip { background: var(--flat-dim);  }
 .change-pct { font-variant-numeric: tabular-nums; }
 
+/* 평단가 수익률 배지 — 기존 등락 배지(.change-chip)와 같은 자리(card-change), 같은
+   상승/하락 색 규칙이지만 오늘 등락(dir)이 아니라 평단가 대비 손익 방향이라 부모
+   .card-change의 색을 상속하지 않고 배지 자신에 up/down/flat 클래스를 따로 건다. */
+.avg-badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 5px; border-radius: 4px;
+  font-size: 10.5px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.avg-badge.up   { color: var(--up);   background: var(--up-dim);   }
+.avg-badge.down { color: var(--down); background: var(--down-dim);  }
+.avg-badge.flat { color: var(--flat); background: var(--flat-dim);  }
+
 /* 스파크라인 영역 */
 .card-spark {
   flex: 1; min-height: 36px;
   overflow: hidden;
   margin: 7px -11px 0;
 }
+/* 카드 스파크라인 평단가 힌트(범위 밖) — Sparkline.jsx가 avgPrice가 시각 범위 ±5%
+   밖일 때만 렌더. 라인 자체(범위 안)는 SVG 내부 <line>이라 별도 CSS가 필요 없다. */
+.spark-avg-hint {
+  position: absolute;
+  left: 4px;
+  font-size: 8.5px; font-weight: 700;
+  color: #1a0e00;
+  background: var(--gold);
+  border-radius: 3px; padding: 1px 4px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.spark-avg-hint-above { top: 2px; }
+.spark-avg-hint-below { bottom: 2px; }
 .spark-empty {
   display: flex; align-items: center; justify-content: center;
   height: 100%; font-size: 10px; color: var(--text-3);
@@ -753,6 +780,22 @@ body {
   overflow: hidden;
   touch-action: pan-y;
 }
+/* 상세화면 평단가 힌트(범위 밖) — Chart.jsx가 avgPrice가 있을 때만 래퍼(position:
+   relative)를 렌더하고, 그중에서도 시각 범위 ±5% 밖일 때만 이 힌트가 나타난다.
+   범위 안이면 lightweight-charts의 createPriceLine(축 라벨 '평단')으로 대신 표시되고
+   이 힌트는 안 뜬다. */
+.chart-avg-hint {
+  position: absolute;
+  left: 10px;
+  padding: 3px 8px; border-radius: 6px;
+  font-size: 11px; font-weight: 700;
+  color: #1a0e00;
+  background: var(--gold);
+  z-index: 2;
+  pointer-events: none;
+}
+.chart-avg-hint-above { top: 8px; }
+.chart-avg-hint-below { bottom: 8px; }
 
 /* "분석 탭에서 열기" — analysisLink.js가 지원 대상으로 판정한 종목에서만 렌더됨.
    차트 바로 아래, 90일 통계 카드 위 — margin 규칙은 위아래 형제 블록(.detail-chart-wrap/
