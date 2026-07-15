@@ -337,6 +337,36 @@ body {
 .major-edit-done-btn:hover { opacity: .88; }
 .major-edit-done-btn:active { transform: scale(.98); }
 
+/* ── 평단가 편집 패널(AvgPriceEditPanel.jsx) ─────────────
+   backdrop/panel/header/title/close/hint/warn/done-btn은 major-edit-*를 그대로
+   재사용(동일한 모달 chrome) — 입력 행만 이 파일 전용 클래스로 새로 그린다. */
+.avgprice-edit-list {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.avgprice-edit-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1.5px solid var(--border);
+}
+.avgprice-edit-name { font-size: 13.5px; font-weight: 700; color: var(--text-1); }
+.avgprice-edit-input-wrap {
+  display: flex; align-items: center; gap: 4px;
+  flex-shrink: 0;
+}
+.avgprice-edit-currency { font-size: 13px; font-weight: 700; color: var(--text-3); }
+.avgprice-edit-input {
+  width: 108px; padding: 7px 9px; border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: var(--bg-card); color: var(--text-1);
+  font-size: 13px; font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.avgprice-edit-input:focus { outline: none; border-color: var(--gold); }
+.avgprice-edit-notice {
+  font-size: 11.5px; font-weight: 600; color: var(--gold);
+  text-align: center; margin: 8px 0 0;
+}
+
 /* ── 홈 카테고리 슬라이드 트랙 ──────────────── */
 /* 뷰포트(overflow:hidden) 안에 5개 카테고리 패널을 가로로 나란히 두고(트랙
    width:500%, 패널 width:20%) translateX로 밀어 전환한다.

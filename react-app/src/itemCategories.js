@@ -16,10 +16,13 @@ export const ITEM_CATEGORIES = [
   // "우미 투자" — 개인 워치리스트 고정 종목 4개(api/_collectors/watchlist.js).
   // 사용자가 UI에서 추가/삭제하지 않으므로 'major'처럼 편집 패널이 없다 — 종목을
   // 바꾸려면 이 배열과 watchlist.js의 WATCHLIST 배열을 함께 한 줄씩 고치면 된다.
-  { id: 'HYPR',       name: '하이퍼파인',          source: 'watchlist', categories: ['umi'] },
-  { id: '419530',     name: 'SAMG엔터',            source: 'watchlist', categories: ['umi'] },
-  { id: '028300',     name: 'HLB',                 source: 'watchlist', categories: ['umi'] },
-  { id: '080220',     name: '제주반도체',          source: 'watchlist', categories: ['umi'] },
+  // currency: 평단가 편집 패널(AvgPriceEditPanel.jsx)이 입력 단위(₩ 정수/$ 소수)를
+  // 결정하는 데 쓴다 — item.currency(서버 응답, opt-in 필드)와 동일한 값을 그대로
+  // 미리 알아둔 것뿐, 편집 패널은 서버 응답을 기다리지 않고 즉시 렌더돼야 하므로.
+  { id: 'HYPR',       name: '하이퍼파인',          source: 'watchlist', categories: ['umi'], currency: 'usd' },
+  { id: '419530',     name: 'SAMG엔터',            source: 'watchlist', categories: ['umi'], currency: 'krw' },
+  { id: '028300',     name: 'HLB',                 source: 'watchlist', categories: ['umi'], currency: 'krw' },
+  { id: '080220',     name: '제주반도체',          source: 'watchlist', categories: ['umi'], currency: 'krw' },
   { id: 'nasdaq',     name: '나스닥',              source: 'us-indices', categories: ['major', 'index'] },
   { id: 'dow',        name: '다우존스',            source: 'us-indices', categories: ['major', 'index'] },
   { id: 'kospi',      name: '코스피',              source: 'kr',          categories: ['major', 'index'] },

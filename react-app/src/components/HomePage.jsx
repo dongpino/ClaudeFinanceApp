@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import Header from './Header';
 import CategoryTabs from './CategoryTabs';
 import MajorEditPanel from './MajorEditPanel';
+import AvgPriceEditPanel from './AvgPriceEditPanel';
 import MarketCard, { detectIssues } from './MarketCard';
 import BottomNav from './BottomNav';
 import { useData } from '../DataContext';
@@ -122,6 +123,7 @@ export default function HomePage({ activePage, onPageChange }) {
   // "주요" 탭 사용자 선택(최대 4개) — 없으면 loadMajorIds()가 기본값으로 폴백.
   const [majorIds, setMajorIds]         = useState(loadMajorIds);
   const [editingMajor, setEditingMajor] = useState(false);
+  const [editingAvgPrices, setEditingAvgPrices] = useState(false);
 
   // 돌발 이슈 스트립 — 실패해도 조용히 숨길 뿐 홈 본 기능에는 영향 없음.
   const [issues, setIssues] = useState([]);
@@ -385,7 +387,7 @@ export default function HomePage({ activePage, onPageChange }) {
   }
 
   function handleTrackPointerDown(e) {
-    if (editingMajor) return; // 편집 모드에서는 칩 탭만 허용, 드래그 비활성화
+    if (editingMajor || editingAvgPrices) return; // 편집 모드에서는 칩 탭만 허용, 드래그 비활성화
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     // iOS 엣지 스와이프(뒤로가기 제스처)와 충돌 방지 — 화면 좌우 EDGE_GUARD_PX 안쪽에서
     // 시작한 제스처는 아예 추적하지 않는다.
@@ -573,6 +575,7 @@ export default function HomePage({ activePage, onPageChange }) {
           activeCat={activeCat}
           onChange={setActiveCat}
           onEditMajor={() => setEditingMajor(true)}
+          onEditAvgPrices={() => setEditingAvgPrices(true)}
         />
         <div
           className="home-cat-viewport"
@@ -636,6 +639,9 @@ export default function HomePage({ activePage, onPageChange }) {
       </div>
       {editingMajor && (
         <MajorEditPanel selectedIds={majorIds} onSave={handleSaveMajor} />
+      )}
+      {editingAvgPrices && (
+        <AvgPriceEditPanel onClose={() => setEditingAvgPrices(false)} />
       )}
       <NewsTicker issues={issues} onClick={() => onPageChange('briefing')} />
       <BottomNav activePage={activePage} onPageChange={onPageChange} />
