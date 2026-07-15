@@ -81,7 +81,7 @@ function NewsTicker({ issues, onClick }) {
   const contentKey = majorIssues.map(it => `${it.category}:${it.title_ko}`).join('|');
   useLayoutEffect(() => {
     if (!setRef.current) return;
-    const TICKER_SPEED_PX_S = 60; // 시작값 — 조정 예정
+    const TICKER_SPEED_PX_S = 30; // 60→30 (더 느리게 조정)
     setDuration(setRef.current.scrollWidth / TICKER_SPEED_PX_S);
   }, [contentKey]);
 
