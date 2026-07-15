@@ -496,9 +496,17 @@ body {
   justify-content: space-between; margin-bottom: 6px;
 }
 .card-name {
-  font-size: 11px; font-weight: 700; color: var(--text-2);
+  font-size: 13px; font-weight: 700; color: var(--text-2);
   border-bottom: 1.5px solid var(--gold); padding-bottom: 1px;
   line-height: 1.3;
+  /* 폰트 확대 후 가장 긴 이름("필라델피아 반도체 (SOX)")이 2행으로 줄바꿈되며
+     우측 카테고리 배지에 붙어버리는 문제가 실측 확인됨 — flex row에서 기본
+     min-width:auto인 채로는 줄바꿈으로 빠져나가려 하므로, min-width:0으로 축소를
+     허용하고 한 줄 말줄임으로 강제한다(.meta-time과 동일한 기존 말줄임 관례). */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .card-top-right {
   display: flex; align-items: flex-start; gap: 4px; flex-shrink: 0;
