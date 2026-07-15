@@ -52,16 +52,29 @@ html { background: var(--bg); touch-action: pan-x pan-y; }
 
 /* ── 배경 색조/그레인 실험 (?bgTheme=, App.jsx가 1회 판독해 html에 data-bg-theme로
    반영 — staging 전용, 플래그 없으면 무변경) ──────────────────────────
-   비교 스위치: current(기본) | warm(색조만) | warm-grain-2 | warm-grain-4(색조+그레인).
+   비교 사다리(1x/2x/3x 세 단, 각 단마다 그레인 조합 variant 포함):
+     current(기본) | warm · warm-grain-2 · warm-grain-4(1x)
+                   | warm2 · warm2-grain-6 · warm2-grain-8(2x)
+                   | warm3(3x, 그레인 조합 없음 — "대놓고 보이는" 상한선 확인용)
    색조 산출 규칙: 다크/라이트 각각 원래 배경색과 luma(밝기, 0.299R+0.587G+0.114B)가
-   거의 같도록, RGB를 같은 방향으로만 이동시켰다 — 다크는 (+3,0,-6), 라이트는
-   (+4,0,-10) 델타를 bg/bg-card/border/border-h/bg-header/bg-nav 전부에 동일하게
-   적용(델타 자체의 luma 기여가 0에 가까워, 밝은 색이든 어두운 색이든 더해도 서로의
-   명도차가 그대로 보존된다 — luma는 RGB의 선형 결합이라 성립). 라이트 bg-card/
-   bg-nav는 원래 순백(255)이라 R/G는 이미 상한이라 델타가 클램프되고 B만 줄어든다
-   (흰색에서 "따뜻하게" 만드는 표준적인 방법 — 더 밝게는 못 가니 파랑만 뺀다).
+   거의 같도록, RGB를 같은 방향으로만 이동시켰다 — 1x 델타는 다크 (+3,0,-6)/라이트
+   (+4,0,-10), 2x·3x는 그 델타를 그대로 2배·3배 키운 값이다(다크 (+6,0,-12)/
+   (+9,0,-18), 라이트 (+8,0,-20)/(+12,0,-30)). bg/bg-card/border/border-h/
+   bg-header/bg-nav 전부에 동일 델타를 적용하는 이유: 델타 자체의 luma 기여가
+   0에 가까워, 밝은 색이든 어두운 색이든 더해도 서로의 명도차가 그대로 보존된다
+   (luma는 RGB의 선형 결합이라 성립 — 실측: 1x/2x/3x 전부 원래 luma와 ±1.5 이내).
+   라이트 bg-card/bg-nav는 원래 순백(255)이라 R/G는 이미 상한이라 델타가 클램프되고
+   B만 줄어든다(흰색에서 "따뜻하게" 만드는 표준적인 방법). 다크 --bg 쪽은 원래 B값
+   (11)이 작아 2x/3x에서 B가 0에 클램프되는 만큼만 luma가 살짝(1 안팎) 높게
+   보정된다 — 원래 계산대로면 음수가 되는 채널을 0으로 멈춘 자연스러운 결과.
+   여러 variant가 같은 색조 값을 공유하므로(예: warm/warm-grain-2/warm-grain-4가
+   전부 1x) data-bg-theme 정확 일치 선택자를 콤마로 묶는다 — 예전엔 [^="warm"]
+   접두 매칭 하나로 퉁쳤는데, "warm2"도 "warm"으로 시작해 같이 걸려버려 2x/3x
+   variant를 새로 추가하면서 접두 매칭을 접었다.
    골드 포인트/등락 빨강·파랑/텍스트 색은 대상에서 제외(요구사항). */
-html[data-bg-theme^="warm"] {
+html[data-bg-theme="warm"],
+html[data-bg-theme="warm-grain-2"],
+html[data-bg-theme="warm-grain-4"] {
   --bg:           #0d0a05;
   --bg-card:      #171410;
   --border:       #292624;
@@ -69,13 +82,51 @@ html[data-bg-theme^="warm"] {
   --bg-header:    rgba(13,10,5,.95);
   --bg-nav:       rgba(19,16,12,.97);
 }
-html[data-theme="light"][data-bg-theme^="warm"] {
+html[data-theme="light"][data-bg-theme="warm"],
+html[data-theme="light"][data-bg-theme="warm-grain-2"],
+html[data-theme="light"][data-bg-theme="warm-grain-4"] {
   --bg:           #f4f2ed;
   --bg-card:      #fffff5;
   --border:       #e1e1e3;
   --border-h:     #b4bac4;
   --bg-header:    rgba(244,242,237,.95);
   --bg-nav:       rgba(255,255,245,.97);
+}
+html[data-bg-theme="warm2"],
+html[data-bg-theme="warm2-grain-6"],
+html[data-bg-theme="warm2-grain-8"] {
+  --bg:           #100a00;
+  --bg-card:      #1a140a;
+  --border:       #2c261e;
+  --border-h:     #403a36;
+  --bg-header:    rgba(16,10,0,.95);
+  --bg-nav:       rgba(22,16,6,.97);
+}
+html[data-theme="light"][data-bg-theme="warm2"],
+html[data-theme="light"][data-bg-theme="warm2-grain-6"],
+html[data-theme="light"][data-bg-theme="warm2-grain-8"] {
+  --bg:           #f8f2e3;
+  --bg-card:      #ffffeb;
+  --border:       #e5e1d9;
+  --border-h:     #b8baba;
+  --bg-header:    rgba(248,242,227,.95);
+  --bg-nav:       rgba(255,255,235,.97);
+}
+html[data-bg-theme="warm3"] {
+  --bg:           #130a00;
+  --bg-card:      #1d1404;
+  --border:       #2f2618;
+  --border-h:     #433a30;
+  --bg-header:    rgba(19,10,0,.95);
+  --bg-nav:       rgba(25,16,0,.97);
+}
+html[data-theme="light"][data-bg-theme="warm3"] {
+  --bg:           #fcf2d9;
+  --bg-card:      #ffffe1;
+  --border:       #e9e1cf;
+  --border-h:     #bcbab0;
+  --bg-header:    rgba(252,242,217,.95);
+  --bg-nav:       rgba(255,255,225,.97);
 }
 
 /* 그레인 노이즈 오버레이(GrainOverlay.jsx) — feTurbulence로 생성한 무채색 노이즈를

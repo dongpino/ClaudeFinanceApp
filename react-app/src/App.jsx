@@ -11,11 +11,25 @@ import { withViewTransition } from './viewTransition';
 
 // 배경 색조/그레인 실험(?bgTheme=) — staging 전용 비교 스위치. HomePage.jsx의
 // ?debugSwipe=1과 같은 패턴(쿼리 1회 판독 후 값으로 굳힘, 없거나 모르는 값이면
-// 기본값). current(기본)/warm(색조만)/warm-grain-2/warm-grain-4(색조+그레인) 중
-// 하나 — 색조 자체는 index.css가 html[data-bg-theme^="warm"]로 전담하고, 여기서는
-// 그 값 판독과 "그레인을 렌더할지·얼마나 진하게"만 결정한다.
-const BG_THEME_FLAGS = new Set(['current', 'warm', 'warm-grain-2', 'warm-grain-4']);
-const GRAIN_OPACITY = { 'warm-grain-2': 0.02, 'warm-grain-4': 0.04 };
+// 기본값). 색조 자체는 index.css가 html[data-bg-theme="..."] 정확 일치 선택자로
+// 전담하고(1x/2x/3x 세 단), 여기서는 그 값 판독과 "그레인을 렌더할지·얼마나
+// 진하게"만 결정한다.
+//   - current       : 기본, 무변경
+//   - warm          : 색조 1x
+//   - warm-grain-2/4: 색조 1x + 그레인 2%/4%
+//   - warm2         : 색조 2x
+//   - warm2-grain-6/8: 색조 2x + 그레인 6%/8%(기존 2/4%가 "안 보인다"는 피드백 반영)
+//   - warm3         : 색조 3x — 대놓고 보이는 상한선 용도, 그레인 조합 없음
+const BG_THEME_FLAGS = new Set([
+  'current',
+  'warm', 'warm-grain-2', 'warm-grain-4',
+  'warm2', 'warm2-grain-6', 'warm2-grain-8',
+  'warm3',
+]);
+const GRAIN_OPACITY = {
+  'warm-grain-2': 0.02, 'warm-grain-4': 0.04,
+  'warm2-grain-6': 0.06, 'warm2-grain-8': 0.08,
+};
 
 function readBgThemeFlag() {
   const raw = new URLSearchParams(window.location.search).get('bgTheme');
