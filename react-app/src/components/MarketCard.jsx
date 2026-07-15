@@ -23,6 +23,15 @@ const CURRENCY_PREFIX = { usd: '$', krw: '₩' };
 //   - score   : 공포탐욕지수 등, 값 "72"(단위 없는 0~100 점수) / 등락 포인트 차
 const NON_PRICE_UNITS = new Set(['percent', 'pct_pt', 'score']);
 
+// 장 시작 전(동시호가 포함) 상태값 — 이 구간에서는 Naver 개별종목 quote 자체가
+// compareToPreviousClosePrice/fluctuationsRatio를 0으로 반환한다(오늘 실측 확인,
+// 삼성전자로도 재현됨 — 우미 투자 3종목만의 문제가 아니라 이 엔드포인트의 정상 동작).
+// 그래서 change===0 && change_pct===0을 "계산 실패"로 오판하면 안 된다. 실측으로
+// 직접 확인된 값은 'PREOPEN' 하나뿐이다(확인 시점이 장 시작 전이라 'OPEN'/'CLOSE' 등
+// 다른 상태에서 이 필드가 어떻게 나오는지는 못 봤다) — 다른 장전류 상태값이 발견되면
+// 이 Set에 추가할 것. marketStatus가 없는 종목(대부분)은 항상 false라 기존 동작 그대로.
+const PREOPEN_STATUSES = new Set(['PREOPEN']);
+
 const fpUnit = (n, unit) => {
   if (unit === 'percent' || unit === 'pct_pt') return `${n.toFixed(2)}%`;
   if (unit === 'score') return n.toFixed(0);
@@ -60,7 +69,7 @@ export function detectIssues(item) {
   // 가격이 아닌 지표(NON_PRICE_UNITS)는 하루 변동이 0(에 가까움)인 날이 정상적으로
   // 존재해 "0 == 계산 실패" 가정이 성립하지 않는다(us10y에서 처음 발견) — 가격 없음/
   // 히스토리 부족 조건은 이 종목들에도 그대로 적용한다.
-  if (!NON_PRICE_UNITS.has(item.unit) && item.change === 0 && item.change_pct === 0)
+  if (!PREOPEN_STATUSES.has(item.marketStatus) && !NON_PRICE_UNITS.has(item.unit) && item.change === 0 && item.change_pct === 0)
     issues.push('전일대비 계산 실패 의심');
   return issues;
 }

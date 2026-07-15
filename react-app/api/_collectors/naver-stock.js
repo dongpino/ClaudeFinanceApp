@@ -94,6 +94,9 @@ async function fetchOneKRQuote(code) {
       sparkline:  [],
       category:   '한국주식',
       source:     'Naver',
+      // 장 상태 원문(예: 'PREOPEN') — MarketCard.detectIssues가 장 시작 전 0 변동을
+      // "계산 실패"로 오판하지 않도록 그대로 전달한다. 실측 확인된 값은 PREOPEN뿐.
+      marketStatus: data.marketStatus,
     };
   } catch (err) {
     console.error(`[naver-stock] ${code} 시세 조회 실패:`, err.message);
