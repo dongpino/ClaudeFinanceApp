@@ -10,6 +10,15 @@ const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 const CATEGORY_ICON = { fomc: '🏦', cpi: '📊', expiry: '🎯', msci: '🌐', earnings: '📈' };
 const CATEGORY_COLOR = { fomc: '#22d3ee', cpi: '#f97316', expiry: '#a855f7', msci: '#10b981', earnings: '#fbbf24' };
 
+// 하드코딩 일정 소진 경고 스트립에 쓰는 사람이 읽는 카테고리명(getScheduleDepletion의 category → 라벨)
+const DEPLETION_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적' };
+
+// 'YYYY-MM-DD' → 'M/D' (경고 문구용 축약)
+function formatMonthDay(dateStr) {
+  const [, m, d] = dateStr.split('-').map(Number);
+  return `${m}/${d}`;
+}
+
 function todayKST() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
 }
@@ -73,6 +82,7 @@ export default function CalendarPage({ activePage, onPageChange }) {
 
   const [upcoming, setUpcoming]           = useState([]);
   const [upcomingPhase, setUpcomingPhase] = useState('loading');
+  const [depletion, setDepletion]         = useState([]); // 하드코딩 일정 소진 임박 경고(비면 스트립 미렌더)
 
   const detailRef = useRef(null);
   const scrollRef = useRef(null); // .cal-scroll — PhotoBackground 패럴랙스가 구독하는 스크롤 컨테이너
@@ -105,6 +115,7 @@ export default function CalendarPage({ activePage, onPageChange }) {
       })
       .then(data => {
         setUpcoming(Array.isArray(data.events) ? data.events : []);
+        setDepletion(Array.isArray(data.depletion) ? data.depletion : []);
         setUpcomingPhase('done');
       })
       .catch(() => setUpcomingPhase('error'));
@@ -143,6 +154,18 @@ export default function CalendarPage({ activePage, onPageChange }) {
       <div className="page active">
         <div className="cal-scroll" ref={scrollRef}>
           <div className="cal-scroll-inner">
+            {/* 하드코딩 일정 소진 경고 — depletion이 비면 완전히 미렌더(공간 미차지) */}
+            {depletion.length > 0 && (
+              <div className="cal-warn-strip">
+                {depletion.map(dep => (
+                  <div key={dep.category} className="cal-warn-row">
+                    <span className="cal-warn-icon">⚠</span>
+                    <span>{DEPLETION_LABEL[dep.category] ?? dep.category} 일정 {formatMonthDay(dep.lastDate)} 이후 없음 — 갱신 필요</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="cal-fold">
               <div className="cal-header">
                 <button type="button" className="cal-nav-btn" onClick={goPrevMonth} aria-label="이전 달">‹</button>

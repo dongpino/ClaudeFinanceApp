@@ -8,18 +8,21 @@
  * 값이 자주 안 바뀌므로(하드코딩 상수 + 순수 계산) CDN s-maxage로만 캐시.
  */
 
-import { getEventsForMonth, getUpcomingEvents } from './_lib/macro-calendar.js';
+import { getEventsForMonth, getUpcomingEvents, getScheduleDepletion } from './_lib/macro-calendar.js';
 
 export default function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method Not Allowed' });
 
   const { year, month, upcoming } = req.query ?? {};
 
+  // 소진 임박 경고 — 날짜 파생이라 월/조회범위와 무관, 모든 응답에 함께 실어 준다.
+  const depletion = getScheduleDepletion();
+
   if (upcoming !== undefined) {
     const days = parseInt(upcoming, 10) || 30;
     const events = getUpcomingEvents(days);
     res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=300');
-    return res.status(200).json({ events });
+    return res.status(200).json({ events, depletion });
   }
 
   const y = parseInt(year, 10);
@@ -30,5 +33,5 @@ export default function handler(req, res) {
 
   const events = getEventsForMonth(y, m);
   res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=600');
-  return res.status(200).json({ year: y, month: m, events });
+  return res.status(200).json({ year: y, month: m, events, depletion });
 }

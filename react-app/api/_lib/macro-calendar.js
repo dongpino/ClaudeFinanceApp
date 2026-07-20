@@ -143,6 +143,42 @@ export function getExpiryEvents(year) {
   return events;
 }
 
+/**
+ * 하드코딩 일정 배열의 "소진 임박" 경고 — 각 배열의 실제 마지막 이벤트 날짜를
+ * 런타임에 읽어 계산한다. 경고 코드에 날짜를 중복 기재하지 않으므로, 배열에
+ * 미래 일정을 추가하면(예: FOMC_MEETINGS_2027 병합) 별도 조치 없이 경고가
+ * 자동으로 해제된다.
+ *
+ * 판정: 각 배열의 가장 늦은 이벤트 날짜가 오늘로부터 withinDays일 이내(또는
+ * 이미 과거)면 소진 임박으로 본다. 규칙 계산인 선물옵션 만기(getExpiryEvents)는
+ * 연도 하드코딩이 없어 소진 개념 자체가 없으므로 대상에서 제외한다.
+ *
+ * @param {number} withinDays 임박 판정 임계(기본 30일)
+ * @returns {Array<{category: string, lastDate: string, daysLeft: number}>}
+ *          daysLeft 오름차순(가장 급한 것 먼저). 임박 항목이 없으면 빈 배열.
+ */
+export function getScheduleDepletion(withinDays = 30) {
+  const today = todayKST();
+  // FOMC는 회의 종료일(end), MSCI는 두 이벤트 중 나중인 시행일(effective)이
+  // 실질적인 마지막 날짜다. 나머지는 단일 date.
+  const sources = [
+    { category: 'fomc',     dates: FOMC_MEETINGS_2026.map(m => m.end) },
+    { category: 'cpi',      dates: CPI_RELEASES_2026.map(r => r.date) },
+    { category: 'msci',     dates: MSCI_REVIEWS_2026.map(r => r.effective) },
+    { category: 'earnings', dates: EARNINGS_EVENTS_2026.map(e => e.date) },
+  ];
+
+  const depletion = [];
+  for (const { category, dates } of sources) {
+    if (dates.length === 0) continue;
+    const lastDate = dates.reduce((a, b) => (a > b ? a : b)); // 배열 정렬 여부와 무관하게 최댓값
+    const daysLeft = daysBetween(today, lastDate);
+    if (daysLeft <= withinDays) depletion.push({ category, lastDate, daysLeft });
+  }
+
+  return depletion.sort((a, b) => a.daysLeft - b.daysLeft);
+}
+
 // FOMC 회의 하나를 통합 이벤트 형태로 (getUpcomingEvents/getEventsForMonth 공용)
 function fomcEvent(meeting) {
   return { date: meeting.start, endDate: meeting.end, title: 'FOMC 회의', shortLabel: 'FOMC', category: 'fomc', region: 'US' };

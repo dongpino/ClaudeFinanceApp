@@ -1756,6 +1756,26 @@ body {
   min-height: 100%;
 }
 
+/* 하드코딩 일정 소진 경고 스트립 — 홈의 .warn-bar와 같은 주황 톤. 단 캘린더는
+   PhotoBackground 위에 뜨므로 사진 위 가독성을 위해 배경을 조금 더 불투명하게
+   주고(라이트/다크 공통 주황 틴트), 다크에서는 .brf-event-list와 동일하게
+   text-shadow로 글자를 방어한다. depletion이 비면 JSX에서 아예 렌더되지 않는다. */
+.cal-warn-strip {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 11px; font-weight: 600; color: #f97316;
+  background: rgba(249,115,22,.12);
+  border: 1px solid rgba(249,115,22,.3);
+}
+.cal-warn-row { display: flex; align-items: center; gap: 6px; }
+.cal-warn-icon { flex-shrink: 0; }
+[data-theme="dark"] .cal-warn-strip {
+  background: rgba(60,32,10,.55);
+  border-color: rgba(249,115,22,.4);
+  text-shadow: 0 1px 4px rgba(0,0,0,.9), 0 0 12px rgba(0,0,0,.6);
+}
+
 /* 월 그리드+헤더+요일줄 묶음 — 데스크톱에서만 뷰포트를 채우고(아래 미디어쿼리),
    모바일은 기존처럼 자연스러운 콘텐츠 흐름(그리드가 화면을 억지로 채우지 않음). */
 .cal-fold {
