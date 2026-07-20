@@ -4,6 +4,8 @@
  * main()/file I/O 제거, export만 남긴 서버리스 전용 버전.
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
   'Accept': 'application/json, text/plain, */*',
@@ -26,7 +28,7 @@ function r2(n) { return Math.round(n * 100) / 100; }
 function r4(n) { return Math.round(n * 10000) / 10000; }
 
 async function fetchJSON(url) {
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await trackedFetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
   return res.json();
 }

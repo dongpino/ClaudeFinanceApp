@@ -29,6 +29,7 @@
 
 import { Redis } from '@upstash/redis';
 import { getNextFomcMeeting, getNextCpiRelease, getUpcomingEvents } from './_lib/macro-calendar.js';
+import { trackedFetch } from './_lib/health.js';
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
 const CACHE_TTL_SEC = 12 * 60 * 60; // 12시간
@@ -52,7 +53,7 @@ const RETRY_DELAY_MS = 700; // 재시도 전 대기(500ms~1s 권장 범위 내)
 async function fetchSeriesOnce(seriesId, { limit, sort }) {
   const key = getKey();
   const url = `${FRED_BASE}?series_id=${seriesId}&api_key=${encodeURIComponent(key)}&file_type=json&sort_order=${sort}&limit=${limit}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const res = await trackedFetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`FRED HTTP ${res.status} (${seriesId}) — ${body.slice(0, 150)}`);

@@ -14,6 +14,8 @@
  * fetchBTCByTF(tf)는 fetchIntradayKlines('BTCUSDT', tf)의 얇은 wrapper — 기존 동작 100% 동일.
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 import { toKstChartTime } from './chart-time.js';
 
 function r2(n) { return Math.round(n * 100) / 100; }
@@ -53,7 +55,7 @@ function parseBinanceKlines(raw) {
 async function fetchFromBinanceVision(pair, tf, limit) {
   const url = `https://data-api.binance.vision/api/v3/klines?symbol=${pair}&interval=${tf}&limit=${limit}`;
   console.log(`[intraday/${pair}/${tf}] 시도 1: data-api.binance.vision`);
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const res = await trackedFetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '(body 없음)');
     throw new Error(`HTTP ${res.status} — ${body.slice(0, 200)}`);
@@ -67,7 +69,7 @@ async function fetchFromBinanceVision(pair, tf, limit) {
 async function fetchFromBinanceCom(pair, tf, limit) {
   const url = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=${tf}&limit=${limit}`;
   console.log(`[intraday/${pair}/${tf}] 시도 2: api.binance.com`);
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const res = await trackedFetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '(body 없음)');
     throw new Error(`HTTP ${res.status} — ${body.slice(0, 200)}`);
@@ -82,7 +84,7 @@ async function fetchFromBybit(pair, tf, limit) {
   const interval = BYBIT_INTERVAL[tf];
   const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${pair}&interval=${interval}&limit=${limit}`;
   console.log(`[intraday/${pair}/${tf}] 시도 3: api.bybit.com (interval=${interval})`);
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const res = await trackedFetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '(body 없음)');
     throw new Error(`Bybit HTTP ${res.status} — ${body.slice(0, 200)}`);

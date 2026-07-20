@@ -9,6 +9,8 @@
  * 반환 형식은 index/stock 어댑터와 동일: { history, ohlc_available, source }
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 import { isBinanceListed } from './timeframe-capability.js';
 import { fetchIntradayKlines, BTC_INTRADAY_TFS } from './btc-intraday.js';
 import { fetchCoinMarketChart } from './coingecko.js';
@@ -27,7 +29,7 @@ async function fetchBinanceDaily(pair, coingeckoId) {
 
   for (const [label, url] of sources) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const res = await trackedFetch(url, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const raw = await res.json();
       if (!Array.isArray(raw) || raw.length < 10) throw new Error(`행 부족: ${raw?.length ?? 0}`);

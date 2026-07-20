@@ -15,6 +15,8 @@
  * 읽어 "차트 데이터 부족" 경고 억제 + "수집 중 N/5일" 안내 + 등락 "—" 표시에 쓴다.
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 import { recordTodayIfMissing, getRecentHistory } from '../_lib/dominance-history.js';
 
 const HEADERS = {
@@ -39,7 +41,7 @@ function r2(n) { return Math.round(n * 100) / 100; }
 function r4(n) { return Math.round(n * 10000) / 10000; }
 
 async function fetchJSON(url) {
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await trackedFetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
   return res.json();
 }

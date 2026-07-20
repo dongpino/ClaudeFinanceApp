@@ -26,6 +26,7 @@
  */
 
 import { Redis } from '@upstash/redis';
+import { trackedFetch } from './_lib/health.js';
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
 const ALLOWED_INDICATORS = ['fomc', 'cpi', 'unemployment'];
@@ -67,7 +68,7 @@ async function fetchSeriesRangeOnce(seriesId, { start, frequency, units } = {}) 
   if (units)     params.set('units', units);
 
   const url = `${FRED_BASE}?${params.toString()}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const res = await trackedFetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`FRED HTTP ${res.status} (${seriesId}) — ${body.slice(0, 150)}`);

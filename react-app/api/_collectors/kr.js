@@ -2,6 +2,8 @@
  * _collectors/kr.js — 코스피/코스닥/원달러/원엔 수집 (Vercel 서버리스 전용)
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
   'Accept':          'application/json, text/plain, */*',
@@ -26,13 +28,13 @@ function r4(n) { return Math.round(n * 10000) / 10000; }
 function cleanNum(s) { return parseFloat(String(s).replace(/,/g, '').replace(/%/g, '').trim()); }
 
 async function fetchJSON(url) {
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await trackedFetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
   return res.json();
 }
 
 async function fetchEucKR(url, extraHeaders = {}) {
-  const res = await fetch(url, { headers: { ...HEADERS, ...extraHeaders } });
+  const res = await trackedFetch(url, { headers: { ...HEADERS, ...extraHeaders } });
   if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
   return new TextDecoder('euc-kr').decode(await res.arrayBuffer());
 }

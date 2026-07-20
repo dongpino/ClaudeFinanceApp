@@ -10,6 +10,8 @@
  *   GET /stock/candle       일봉 스파크라인       무료 (US 주식, resolution=D 한정)
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 const FH_BASE = 'https://finnhub.io/api/v1';
 
 /** 키 존재 여부 (핸들러에서 조기 체크용) */
@@ -28,7 +30,7 @@ async function fhFetch(path) {
   // token을 URL 파라미터로 전달 (헤더 방식과 동일하지만 호환성이 더 넓음)
   const sep = path.includes('?') ? '&' : '?';
   const url = `${FH_BASE}${path}${sep}token=${encodeURIComponent(key)}`;
-  const res  = await fetch(url, {
+  const res  = await trackedFetch(url, {
     headers: { 'Accept': 'application/json' },
   });
   if (!res.ok) {

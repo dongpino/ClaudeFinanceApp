@@ -15,6 +15,8 @@
  * { type:'stock', market:'KR', id:code, symbol:code, name } 형태로 저장한다.
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
   'Accept': 'application/json, text/plain, */*',
@@ -26,7 +28,7 @@ function cleanNum(s) { return parseFloat(String(s ?? '').replace(/,/g, '').repla
 function direction(pct) { return pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat'; }
 
 async function fetchJSON(url) {
-  const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
+  const res = await trackedFetch(url, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
   return res.json();
 }

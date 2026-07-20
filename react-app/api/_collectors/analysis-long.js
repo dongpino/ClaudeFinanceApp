@@ -3,6 +3,8 @@
  * api/analysis.js 및 scripts/test-long-data.js에서 공용
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
   'Accept': 'application/json, text/plain, */*',
@@ -14,19 +16,19 @@ function cleanNum(s) { return parseFloat(String(s).replace(/,/g, '').replace(/%/
 function tsToDate(tsMs) { return new Date(tsMs).toISOString().slice(0, 10); }
 
 async function fetchJSON(url) {
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await trackedFetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
   return res.json();
 }
 
 async function fetchText(url) {
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await trackedFetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
   return res.text();
 }
 
 async function fetchEucKR(url, extraHeaders = {}) {
-  const res = await fetch(url, { headers: { ...HEADERS, ...extraHeaders } });
+  const res = await trackedFetch(url, { headers: { ...HEADERS, ...extraHeaders } });
   if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
   return new TextDecoder('euc-kr').decode(await res.arrayBuffer());
 }

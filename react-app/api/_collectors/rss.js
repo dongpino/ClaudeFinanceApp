@@ -12,6 +12,8 @@
  * graceful fallback: 한 피드 실패해도 나머지 결과 반환
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 const RSS_FEEDS = [
   { url: 'https://www.yna.co.kr/rss/market.xml',   source: '연합뉴스 마켓' },  // 마켓+ 전용
   { url: 'https://www.hankyung.com/feed/finance',   source: '한국경제 금융' },  // 증권 섹션
@@ -148,7 +150,7 @@ async function fetchFeed({ url, source }) {
   const ctrl = new AbortController();
   const tid  = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = await trackedFetch(url, {
       signal: ctrl.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; MarketBriefBot/1.0)',

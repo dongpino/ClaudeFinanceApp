@@ -10,6 +10,8 @@
  * 영문 원본 그대로 item.grade에 담아 컴포넌트에서 한글 라벨·색으로 매핑한다.
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
   'Accept':          'application/json, text/plain, */*',
@@ -29,7 +31,7 @@ function direction(change) { return change > 0 ? 'up' : change < 0 ? 'down' : 'f
 function r4(n) { return Math.round(n * 10000) / 10000; }
 
 async function fetchJSON(url) {
-  const res = await fetch(url, { headers: HEADERS });
+  const res = await trackedFetch(url, { headers: HEADERS });
   if (!res.ok) throw new Error(`HTTP ${res.status} — ${url}`);
   return res.json();
 }

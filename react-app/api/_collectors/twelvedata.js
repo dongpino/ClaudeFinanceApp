@@ -10,6 +10,8 @@
  * 무료 티어 한도: 800 req/day, 8 req/min → api/analysis.js의 캐시(TTL 5~10분)로 보호
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 const TD_BASE = 'https://api.twelvedata.com';
 
 /** 키 존재 여부 (핸들러에서 조기 체크용) */
@@ -33,7 +35,7 @@ function r2(n) { return Math.round(n * 100) / 100; }
 export async function fetchDailyHistory(symbol) {
   const key = getKey();
   const url = `${TD_BASE}/time_series?symbol=${encodeURIComponent(symbol)}&interval=1day&outputsize=250&apikey=${encodeURIComponent(key)}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const res = await trackedFetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Twelve Data HTTP ${res.status} — ${body.slice(0, 150)}`);

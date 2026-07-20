@@ -9,6 +9,8 @@
  * → coin-search 핸들러에서 1분 캐시, coin-price 핸들러에서 5분 캐시로 보호
  */
 
+import { trackedFetch } from '../_lib/health.js';
+
 const CG_BASE = 'https://api.coingecko.com/api/v3';
 
 const HEADERS = {
@@ -19,7 +21,7 @@ const HEADERS = {
 
 async function cgFetch(path) {
   const url = `${CG_BASE}${path}`;
-  const res  = await fetch(url, { headers: HEADERS });
+  const res  = await trackedFetch(url, { headers: HEADERS });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`CoinGecko HTTP ${res.status} — ${url} — ${text.slice(0, 120)}`);
