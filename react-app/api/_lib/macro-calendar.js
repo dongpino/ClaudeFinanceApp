@@ -81,27 +81,41 @@ function toDateStr(date) {
   return date.toISOString().slice(0, 10);
 }
 
-// 'YYYY-MM-DD' + 미 동부시각(ET) hour:min → 실제 UTC Date.
-// 그 날짜의 서머타임 여부는 Intl 타임존 데이터로 판정 — DST 규칙을 직접
-// 계산하지 않아 연도가 바뀌어도(오탈자 없이) 안전하다.
+// 'YYYY-MM-DD' + 미 동부시각(ET) hour:min → { utc: Date, uncertain: boolean }.
+// 그 날짜의 서머타임 여부는 Intl 타임존 데이터(shortOffset)로 판정 — DST 규칙을
+// 직접 계산하지 않아 연도가 바뀌어도(오탈자 없이) 안전하다.
+//
+// 폴백 견고성: 런타임 ICU가 shortOffset을 지원하지 않거나(구형 환경) 예상 밖의
+// 문자열("EDT" 등)을 주면 오프셋 파싱이 실패할 수 있다. 그때는 EST(-5)로 폴백하되
+// uncertain=true를 함께 반환한다 — 여름(EDT, -4)에 이 폴백이 조용히 걸리면 1시간
+// 틀린 시각이 표시되므로, 호출측이 "경" 불확실 표기를 붙이고(formatKSTHM) 서버
+// 로그로도 남겨 감지할 수 있게 하기 위함이다.
 function nyWallTimeToUTC(dateStr, hour, minute) {
   const probe = new Date(`${dateStr}T12:00:00Z`); // 자정 근처 DST 경계 회피용 정오 프로브
   const offsetName = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', timeZoneName: 'shortOffset',
-  }).formatToParts(probe).find(p => p.type === 'timeZoneName')?.value ?? 'GMT-5';
-  const m = offsetName.match(/GMT([+-]\d+)/);
+  }).formatToParts(probe).find(p => p.type === 'timeZoneName')?.value;
+  const m = offsetName?.match(/GMT([+-]\d+)/);
+  const uncertain = !m; // GMT 오프셋을 못 읽음 → EST(-5) 폴백, 불확실
+  if (uncertain) {
+    // Vercel 함수 로그에 남겨 폴백 발동을 사후 감지 가능하게(프로덕션 로그 grep).
+    console.warn(`[macro-calendar] ET→KST 오프셋 파싱 실패, EST(-5) 폴백: date=${dateStr} raw="${offsetName ?? 'none'}"`);
+  }
   const offsetH = m ? parseInt(m[1], 10) : -5;
   const sign = offsetH >= 0 ? '+' : '-';
   const abs  = String(Math.abs(offsetH)).padStart(2, '0');
-  return new Date(
+  const utc = new Date(
     `${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00${sign}${abs}:00`
   );
+  return { utc, uncertain };
 }
 
-function formatKSTHM(date) {
-  return new Intl.DateTimeFormat('ko-KR', {
+// uncertain=true면 오프셋 판정이 폴백된 것이라 "경"을 붙여 불확실성을 표면에 노출한다.
+function formatKSTHM(date, uncertain = false) {
+  const hm = new Intl.DateTimeFormat('ko-KR', {
     timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(date);
+  return uncertain ? `${hm}경` : hm;
 }
 
 // n번째 요일 계산(UTC 캘린더 날짜 기준, 시간대 무관 — 만기일은 날짜만 의미가 있음).
@@ -186,8 +200,8 @@ function fomcEvent(meeting) {
 
 // CPI 발표 하나를 통합 이벤트 형태로 (getUpcomingEvents/getEventsForMonth 공용)
 function cpiEvent(release) {
-  const utc = nyWallTimeToUTC(release.date, CPI_RELEASE_HOUR_ET, CPI_RELEASE_MIN_ET);
-  return { date: release.date, title: '미국 CPI 발표', shortLabel: 'CPI', category: 'cpi', region: 'US', time: formatKSTHM(utc) };
+  const { utc, uncertain } = nyWallTimeToUTC(release.date, CPI_RELEASE_HOUR_ET, CPI_RELEASE_MIN_ET);
+  return { date: release.date, title: '미국 CPI 발표', shortLabel: 'CPI', category: 'cpi', region: 'US', time: formatKSTHM(utc, uncertain) };
 }
 
 // MSCI 리뷰 하나(발표+시행)를 통합 이벤트 2개로 (getUpcomingEvents/getEventsForMonth 공용)
@@ -213,11 +227,11 @@ export function getNextCpiRelease() {
   const today = todayKST();
   const next = CPI_RELEASES_2026.find(r => daysBetween(today, r.date) >= 0);
   if (!next) return null;
-  const utc = nyWallTimeToUTC(next.date, CPI_RELEASE_HOUR_ET, CPI_RELEASE_MIN_ET);
+  const { utc, uncertain } = nyWallTimeToUTC(next.date, CPI_RELEASE_HOUR_ET, CPI_RELEASE_MIN_ET);
   return {
     ...next,
     dDay: daysBetween(today, next.date),
-    kstTime: formatKSTHM(utc),
+    kstTime: formatKSTHM(utc, uncertain),
   };
 }
 
