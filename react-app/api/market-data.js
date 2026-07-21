@@ -20,6 +20,7 @@ import { collectBtcDominance } from './_collectors/btc-dominance.js';
 import { collectFearGreed }   from './_collectors/fear-greed.js';
 import { collectWatchlist, WATCHLIST_IDS } from './_collectors/watchlist.js';
 import { applyLastGoodFallback } from './_lib/last-good.js';
+import { Redis } from '@upstash/redis';
 
 // ── last-good 폴백 대상 ──────────────────────────────────────────
 // KR 지수(naver)·환율·도미넌스(coingecko)·공포탐욕(alternative-me)·우미 워치리스트
@@ -53,10 +54,57 @@ function servableMarketItem(item) {
   return item && Number.isFinite(item.price) && item.price > 0;
 }
 
-// ── 캐시 ────────────────────────────────────────────────
+// ── 캐시 (2계층) ──────────────────────────────────────────
+// L1: 인메모리(인스턴스별, 네트워크 0 — 가장 빠름)
+// L2: Redis 공유(전 인스턴스/리전 공유) — 콜드 인스턴스가 남의 성공본을 재사용해
+//     인스턴스·리전 수만큼 중복되던 CoinGecko 5콜 버스트를 제거한다(macro.js 패턴).
+//     CDN(s-maxage=300)이 앞단을 막아도, 캐시 미스가 서로 다른 콜드 인스턴스로 흩어질
+//     때 각자 수집을 새로 하던 것을 이 층이 합쳐준다.
 let   cacheHome   = null;   // { data: { updated_at, items }, timestamp }
 const cacheDetail = {};     // { [id]: { data: { updated_at, item }, timestamp } }
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS  = 5 * 60 * 1000;
+const CACHE_TTL_SEC = 5 * 60;          // Redis TTL — L1과 동일 5분
+const HOME_KEY      = 'market:home:v1';
+const detailKey     = id => `market:detail:${id}:v1`;
+
+// Redis (macro.js/last-good.js와 동일: 지연 생성, 실패 시 null → 캐시 없이 진행)
+let redisClient; // undefined: 미시도, null: 미설정/실패, Redis: 정상
+function getRedis() {
+  if (redisClient !== undefined) return redisClient;
+  const url   = process.env.KV_REST_API_URL;
+  const token = process.env.KV_REST_API_TOKEN;
+  if (!url || !token) {
+    console.warn('[market-data] KV_REST_API_URL/KV_REST_API_TOKEN 없음 — Redis 공유 캐시 비활성화');
+    redisClient = null;
+  } else {
+    redisClient = new Redis({ url, token });
+  }
+  return redisClient;
+}
+
+// 테스트 전용 주입 훅 — 실제 Redis 없이 캐시 경로를 검증할 때만(프로덕션 미사용).
+export function __setRedisClientForTest(client) { redisClient = client; }
+
+async function redisGet(key) {
+  const r = getRedis();
+  if (!r) return null;
+  try {
+    return await r.get(key); // { data, cachedAt } | null
+  } catch (e) {
+    console.error(`[market-data] Redis GET 실패(${key}) — 캐시 없이 진행: ${e.message}`);
+    return null;
+  }
+}
+
+async function redisSet(key, payload) {
+  const r = getRedis();
+  if (!r) return;
+  try {
+    await r.set(key, payload, { ex: CACHE_TTL_SEC });
+  } catch (e) {
+    console.error(`[market-data] Redis 저장 실패(${key}) — 응답 자체는 정상: ${e.message}`);
+  }
+}
 const ITEM_ORDER   = [
   'nasdaq', 'dow', 'sp500', 'sox', 'kospi', 'kosdaq',
   'btc', 'eth',
@@ -77,9 +125,9 @@ function fmtKST(date = new Date()) {
   return `${y}-${mo}-${dy} ${h}:${mi} KST`;
 }
 
-function setCacheHeaders(res, hit) {
+function setCacheHeaders(res, xcache) {
   res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60');
-  res.setHeader('X-Cache', hit ? 'HIT' : 'MISS');
+  res.setHeader('X-Cache', xcache); // 'HIT' | 'HIT-REDIS' | 'MISS'
 }
 
 // ── 메인 핸들러 ──────────────────────────────────────────
@@ -91,11 +139,22 @@ export default async function handler(req, res) {
 
 // ── 홈 (9종목, 30일만) ────────────────────────────────────
 async function handleHome(req, res) {
+  // L1: 인메모리
   if (cacheHome && Date.now() - cacheHome.timestamp < CACHE_TTL_MS) {
     const ageS = Math.floor((Date.now() - cacheHome.timestamp) / 1000);
-    console.log(`[market-data/home] Cache HIT (age=${ageS}s)`);
-    setCacheHeaders(res, true);
+    console.log(`[market-data/home] Cache HIT (mem, age=${ageS}s)`);
+    setCacheHeaders(res, 'HIT');
     return res.status(200).json(cacheHome.data);
+  }
+
+  // L2: Redis 공유 — 다른 인스턴스가 5분 내 채운 값이 있으면 수집(CoinGecko 5콜)을 건너뛴다.
+  const shared = await redisGet(HOME_KEY);
+  if (shared?.data) {
+    cacheHome = { data: shared.data, timestamp: shared.cachedAt ?? Date.now() };
+    const ageS = Math.floor((Date.now() - (shared.cachedAt ?? Date.now())) / 1000);
+    console.log(`[market-data/home] Cache HIT (redis, age=${ageS}s) — 수집 생략`);
+    setCacheHeaders(res, 'HIT-REDIS');
+    return res.status(200).json(shared.data);
   }
 
   const startMs = Date.now();
@@ -148,10 +207,12 @@ async function handleHome(req, res) {
 
   const staleNote = stale.length ? ` (stale=${stale.length}: ${stale.join(',')})` : '';
   console.log(`[market-data/home] ${items.length}/${ITEM_ORDER.length} 종목 완료 (${elapsed}s)${staleNote}`);
-  const data = { updated_at: fmtKST(), items };
-  cacheHome = { data, timestamp: Date.now() };
+  const data     = { updated_at: fmtKST(), items };
+  const cachedAt = Date.now();
+  cacheHome = { data, timestamp: cachedAt };
+  await redisSet(HOME_KEY, { data, cachedAt }); // L2 채우기 — 다음 콜드 인스턴스가 재사용
 
-  setCacheHeaders(res, false);
+  setCacheHeaders(res, 'MISS');
   return res.status(200).json(data);
 }
 
@@ -161,11 +222,21 @@ async function handleDetail(req, res, id) {
     return res.status(400).json({ error: `알 수 없는 종목 ID: ${id}` });
   }
 
+  // L1: 인메모리
   const cached = cacheDetail[id];
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    console.log(`[market-data/detail/${id}] Cache HIT`);
-    setCacheHeaders(res, true);
+    console.log(`[market-data/detail/${id}] Cache HIT (mem)`);
+    setCacheHeaders(res, 'HIT');
     return res.status(200).json(cached.data);
+  }
+
+  // L2: Redis 공유
+  const shared = await redisGet(detailKey(id));
+  if (shared?.data) {
+    cacheDetail[id] = { data: shared.data, timestamp: shared.cachedAt ?? Date.now() };
+    console.log(`[market-data/detail/${id}] Cache HIT (redis) — 수집 생략`);
+    setCacheHeaders(res, 'HIT-REDIS');
+    return res.status(200).json(shared.data);
   }
 
   const startMs = Date.now();
@@ -207,11 +278,16 @@ async function handleDetail(req, res, id) {
     errorSummary: FALLBACK_ERR,
   });
 
-  // 그룹 전체를 캐시에 저장 (부수 효과: 같은 그룹 다른 종목 재요청 시 HIT)
+  // 그룹 전체를 L1+L2에 저장 (부수 효과: 같은 그룹 다른 종목 재요청 시 HIT)
   const now = Date.now();
+  const writes = [];
   for (const it of merged) {
-    if (it?.id) cacheDetail[it.id] = { data: { updated_at: fmtKST(), item: it }, timestamp: now };
+    if (!it?.id) continue;
+    const itemData = { updated_at: fmtKST(), item: it };
+    cacheDetail[it.id] = { data: itemData, timestamp: now };
+    writes.push(redisSet(detailKey(it.id), { data: itemData, cachedAt: now }));
   }
+  await Promise.all(writes);
 
   const data = cacheDetail[id]?.data;
   if (!data) {
@@ -223,6 +299,6 @@ async function handleDetail(req, res, id) {
   const staleNote = data.item.stale ? ' [stale]' : '';
   console.log(`[market-data/detail/${id}] 완료 (${elapsed}s)  hist_90d=${data.item.history_90d?.length ?? 0}${staleNote}`);
 
-  setCacheHeaders(res, false);
+  setCacheHeaders(res, 'MISS');
   return res.status(200).json(data);
 }
