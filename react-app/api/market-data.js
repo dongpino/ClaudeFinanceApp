@@ -19,6 +19,7 @@ import { collectETH }         from './_collectors/eth.js';
 import { collectBtcDominance } from './_collectors/btc-dominance.js';
 import { collectFearGreed }   from './_collectors/fear-greed.js';
 import { collectWatchlist, WATCHLIST_IDS } from './_collectors/watchlist.js';
+import { fetchSimplePrices } from './_collectors/crypto-simple-price.js';
 import { applyLastGoodFallback } from './_lib/last-good.js';
 import { Redis } from '@upstash/redis';
 
@@ -160,11 +161,16 @@ async function handleHome(req, res) {
   const startMs = Date.now();
   console.log(`[market-data/home] Cache MISS — 수집 시작 (${fmtKST()})`);
 
+  // btc+eth 현재가는 /simple/price 1콜로 병합(개별 2콜 → 1콜, 진단 1). 병합 실패 시 각
+  // 컬렉터가 자체 조회로 폴백 → 최악의 경우에도 콜 수는 종전과 동일(회귀 없음).
+  const cryptoPricesP = fetchSimplePrices(['bitcoin', 'ethereum'])
+    .catch(e => { console.warn(`[market-data/home] 크립토 현재가 병합 실패: ${e.message} → 개별 조회`); return {}; });
+
   const [usResult, btcResult, krResult, ethResult, dominanceResult, fngResult, watchlistResult] = await Promise.allSettled([
     collectUSIndices({ include90d: false }),
-    collectBTC({ include90d: false }),
+    cryptoPricesP.then(p => collectBTC({ include90d: false, priceOverride: p.bitcoin ?? null })),
     collectKR({ include90d: false }),
-    collectETH({ include90d: false }),
+    cryptoPricesP.then(p => collectETH({ include90d: false, priceOverride: p.ethereum ?? null })),
     collectBtcDominance({ include90d: false }),
     collectFearGreed({ include90d: false }),
     collectWatchlist({ include90d: false }),

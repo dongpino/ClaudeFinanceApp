@@ -103,8 +103,10 @@ function recalcChange(item) {
   item.direction  = direction(item.change);
 }
 
-export async function collectBTC({ include90d = true } = {}) {
-  const price    = await fetchCurrentPrice();
+// priceOverride: 홈 aggregation이 btc+eth 현재가를 /simple/price 1콜로 병합해 넘겨주는
+// 통로(crypto-simple-price.js). 없으면(상세 경로 등) 종전대로 자체 조회한다.
+export async function collectBTC({ include90d = true, priceOverride = null } = {}) {
+  const price    = priceOverride ?? await fetchCurrentPrice();
   const history  = await fetchHistory30();
 
   let history_90d = [], ohlc_available = false;
