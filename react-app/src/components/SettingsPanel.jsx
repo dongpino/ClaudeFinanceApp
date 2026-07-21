@@ -18,10 +18,13 @@ const HEALTH_TIMEOUT_MS = 8000;
 // stale/미수집으로 오해되지 않게 '대기(standby)' 회색으로 따로 표기한다.
 const STANDBY_SOURCES = new Set(['bybit']);
 
-// 특정 화면에서만 수집되는 온디맨드 소스(twelvedata=미국 일봉, 상세/분석 화면에서만).
-// 오래 호출이 없어도 '지연(stale)'이 아니므로, 나이 기반 판정 대신 '마지막 호출의
-// 성패'로만 판정한다.
-const ONDEMAND_SOURCES = new Set(['twelvedata']);
+// 특정 화면에서만 수집되는 온디맨드 소스 — 오래 호출이 없어도 '지연(stale)'이 아니므로,
+// 나이 기반 판정 대신 '마지막 호출의 성패'로만 판정한다.
+//   · twelvedata = 미국 일봉(상세/분석 화면에서만)
+//   · binance    = BTC/ETH 상세·크립토 분석 차트에서만(홈/크론 경로엔 전혀 없음). 예전엔
+//                  기대주기 5분 가정이라 15분만 안 열려도 false stale이 떴다(진단 2).
+//                  bybit(폴백 전용 standby)와 달리 열리면 실제로 쓰는 주 소스라 onDemand로 분류.
+const ONDEMAND_SOURCES = new Set(['twelvedata', 'binance']);
 
 // 소스 id → 사람이 읽는 라벨. 없는 id는 raw 그대로 노출(신규 편입분이 사라지지 않게).
 const SOURCE_LABELS = {
