@@ -12,12 +12,47 @@
  * graceful fallback: 한 피드 실패해도 나머지 결과 반환
  */
 
-import { trackedFetch } from '../_lib/health.js';
+import { recordSuccess, recordFailure, classifySource } from '../_lib/health.js';
 
 const RSS_FEEDS = [
   { url: 'https://www.yna.co.kr/rss/market.xml',   source: '연합뉴스 마켓' },  // 마켓+ 전용
   { url: 'https://www.hankyung.com/feed/finance',   source: '한국경제 금융' },  // 증권 섹션
 ];
+
+// 공통 요청 헤더 — UA는 정직한 앱 식별자("Bot" 문자열 없음, 브라우저 위장 아님).
+// 예전 UA 'MarketBriefBot/1.0'은 "Bot" 토큰이 Cloudflare Bot Fight Mode에 걸려 한국경제
+// (Cloudflare 프런팅)에서 403을 유발한 것으로 추정 — "Bot" 제거 + 일반 헤더 보강이 1차 대응.
+const RSS_HEADERS = {
+  'User-Agent':      'MarketBrief/1.0',
+  'Accept':          'application/rss+xml, application/xml, text/xml, */*',
+  'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
+};
+
+// 403(차단)/429(레이트리밋)는 일시적일 수 있어 1회만 백오프 재시도(Retry-After 존중).
+const RETRY_STATUSES  = new Set([403, 429]);
+const RETRY_BASE_MS   = 700;   // Retry-After 없을 때 기본 대기(지수 백오프의 1스텝)
+const RETRY_MAX_WAIT_MS = 2500; // 함수 지연 폭주 방지 상한
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Retry-After: 초(숫자) 또는 HTTP-date 둘 다 허용, 상한 클램프. 없으면 null.
+function parseRetryAfter(res) {
+  const ra = res.headers?.get?.('retry-after');
+  if (!ra) return null;
+  const secs = Number(ra);
+  if (Number.isFinite(secs)) return Math.min(Math.max(0, secs * 1000), RETRY_MAX_WAIT_MS);
+  const dateMs = Date.parse(ra);
+  if (!Number.isNaN(dateMs)) return Math.min(Math.max(0, dateMs - Date.now()), RETRY_MAX_WAIT_MS);
+  return null;
+}
+
+// Cloudflare 챌린지 등 "200인데 XML이 아닌" 응답 감지 — content-type이 html이거나
+// 본문이 <!doctype html>/<html>로 시작하면 RSS가 아니다(파서엔 0건이라 조용히 성공처럼
+// 보이던 health 사각을 실패로 집계하기 위함, 요구사항 3).
+function isChallengeHtml(contentType, body) {
+  if (/html/i.test(contentType || '')) return true;
+  return /^\s*(?:<!doctype\s+html|<html[\s>])/i.test(body || '');
+}
 
 // 코인 뉴스 — 돌발 이슈 감지(api/issues.js)용. 리다이렉트(308) 있지만 fetch가 기본으로 따라감.
 // 실측(2026-07-06): 200 OK, 최신 항목 정상 수집 확인.
@@ -146,27 +181,54 @@ function parseRSSItems(xml, source) {
 
 // ── 피드 1개 수집 ─────────────────────────────────────────────
 
-async function fetchFeed({ url, source }) {
+// 단일 시도(자체 타임아웃). health 기록은 fetchFeed가 검증까지 마친 뒤 직접 한다 —
+// trackedFetch(res.ok 기준 자동 기록)로는 "200인데 챌린지 HTML"을 실패로 못 잡기 때문.
+async function fetchFeedOnce(url) {
   const ctrl = new AbortController();
   const tid  = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await trackedFetch(url, {
-      signal: ctrl.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; MarketBriefBot/1.0)',
-        'Accept':     'application/rss+xml, application/xml, text/xml, */*',
-      },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const xml   = await res.text();
+    return await fetch(url, { signal: ctrl.signal, headers: RSS_HEADERS });
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+async function fetchFeed({ url, source }) {
+  const src = classifySource(url); // 'rss-yna' | 'rss-hankyung' | 'rss-coindesk' | null
+  try {
+    let res = await fetchFeedOnce(url);
+
+    // 403/429 → 1회 백오프 재시도(Retry-After 존중). 1차 실패는 그대로 기록(정직한 신호).
+    if (RETRY_STATUSES.has(res.status)) {
+      const wait = parseRetryAfter(res) ?? RETRY_BASE_MS;
+      console.warn(`[rss] ${source} HTTP ${res.status} — ${wait}ms 후 1회 재시도`);
+      recordFailure(src, new Error(`HTTP ${res.status}`));
+      await sleep(wait);
+      res = await fetchFeedOnce(url);
+    }
+
+    if (!res.ok) {
+      recordFailure(src, new Error(`HTTP ${res.status}`));
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    const xml = await res.text();
+    if (isChallengeHtml(contentType, xml)) {
+      recordFailure(src, new Error(`non-XML 응답(${contentType || '?'}) — 챌린지 의심`));
+      throw new Error(`non-XML 응답 — 챌린지 의심`);
+    }
+
+    recordSuccess(src);
     const items = parseRSSItems(xml, source);
     console.log(`[rss] ${source}: ${items.length}개 수집`);
     return items;
   } catch (e) {
+    // 네트워크/타임아웃 계열(위에서 아직 기록 안 한 경로)만 여기서 실패 기록 — 이미
+    // recordFailure한 HTTP/챌린지 케이스는 내가 던진 Error라 이름이 달라 중복 안 된다.
+    if (e.name === 'AbortError' || e.name === 'TypeError') recordFailure(src, e);
     console.warn(`[rss] ${source} 실패 (${e.message}) — 스킵`);
     return [];
-  } finally {
-    clearTimeout(tid);
   }
 }
 
