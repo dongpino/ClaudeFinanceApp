@@ -143,6 +143,29 @@ async function run() {
     assert(SOURCES.includes('cnbc'), '9: SOURCES에 cnbc 포함(/api/health 노출)');
   }
 
+  // ── 10b. btc/eth CoinGecko 실패 → lastGood stale 유지(item 1 사각지대) ─
+  {
+    const fake = makeFakeRedis(); __setRedisClientForTest(fake);
+    const servable = it => it && Number.isFinite(it.price) && it.price > 0;
+    // 정상 수집으로 성공본 저장
+    await applyLastGoodFallback({
+      ns: 'market',
+      collected: [priceItem('btc', { price: 66000 }), priceItem('eth', { price: 1900 })],
+      commitIds: ['btc', 'eth'], validate, servable,
+    });
+    // CoinGecko 429 → collectBTC/ETH throw → collected에서 btc/eth 누락
+    const { items, stale } = await applyLastGoodFallback({
+      ns: 'market', collected: [], commitIds: ['btc', 'eth'], fillIds: ['btc', 'eth'],
+      validate, servable, errorSummary: 'CoinGecko HTTP 429',
+    });
+    const btc = items.find(it => it.id === 'btc');
+    const eth = items.find(it => it.id === 'eth');
+    assert(stale.includes('btc') && stale.includes('eth'), '10b: btc·eth 둘 다 stale 폴백');
+    assert(btc?.stale === true && btc.price === 66000, '10b: btc 카드 실종 대신 마지막 성공가 유지');
+    assert(eth?.stale === true && eth.price === 1900, '10b: eth 카드 실종 대신 마지막 성공가 유지');
+    assert(btc.error === 'CoinGecko HTTP 429', '10b: 실패 원인 요약 부착');
+  }
+
   // ── 10. getHealthSnapshot이 lastError 필드를 노출하는지(관측성 갭 보완) ─
   {
     const snap = await getHealthSnapshot(); // Redis 미설정 → unknown 배열
