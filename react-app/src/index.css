@@ -367,6 +367,78 @@ body {
   text-align: center; margin: 8px 0 0;
 }
 
+/* ── 설정 패널: 데이터 소스 상태판(SettingsPanel.jsx, 관측성 2단계) ──────
+   모달 chrome(backdrop/panel/header/title/close)은 major-edit-*를 재사용하고,
+   접이식 섹션과 상태 리스트만 이 전용 클래스로 그린다. */
+.settings-section { border-top: 1px solid var(--border); margin-top: 6px; }
+.settings-section-head {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  background: none; border: none; cursor: pointer; padding: 12px 2px;
+  font: inherit; -webkit-tap-highlight-color: transparent;
+}
+.settings-section-title {
+  font-size: 13.5px; font-weight: 700; color: var(--text-1);
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.settings-down-badge {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: var(--up); box-shadow: 0 0 0 3px var(--up-dim);
+}
+.settings-chevron { color: var(--text-3); font-size: 15px; line-height: 1; transition: transform .15s; }
+.settings-chevron.open { transform: rotate(180deg); }
+
+.settings-section-body { padding: 0 0 10px; }
+.settings-health-toolbar {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+}
+.settings-health-checked { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.settings-refresh-btn {
+  font-size: 11.5px; font-weight: 600; padding: 4px 11px; border-radius: 8px;
+  background: var(--surface-tint); border: 1px solid var(--border);
+  color: var(--text-2); cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.settings-refresh-btn:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+.settings-refresh-btn:disabled { opacity: .55; cursor: default; }
+
+.settings-health-msg { font-size: 12px; color: var(--text-3); padding: 6px 2px; }
+.settings-health-error {
+  font-size: 12px; font-weight: 600; color: var(--up);
+  background: var(--up-dim); border-radius: 8px; padding: 8px 10px;
+}
+
+.settings-health-list { list-style: none; display: flex; flex-direction: column; }
+.settings-health-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 4px; font-size: 12.5px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-health-row:last-child { border-bottom: none; }
+.settings-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.settings-src-name {
+  color: var(--text-1); font-weight: 600; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.settings-src-status { font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.settings-src-meta {
+  font-size: 11px; color: var(--text-3); flex-shrink: 0;
+  font-variant-numeric: tabular-nums; text-align: right; min-width: 82px;
+}
+
+/* 상태 색 — 초록(정상)/노랑(지연)/빨강(장애)/회색(대기·미수집) */
+.settings-dot.ok    { background: #2fb96a; }
+.settings-dot.stale { background: #e0a400; }
+.settings-dot.down  { background: var(--up); }
+.settings-dot.standby, .settings-dot.unknown { background: var(--flat); }
+.settings-src-status.ok    { color: #2fb96a; }
+.settings-src-status.stale { color: #caa000; }
+.settings-src-status.down  { color: var(--up); }
+.settings-src-status.standby, .settings-src-status.unknown { color: var(--text-3); }
+
+[data-theme="light"] .settings-dot.ok    { background: #1a9e4b; }
+[data-theme="light"] .settings-src-status.ok    { color: #178040; }
+[data-theme="light"] .settings-dot.stale { background: #c88a00; }
+[data-theme="light"] .settings-src-status.stale { color: #986a00; }
+
 /* ── 홈 카테고리 슬라이드 트랙 ──────────────── */
 /* 뷰포트(overflow:hidden) 안에 5개 카테고리 패널을 가로로 나란히 두고(트랙
    width:500%, 패널 width:20%) translateX로 밀어 전환한다.

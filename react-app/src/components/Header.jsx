@@ -1,16 +1,20 @@
+import { useState } from 'react';
 import { useTheme } from '../ThemeContext';
+import SettingsPanel from './SettingsPanel';
 
 export default function Header() {
   const { theme, toggle } = useTheme();
+  const [showSettings, setShowSettings] = useState(false);
 
   return (
+    <>
     <header className="header">
       <div>
         <div className="header-title">오늘의 <em>시황</em></div>
         <div className="header-sub">실시간 주요 증시 · 15분 지연</div>
       </div>
       <div className="header-actions">
-        <button className="icon-btn" title="설정">
+        <button className="icon-btn" title="설정" onClick={() => setShowSettings(true)}>
           <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"
                strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="3"/>
@@ -54,5 +58,7 @@ export default function Header() {
         </button>
       </div>
     </header>
+    {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+    </>
   );
 }
