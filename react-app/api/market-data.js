@@ -23,12 +23,16 @@ import { applyLastGoodFallback } from './_lib/last-good.js';
 
 // ── last-good 폴백 대상 ──────────────────────────────────────────
 // KR 지수(naver)·환율·도미넌스(coingecko)·공포탐욕(alternative-me)·우미 워치리스트
-// (naver / finnhub·twelvedata)에 더해, CNBC 단일 소스인 US 지수(나스닥/다우/S&P500/
-// SOX/VIX/US10Y/DXY)까지 확장 — CNBC quote가 죽으면 7개 카드가 통째로 비던 사각지대 보완.
-// btc/eth(binance)는 이미 자체 소스폴백(binance→bybit)을 가져 범위 밖 그대로 둔다.
+// (naver / finnhub·twelvedata), CNBC 단일 소스 US 지수(나스닥/다우/S&P500/SOX/VIX/
+// US10Y/DXY), 그리고 btc/eth까지.
+// btc/eth의 자체 소스폴백(binance→bybit)은 history에만 해당하고 현재가(=CoinGecko
+// /simple/price)에는 폴백이 전혀 없어, CoinGecko 장애 시 두 카드가 통째로 사라지던
+// 사각지대였다 — last-good으로 stale 서빙해 카드 실종을 막는다. (Binance 티커 라이브
+// 폴오버는 로드맵 '이중화' 단계 별건 — 이번엔 last-good만.)
 const FALLBACK_IDS = new Set([
   'kospi', 'kosdaq', 'usdkrw', 'jpykrw', 'dominance', 'feargreed',
   'nasdaq', 'dow', 'sp500', 'sox', 'vix', 'us10y', 'dxy',
+  'btc', 'eth',
   ...WATCHLIST_IDS,
 ]);
 const FALLBACK_ERR = '실시간 수집 실패 — 마지막 성공본 서빙';
