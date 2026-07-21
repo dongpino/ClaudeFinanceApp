@@ -25,7 +25,7 @@ import { Redis } from '@upstash/redis';
 
 // 대상 소스 식별자(요구사항 1) — /api/health가 이 순서로 상태를 보고한다.
 export const SOURCES = [
-  'naver', 'naver-index', 'finnhub', 'twelvedata', 'coingecko',
+  'naver', 'naver-index', 'finnhub', 'twelvedata', 'cnbc', 'coingecko',
   'binance', 'bybit', 'alternative-me', 'fred',
   'rss-yna', 'rss-hankyung', 'rss-coindesk',
 ];
@@ -33,7 +33,7 @@ export const SOURCES = [
 // 소스별 기대 갱신 주기(초). lastSuccess가 이 값의 3배 이내면 ok, 초과면 stale.
 // 시세류는 수 분, FRED/RSS는 수 시간(요구사항 5).
 const EXPECTED_INTERVAL_SEC = {
-  'naver': 300, 'naver-index': 300, 'finnhub': 300, 'twelvedata': 900,
+  'naver': 300, 'naver-index': 300, 'finnhub': 300, 'twelvedata': 900, 'cnbc': 300,
   'coingecko': 300, 'binance': 300, 'bybit': 300, 'alternative-me': 3600,
   'fred': 43200,                     // FRED 월간 데이터 + 12h 캐시 → 12h
   'rss-yna': 10800, 'rss-hankyung': 10800, 'rss-coindesk': 10800, // 3h
@@ -44,7 +44,7 @@ const DAILY_TTL_SEC = 7 * 24 * 60 * 60; // 7일 추이 보관
 const DOWN_THRESHOLD = 3;               // consecutiveFailures 이 값 이상이면 down
 
 // ── URL → 소스 분류 ──────────────────────────────────────────────────
-// 호스트/경로로 결정적 분류(추정 아님). 미지의 호스트(CNBC/CBOE 등 비대상)는
+// 호스트/경로로 결정적 분류(추정 아님). 미지의 호스트(CBOE VIX CDN 등 비대상)는
 // null → 기록하지 않는다.
 export function classifySource(url) {
   const u = String(url);
@@ -52,6 +52,8 @@ export function classifySource(url) {
   // 정상 흡수하는 "예상된 실패")이므로 health 신호에서 제외 — 가용성 판단은 /quote·/search로만.
   if (u.includes('finnhub.io'))      return u.includes('/stock/candle') ? null : 'finnhub';
   if (u.includes('twelvedata.com'))  return 'twelvedata';
+  // CNBC: 미국 지수(나스닥/다우/S&P500/SOX/VIX/US10Y/DXY) quote 단일 소스(us-indices.js).
+  if (u.includes('cnbc.com'))        return 'cnbc';
   if (u.includes('coingecko.com'))   return 'coingecko';
   if (u.includes('bybit.com'))       return 'bybit';
   if (u.includes('binance'))         return 'binance'; // binance.com / data-api.binance.vision

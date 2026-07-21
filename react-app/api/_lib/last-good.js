@@ -99,12 +99,17 @@ export async function writeLastGoodBatch(ns, entries) {
  * @param {Iterable<string>} p.commitIds  lastGood 갱신 대상 id 범위
  * @param {Iterable<string>} [p.fillIds]  폴백 서빙 대상 id 범위(기본: commitIds)
  * @param {(item:object)=>boolean} p.validate  commit 자격 검증(오염 방지)
+ * @param {(item:object)=>boolean} [p.servable] "라이브로 노출해도 되는가" 판정(기본: validate).
+ *   commit엔 못 미쳐도(예: 미국 지수가 history 서브페치 실패로 미니차트만 빈 경우) 정상
+ *   가격을 받은 라이브 값은 폴백으로 덮지 않고 그대로 노출하기 위한 seam — 이게 있어야
+ *   "소스는 살아있는데 부가 데이터만 빠진" 종목을 stale로 오강등하거나 통째로 떨구지 않는다.
  * @param {string}   [p.errorSummary]  stale 아이템에 붙일 error 요약(핸들러가 아는 경우)
  * @returns {Promise<{ items: object[], stale: string[] }>}
  */
-export async function applyLastGoodFallback({ ns, collected = [], commitIds, fillIds, validate, errorSummary }) {
+export async function applyLastGoodFallback({ ns, collected = [], commitIds, fillIds, validate, servable, errorSummary }) {
   const commitSet = commitIds instanceof Set ? commitIds : new Set(commitIds ?? []);
   const fillSet   = fillIds   == null ? commitSet : (fillIds instanceof Set ? fillIds : new Set(fillIds));
+  const canServe  = servable ?? validate; // 기본은 commit 검증과 동일(기존 소스 동작 그대로)
   const asOfNow   = new Date().toISOString();
 
   const freshById = new Map();
@@ -117,8 +122,11 @@ export async function applyLastGoodFallback({ ns, collected = [], commitIds, fil
       if (validate(item)) {
         freshById.set(id, { ...item, asOf: asOfNow });
         commitEntries.push({ id, data: item, asOf: asOfNow });
+      } else if (canServe(item)) {
+        // commit 자격엔 못 미치지만(성공본 승격은 안 함 — 오염 방지) 라이브로는 노출.
+        freshById.set(id, { ...item, asOf: asOfNow });
       }
-      // commit 범위인데 validate 실패 → 신선분에서 제외(오염 방지). fillIds에 있으면 아래서 폴백.
+      // validate·servable 둘 다 실패 → 신선분에서 제외. fillIds에 있으면 아래서 폴백.
     } else {
       // 범위 밖 — 그대로 통과, asOf만 보강.
       freshById.set(id, item.asOf ? item : { ...item, asOf: asOfNow });

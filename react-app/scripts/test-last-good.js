@@ -6,6 +6,7 @@
  * 결정적으로 확인한다.  실행: node scripts/test-last-good.js
  */
 import { applyLastGoodFallback, __setRedisClientForTest } from '../api/_lib/last-good.js';
+import { classifySource, SOURCES } from '../api/_lib/health.js';
 
 // ── 인메모리 페이크 Redis (pipeline().get/set + exec만 구현) ──
 function makeFakeRedis() {
@@ -105,6 +106,41 @@ async function run() {
       ns: 'test', collected: [priceItem('a')], commitIds: ['a', 'b'], validate,
     });
     assert(items.length === 1 && items[0].id === 'a' && stale.length === 0, '6: Redis 없으면 신선분만, 예외 없음');
+  }
+
+  // ── 7. CNBC 미국 지수: servable로 라이브 노출, commit은 완전분만 ─
+  {
+    const fake = makeFakeRedis(); __setRedisClientForTest(fake);
+    const servable = it => it && Number.isFinite(it.price) && it.price > 0;
+    // nasdaq: quote는 성공(가격 有)했지만 history 서브페치 실패(빈 배열) → 라이브 노출, commit 없음
+    const { items, stale } = await applyLastGoodFallback({
+      ns: 'market', collected: [priceItem('nasdaq', { history: [] })],
+      commitIds: ['nasdaq'], validate, servable,
+    });
+    const nasdaq = items.find(it => it.id === 'nasdaq');
+    assert(nasdaq && typeof nasdaq.asOf === 'string' && !nasdaq.stale, '7: CNBC 지수 history 실패해도 라이브 노출');
+    assert(stale.length === 0, '7: 라이브 값이 있으면 stale 폴백 안 함');
+    assert(fake._setCalls.length === 0, '7: 불완전 스냅샷은 lastGood 미승격(오염 방지)');
+  }
+
+  // ── 8. CNBC quote 죽음: 저장된 성공본으로 폴백(us-indices 사각지대) ─
+  {
+    const fake = makeFakeRedis(); __setRedisClientForTest(fake);
+    const servable = it => it && Number.isFinite(it.price) && it.price > 0;
+    await applyLastGoodFallback({ ns: 'market', collected: [priceItem('sox', { price: 5000 })], commitIds: ['sox'], validate, servable });
+    const { items, stale } = await applyLastGoodFallback({
+      ns: 'market', collected: [], commitIds: ['sox'], validate, servable, errorSummary: 'CNBC 응답 형식 오류',
+    });
+    const sox = items.find(it => it.id === 'sox');
+    assert(stale.includes('sox') && sox?.stale === true && sox.price === 5000, '8: CNBC 죽으면 US 지수 stale 폴백');
+    assert(sox.error === 'CNBC 응답 형식 오류', '8: CNBC 폴백 error 요약 부착');
+  }
+
+  // ── 9. health: CNBC quote 호스트가 'cnbc'로 분류되고 SOURCES에 등장 ─
+  {
+    assert(classifySource('https://quote.cnbc.com/quote-html-webservice/quote.htm?symbols=.IXIC') === 'cnbc', '9: CNBC quote → cnbc');
+    assert(classifySource('https://cdn.cboe.com/api/global/us_indices/VIX_History.csv') === null, '9: CBOE는 여전히 비대상(null)');
+    assert(SOURCES.includes('cnbc'), '9: SOURCES에 cnbc 포함(/api/health 노출)');
   }
 
   console.log(`\n[test-last-good] ${pass} passed, ${fail} failed`);

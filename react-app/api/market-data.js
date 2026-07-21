@@ -21,22 +21,32 @@ import { collectFearGreed }   from './_collectors/fear-greed.js';
 import { collectWatchlist, WATCHLIST_IDS } from './_collectors/watchlist.js';
 import { applyLastGoodFallback } from './_lib/last-good.js';
 
-// ── last-good 폴백 대상(요구사항 3의 열거 그대로) ────────────────
+// ── last-good 폴백 대상 ──────────────────────────────────────────
 // KR 지수(naver)·환율·도미넌스(coingecko)·공포탐욕(alternative-me)·우미 워치리스트
-// (naver / finnhub·twelvedata). CNBC US 지수와 btc/eth(binance)는 이 단계 범위 밖 —
-// 전자는 단일소스라 별도 후보, 후자는 이미 자체 소스폴백(binance→bybit)을 가진다.
+// (naver / finnhub·twelvedata)에 더해, CNBC 단일 소스인 US 지수(나스닥/다우/S&P500/
+// SOX/VIX/US10Y/DXY)까지 확장 — CNBC quote가 죽으면 7개 카드가 통째로 비던 사각지대 보완.
+// btc/eth(binance)는 이미 자체 소스폴백(binance→bybit)을 가져 범위 밖 그대로 둔다.
 const FALLBACK_IDS = new Set([
-  'kospi', 'kosdaq', 'usdkrw', 'jpykrw', 'dominance', 'feargreed', ...WATCHLIST_IDS,
+  'kospi', 'kosdaq', 'usdkrw', 'jpykrw', 'dominance', 'feargreed',
+  'nasdaq', 'dow', 'sp500', 'sox', 'vix', 'us10y', 'dxy',
+  ...WATCHLIST_IDS,
 ]);
 const FALLBACK_ERR = '실시간 수집 실패 — 마지막 성공본 서빙';
 
-// commit(오염 방지) 자격 검증 — 가격이 유효(유한·양수)하고, 미니차트가 실제로 채워진
-// 스냅샷만 lastGood으로 승격한다. dominance는 history를 매일 자체 축적하는 중이라
-// 짧은 history가 정상 상태(history_bootstrapping)이므로 길이 검사에서 제외한다.
+// commit(오염 방지) 자격 — 가격이 유효(유한·양수)하고 미니차트가 실제로 채워진 스냅샷만
+// lastGood으로 승격한다. dominance는 history를 매일 자체 축적하는 중이라 짧은 history가
+// 정상 상태(history_bootstrapping)이므로 길이 검사에서 제외한다.
 function validateMarketItem(item) {
   if (!item || !Number.isFinite(item.price) || item.price <= 0) return false;
   if (item.history_bootstrapping) return true;
   return Array.isArray(item.history) && item.history.length >= 5;
+}
+
+// 라이브 노출 자격 — 유효한 가격만 받았으면(history 서브페치가 실패해도) 그대로 보여준다.
+// CNBC quote는 성공했는데 Naver/FRED history만 실패한 미국 지수를 stale로 오강등하거나
+// 떨구지 않기 위한 완화 조건(부족한 차트는 detectIssues의 기존 "차트 데이터 부족" 경고가 담당).
+function servableMarketItem(item) {
+  return item && Number.isFinite(item.price) && item.price > 0;
 }
 
 // ── 캐시 ────────────────────────────────────────────────
@@ -118,6 +128,7 @@ async function handleHome(req, res) {
     collected: Object.values(itemsById),
     commitIds: FALLBACK_IDS,
     validate: validateMarketItem,
+    servable: servableMarketItem,
     errorSummary: FALLBACK_ERR,
   });
   const finalById = {};
@@ -188,6 +199,7 @@ async function handleDetail(req, res, id) {
     commitIds: FALLBACK_IDS,
     fillIds: FALLBACK_IDS.has(id) ? [id] : [],
     validate: validateMarketItem,
+    servable: servableMarketItem,
     errorSummary: FALLBACK_ERR,
   });
 
