@@ -17,10 +17,17 @@
 
 import { fetchStockPrices, hasKey } from './_collectors/finnhub.js';
 import { fetchKRQuotes } from './_collectors/naver-stock.js';
+import { applyLastGoodFallback } from './_lib/last-good.js';
 
 const CACHE     = {};
 const CACHE_TTL = 5 * 60 * 1000;  // 5분
 const MAX_SYMS  = 10;
+
+// commit(오염 방지) 자격 — 시세 응답은 sparkline이 비어 있으므로(quote 전용) 유효
+// 가격만으로 판정한다. 가격 0/NaN(장 시작 전 결측 등)은 성공본으로 승격하지 않는다.
+function validateStockItem(item) {
+  return item && Number.isFinite(item.price) && item.price > 0;
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -63,22 +70,45 @@ export default async function handler(req, res) {
     return res.status(200).json({ items: CACHE[key].data, fetched_at: CACHE[key].fetchedAt });
   }
 
+  // KR(fetchKRQuotes)은 종목별로 null을 걸러 부분 성공을 그대로 돌려주고, US
+  // (fetchStockPrices)는 실패 시 전량 throw다 — 어느 쪽이든 빠진 종목은 lastGood으로
+  // 폴백한다. market별로 네임스페이스를 분리해 심볼 충돌(미국 티커 vs 6자리 코드)을 막는다.
+  const ns = `stock:${market}`;
+  let collected = [];
+  let errorSummary;
   try {
-    const items     = market === 'kr' ? await fetchKRQuotes(symbols) : await fetchStockPrices(symbols);
-    const fetchedAt = new Date().toISOString();
-
-    CACHE[key] = { data: items, ts: Date.now(), fetchedAt };
-
-    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=60');
-    res.setHeader('X-Cache', 'MISS');
-    console.log(`[stock-quote] market=${market} symbols=[${symbols.join(',')}] → ${items.length}개`);
-    items.forEach(it => {
-      const sign = n => (n >= 0 ? '+' : '') + n.toFixed(2);
-      console.log(`  ${it.symbol} ${it.price.toLocaleString('en-US')}  ${sign(it.change_pct)}%`);
-    });
-    return res.status(200).json({ items, fetched_at: fetchedAt });
+    collected = market === 'kr' ? await fetchKRQuotes(symbols) : await fetchStockPrices(symbols);
   } catch (err) {
-    console.error('[stock-quote] 오류:', err.message);
-    return res.status(502).json({ error: `${market === 'kr' ? 'Naver' : 'Finnhub'} 시세 조회 실패`, details: err.message });
+    console.error('[stock-quote] 오류(폴백 시도):', err.message);
+    errorSummary = err.message;
   }
+
+  const { items, stale } = await applyLastGoodFallback({
+    ns,
+    collected,
+    commitIds: symbols,
+    validate: validateStockItem,
+    errorSummary,
+  });
+
+  // 신선분도 폴백할 성공본도 전혀 없음 → 기존과 동일한 실패 응답(신규 심볼 등)
+  if (items.length === 0) {
+    const src = market === 'kr' ? 'Naver' : 'Finnhub';
+    return res.status(502).json({ error: `${src} 시세 조회 실패`, details: errorSummary ?? '데이터 없음' });
+  }
+
+  const fetchedAt = new Date().toISOString();
+  const isStale   = stale.length > 0;
+
+  // 완전히 신선할 때만 5분 캐시에 적재 — stale은 캐시하지 않아 소스 복원 즉시 재시도된다.
+  if (!isStale) CACHE[key] = { data: items, ts: Date.now(), fetchedAt };
+
+  res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=60');
+  res.setHeader('X-Cache', isStale ? 'STALE' : 'MISS');
+  console.log(`[stock-quote] market=${market} symbols=[${symbols.join(',')}] → ${items.length}개${isStale ? ` (stale=${stale.join(',')})` : ''}`);
+  items.forEach(it => {
+    const sign = n => (n >= 0 ? '+' : '') + n.toFixed(2);
+    console.log(`  ${it.symbol}${it.stale ? '*' : ''} ${it.price.toLocaleString('en-US')}  ${sign(it.change_pct)}%`);
+  });
+  return res.status(200).json({ items, fetched_at: fetchedAt, ...(isStale ? { stale: true } : {}) });
 }

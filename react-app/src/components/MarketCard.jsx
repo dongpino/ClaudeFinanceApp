@@ -69,6 +69,11 @@ const GRADE_MAP = {
 
 export function detectIssues(item) {
   const issues = [];
+  // stale(마지막 성공본 폴백 서빙 중)은 "데이터 이상(누락)"이 아니라 별도 상태다 —
+  // 2단계 UI가 stale 배지로 따로 표시하므로 여기서 누락/계산실패 경고로 이중 집계하지
+  // 않는다(요구사항 5). lastGood은 저장 전 price/history 검증을 통과한 완전한 스냅샷이라
+  // 아래 검사도 통상 통과하지만, 폴백본이 경계에 걸려 오탐하는 것을 원천 차단한다.
+  if (item.stale) return issues;
   if (!item.price || item.price === 0)
     issues.push('가격 데이터 없음');
   // history_bootstrapping(예: BTC 도미넌스)은 짧은 history가 "장애"가 아니라 매일

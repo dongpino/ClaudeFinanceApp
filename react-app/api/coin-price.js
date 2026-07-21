@@ -13,10 +13,17 @@
  */
 
 import { fetchCoinPrices } from './_collectors/coingecko.js';
+import { applyLastGoodFallback } from './_lib/last-good.js';
 
 const CACHE     = {};
 const CACHE_TTL = 5 * 60 * 1000;   // 5분
 const MAX_IDS   = 20;
+
+// commit(오염 방지) 자격 — 가격이 유효하고 스파크라인이 실제로 채워진 것만 성공본으로.
+function validateCoinItem(item) {
+  return item && Number.isFinite(item.price) && item.price > 0 &&
+         Array.isArray(item.sparkline) && item.sparkline.length > 0;
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -48,22 +55,42 @@ export default async function handler(req, res) {
     return res.status(200).json({ items: CACHE[key].data, fetched_at: CACHE[key].fetchedAt });
   }
 
+  // fetchCoinPrices는 한 번의 요청으로 전 코인을 받아 실패 시 전량 throw다 —
+  // 그 경우 collected=[]로 두고 요청 id 전부를 lastGood으로 폴백 서빙한다.
+  let collected = [];
+  let errorSummary;
   try {
-    const items     = await fetchCoinPrices(ids);
-    const fetchedAt = new Date().toISOString();
-
-    CACHE[key] = { data: items, ts: Date.now(), fetchedAt };
-
-    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=60');
-    res.setHeader('X-Cache', 'MISS');
-    console.log(`[coin-price] ids=[${ids.join(',')}] → ${items.length}개`);
-    items.forEach(it => {
-      const sign = n => (n >= 0 ? '+' : '') + n.toFixed(2);
-      console.log(`  ${it.symbol} $${it.price.toLocaleString('en-US')}  ${sign(it.change_pct)}%  spark=${it.sparkline.length}pt`);
-    });
-    return res.status(200).json({ items, fetched_at: fetchedAt });
+    collected = await fetchCoinPrices(ids);
   } catch (err) {
-    console.error('[coin-price] 오류:', err.message);
-    return res.status(502).json({ error: 'CoinGecko 시세 조회 실패', details: err.message });
+    console.error('[coin-price] 오류(폴백 시도):', err.message);
+    errorSummary = err.message;
   }
+
+  const { items, stale } = await applyLastGoodFallback({
+    ns: 'coin',
+    collected,
+    commitIds: ids,
+    validate: validateCoinItem,
+    errorSummary,
+  });
+
+  // 신선분도 폴백할 성공본도 전혀 없음 → 기존과 동일한 실패 응답(신규 심볼 등)
+  if (items.length === 0) {
+    return res.status(502).json({ error: 'CoinGecko 시세 조회 실패', details: errorSummary ?? '데이터 없음' });
+  }
+
+  const fetchedAt = new Date().toISOString();
+  const isStale   = stale.length > 0;
+
+  // 완전히 신선할 때만 5분 캐시에 적재 — stale은 캐시하지 않아 소스 복원 즉시 재시도된다.
+  if (!isStale) CACHE[key] = { data: items, ts: Date.now(), fetchedAt };
+
+  res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=60');
+  res.setHeader('X-Cache', isStale ? 'STALE' : 'MISS');
+  console.log(`[coin-price] ids=[${ids.join(',')}] → ${items.length}개${isStale ? ` (stale=${stale.join(',')})` : ''}`);
+  items.forEach(it => {
+    const sign = n => (n >= 0 ? '+' : '') + n.toFixed(2);
+    console.log(`  ${it.symbol}${it.stale ? '*' : ''} $${it.price.toLocaleString('en-US')}  ${sign(it.change_pct)}%  spark=${it.sparkline?.length ?? 0}pt`);
+  });
+  return res.status(200).json({ items, fetched_at: fetchedAt, ...(isStale ? { stale: true } : {}) });
 }

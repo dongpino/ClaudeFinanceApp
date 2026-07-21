@@ -19,6 +19,25 @@ import { collectETH }         from './_collectors/eth.js';
 import { collectBtcDominance } from './_collectors/btc-dominance.js';
 import { collectFearGreed }   from './_collectors/fear-greed.js';
 import { collectWatchlist, WATCHLIST_IDS } from './_collectors/watchlist.js';
+import { applyLastGoodFallback } from './_lib/last-good.js';
+
+// ── last-good 폴백 대상(요구사항 3의 열거 그대로) ────────────────
+// KR 지수(naver)·환율·도미넌스(coingecko)·공포탐욕(alternative-me)·우미 워치리스트
+// (naver / finnhub·twelvedata). CNBC US 지수와 btc/eth(binance)는 이 단계 범위 밖 —
+// 전자는 단일소스라 별도 후보, 후자는 이미 자체 소스폴백(binance→bybit)을 가진다.
+const FALLBACK_IDS = new Set([
+  'kospi', 'kosdaq', 'usdkrw', 'jpykrw', 'dominance', 'feargreed', ...WATCHLIST_IDS,
+]);
+const FALLBACK_ERR = '실시간 수집 실패 — 마지막 성공본 서빙';
+
+// commit(오염 방지) 자격 검증 — 가격이 유효(유한·양수)하고, 미니차트가 실제로 채워진
+// 스냅샷만 lastGood으로 승격한다. dominance는 history를 매일 자체 축적하는 중이라
+// 짧은 history가 정상 상태(history_bootstrapping)이므로 길이 검사에서 제외한다.
+function validateMarketItem(item) {
+  if (!item || !Number.isFinite(item.price) || item.price <= 0) return false;
+  if (item.history_bootstrapping) return true;
+  return Array.isArray(item.history) && item.history.length >= 5;
+}
 
 // ── 캐시 ────────────────────────────────────────────────
 let   cacheHome   = null;   // { data: { updated_at, items }, timestamp }
@@ -92,7 +111,19 @@ async function handleHome(req, res) {
     }
   }
 
-  const items   = ITEM_ORDER.filter(id => itemsById[id]).map(id => itemsById[id]);
+  // last-good 폴백: 이번에 성공한 scope 종목은 성공본으로 승격, 실패한 scope 종목은
+  // 마지막 성공본으로 대신 서빙(stale:true). 범위 밖(US 지수/btc/eth)은 그대로 통과.
+  const { items: merged, stale } = await applyLastGoodFallback({
+    ns: 'market',
+    collected: Object.values(itemsById),
+    commitIds: FALLBACK_IDS,
+    validate: validateMarketItem,
+    errorSummary: FALLBACK_ERR,
+  });
+  const finalById = {};
+  for (const it of merged) if (it?.id) finalById[it.id] = it;
+
+  const items   = ITEM_ORDER.filter(id => finalById[id]).map(id => finalById[id]);
   const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
 
   if (items.length === 0) {
@@ -100,7 +131,8 @@ async function handleHome(req, res) {
     return res.status(500).json({ error: '데이터 수집 실패' });
   }
 
-  console.log(`[market-data/home] ${items.length}/${ITEM_ORDER.length} 종목 완료 (${elapsed}s)`);
+  const staleNote = stale.length ? ` (stale=${stale.length}: ${stale.join(',')})` : '';
+  console.log(`[market-data/home] ${items.length}/${ITEM_ORDER.length} 종목 완료 (${elapsed}s)${staleNote}`);
   const data = { updated_at: fmtKST(), items };
   cacheHome = { data, timestamp: Date.now() };
 
@@ -124,8 +156,10 @@ async function handleDetail(req, res, id) {
   const startMs = Date.now();
   console.log(`[market-data/detail/${id}] Cache MISS — 수집 시작`);
 
+  // 그룹 수집이 통째로 throw해도(예: dominance/feargreed 단일 소스 실패) 여기서 흡수하고
+  // 아래 폴백으로 넘긴다 — scope 종목이면 마지막 성공본으로 서빙할 기회를 준다.
+  let collected = [];
   try {
-    let collected;
     if (id === 'btc') {
       collected = [await collectBTC({ include90d: true })];
     } else if (id === 'eth') {
@@ -141,24 +175,38 @@ async function handleDetail(req, res, id) {
     } else {
       collected = await collectKR({ include90d: true });
     }
-
-    // 그룹 전체를 캐시에 저장 (부수 효과: 같은 그룹 다른 종목 재요청 시 HIT)
-    const now = Date.now();
-    for (const it of collected) {
-      if (it?.id) cacheDetail[it.id] = { data: { updated_at: fmtKST(), item: it }, timestamp: now };
-    }
-
-    const data = cacheDetail[id]?.data;
-    if (!data) return res.status(500).json({ error: `${id} 수집 실패` });
-
-    const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
-    console.log(`[market-data/detail/${id}] 완료 (${elapsed}s)  hist_90d=${data.item.history_90d?.length ?? 0}`);
-
-    setCacheHeaders(res, false);
-    return res.status(200).json(data);
-
   } catch (e) {
-    console.error(`[market-data/detail/${id}] 실패: ${e.message}`);
-    return res.status(500).json({ error: '데이터 수집 실패', details: e.message });
+    console.error(`[market-data/detail/${id}] 수집 실패(폴백 시도): ${e.message}`);
   }
+
+  // 이 그룹에서 온 scope 종목은 lastGood 갱신(commit). 폴백 서빙(fill)은 요청 종목
+  // 하나로만 한정해야 한다 — commit 범위(FALLBACK_IDS) 전체로 fill하면 이 요청과
+  // 무관한 다른 scope 종목까지 lastGood에서 끌어와 상세 응답에 섞이기 때문.
+  const { items: merged } = await applyLastGoodFallback({
+    ns: 'market',
+    collected,
+    commitIds: FALLBACK_IDS,
+    fillIds: FALLBACK_IDS.has(id) ? [id] : [],
+    validate: validateMarketItem,
+    errorSummary: FALLBACK_ERR,
+  });
+
+  // 그룹 전체를 캐시에 저장 (부수 효과: 같은 그룹 다른 종목 재요청 시 HIT)
+  const now = Date.now();
+  for (const it of merged) {
+    if (it?.id) cacheDetail[it.id] = { data: { updated_at: fmtKST(), item: it }, timestamp: now };
+  }
+
+  const data = cacheDetail[id]?.data;
+  if (!data) {
+    console.error(`[market-data/detail/${id}] 수집 실패(폴백 성공본도 없음)`);
+    return res.status(500).json({ error: '데이터 수집 실패' });
+  }
+
+  const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+  const staleNote = data.item.stale ? ' [stale]' : '';
+  console.log(`[market-data/detail/${id}] 완료 (${elapsed}s)  hist_90d=${data.item.history_90d?.length ?? 0}${staleNote}`);
+
+  setCacheHeaders(res, false);
+  return res.status(200).json(data);
 }
