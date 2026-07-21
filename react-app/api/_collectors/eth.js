@@ -54,8 +54,18 @@ async function fetchHistory30() {
   return [...seen.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, close]) => ({ date, close }));
 }
 
+// Binance는 data-api.binance.vision(CDN, Vercel 지역차단 없음) 우선, api.binance.com은
+// 폴백 — btc-intraday.js와 동일 체인. 예전엔 api.binance.com 직격이라 Vercel에서 451/403로
+// 매번 실패해 CoinGecko /ohlc 백업콜(불필요한 CoinGecko 부하)을 유발했다.
 async function fetchHistory90dBinance(limit = 90) {
-  const raw = await fetchJSON(`https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=1d&limit=${limit}`);
+  const path = `/api/v3/klines?symbol=ETHUSDT&interval=1d&limit=${limit}`;
+  let raw;
+  try {
+    raw = await fetchJSON(`https://data-api.binance.vision${path}`);
+  } catch (e) {
+    console.warn(`[eth] binance.vision 실패: ${e.message} → api.binance.com`);
+    raw = await fetchJSON(`https://api.binance.com${path}`);
+  }
   if (!Array.isArray(raw) || raw.length < 10) throw new Error(`Binance 데이터 부족: ${raw.length}행`);
   return raw.map(k => ({
     date: tsToDateUTC(Number(k[0])),

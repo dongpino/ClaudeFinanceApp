@@ -106,11 +106,19 @@ async function fetchFREDLong(fredId, numRows = 250) {
 // ─────────────────────────────────────────────────────────
 
 // BTC: Binance 250일 OHLC → CoinGecko 1년 close-only
+// Binance는 data-api.binance.vision(CDN, Vercel 지역차단 없음) 우선, api.binance.com은
+// 폴백 — btc-intraday.js와 동일 체인. 예전엔 api.binance.com 직격이라 Vercel에서 451/403로
+// 매번 실패해 불필요한 CoinGecko 백업콜을 유발했다.
 export async function fetchLongBTC() {
   try {
-    const raw = await fetchJSON(
-      'https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250'
-    );
+    const path = '/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250';
+    let raw;
+    try {
+      raw = await fetchJSON(`https://data-api.binance.vision${path}`);
+    } catch (ve) {
+      console.warn(`[analysis/btc] binance.vision 실패: ${ve.message} → api.binance.com`);
+      raw = await fetchJSON(`https://api.binance.com${path}`);
+    }
     if (!Array.isArray(raw) || raw.length < 10) throw new Error(`Binance 행 부족: ${raw.length}`);
     const history = raw.map(k => ({
       date:   tsToDate(Number(k[0])),
