@@ -3,7 +3,7 @@
  *
  * GET /api/health → 소스별 상태 판정 + 원시 수치
  *   [{ source, status: 'ok'|'stale'|'down'|'unknown',
- *      lastSuccessAt, lastFailureAt, consecutiveFailures, todayRate, today }]
+ *      lastSuccessAt, lastFailureAt, lastError, consecutiveFailures, todayRate, today }]
  *
  * 판정 규칙(_lib/health.js getHealthSnapshot):
  *   - consecutiveFailures >= 3            → down

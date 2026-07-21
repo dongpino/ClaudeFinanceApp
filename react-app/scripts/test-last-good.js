@@ -6,7 +6,7 @@
  * 결정적으로 확인한다.  실행: node scripts/test-last-good.js
  */
 import { applyLastGoodFallback, __setRedisClientForTest } from '../api/_lib/last-good.js';
-import { classifySource, SOURCES } from '../api/_lib/health.js';
+import { classifySource, SOURCES, getHealthSnapshot } from '../api/_lib/health.js';
 
 // ── 인메모리 페이크 Redis (pipeline().get/set + exec만 구현) ──
 function makeFakeRedis() {
@@ -141,6 +141,13 @@ async function run() {
     assert(classifySource('https://quote.cnbc.com/quote-html-webservice/quote.htm?symbols=.IXIC') === 'cnbc', '9: CNBC quote → cnbc');
     assert(classifySource('https://cdn.cboe.com/api/global/us_indices/VIX_History.csv') === null, '9: CBOE는 여전히 비대상(null)');
     assert(SOURCES.includes('cnbc'), '9: SOURCES에 cnbc 포함(/api/health 노출)');
+  }
+
+  // ── 10. getHealthSnapshot이 lastError 필드를 노출하는지(관측성 갭 보완) ─
+  {
+    const snap = await getHealthSnapshot(); // Redis 미설정 → unknown 배열
+    assert(Array.isArray(snap) && snap.length === SOURCES.length, '10: 스냅샷 = 전 소스');
+    assert(snap.every(s => 'lastError' in s), '10: 모든 항목에 lastError 필드 노출');
   }
 
   console.log(`\n[test-last-good] ${pass} passed, ${fail} failed`);

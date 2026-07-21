@@ -163,7 +163,7 @@ function judgeStatus(source, srcHash, nowMs) {
 
 /**
  * 소스별 상태 + 원시 수치. Redis만 읽고 외부 API는 치지 않는다(요구사항 6).
- * @returns {Array<{source,status,lastSuccessAt,lastFailureAt,consecutiveFailures,todayRate,today}>}
+ * @returns {Array<{source,status,lastSuccessAt,lastFailureAt,lastError,consecutiveFailures,todayRate,today}>}
  */
 export async function getHealthSnapshot() {
   const r = getRedis();
@@ -173,7 +173,7 @@ export async function getHealthSnapshot() {
   if (!r) {
     return SOURCES.map(source => ({
       source, status: 'unknown', lastSuccessAt: null, lastFailureAt: null,
-      consecutiveFailures: 0, todayRate: null, today: { success: 0, failure: 0 },
+      lastError: null, consecutiveFailures: 0, todayRate: null, today: { success: 0, failure: 0 },
     }));
   }
 
@@ -195,6 +195,9 @@ export async function getHealthSnapshot() {
       status: judgeStatus(source, srcHash, nowMs),
       lastSuccessAt: srcHash?.lastSuccessAt ?? null,
       lastFailureAt: srcHash?.lastFailureAt ?? null,
+      // 마지막 실패 원인 요약(persist가 저장) — 진단 시 429/타임아웃/스키마 구분에 씀.
+      // 그동안 스냅샷에서 누락돼 /api/health로는 안 보였다(관측성 갭 보완).
+      lastError: srcHash?.lastError ?? null,
       consecutiveFailures: Number(srcHash?.consecutiveFailures ?? 0),
       todayRate: total ? Math.round((success / total) * 100) / 100 : null,
       today: { success, failure },

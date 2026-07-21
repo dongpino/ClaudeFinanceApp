@@ -154,7 +154,11 @@ export default function SettingsPanel({ onClose }) {
                         <span className="settings-src-name">{SOURCE_LABELS[s.source] ?? s.source}</span>
                         <span
                           className={`settings-src-status ${meta.cls}`}
-                          title={isStandby ? '주 소스 정상 시 호출되지 않음' : undefined}
+                          title={
+                            isStandby ? '주 소스 정상 시 호출되지 않음'
+                            : (st === 'down' || st === 'stale') && s.lastError ? `마지막 오류: ${s.lastError}`
+                            : undefined
+                          }
                         >
                           {meta.label}
                         </span>
