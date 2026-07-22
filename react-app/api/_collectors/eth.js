@@ -5,6 +5,7 @@
  */
 
 import { trackedFetch } from '../_lib/health.js';
+import { fetchCryptoTicker, fetchCryptoDailyCloses } from './crypto-ticker.js';
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -33,16 +34,25 @@ async function fetchJSON(url) {
   return res.json();
 }
 
+// CoinGecko 현재가 우선, 실패 시 Binance→Bybit ticker 폴오버. 성공 소스를 source에 담는다
+// (btc.js와 동일 규약).
 async function fetchCurrentPrice() {
-  const data = await fetchJSON(
-    'https://api.coingecko.com/api/v3/simple/price' +
-    '?ids=ethereum&vs_currencies=usd&include_24hr_change=true&include_last_updated_at=true'
-  );
-  const eth       = data.ethereum;
-  const current   = eth.usd;
-  const changePct = eth.usd_24h_change;
-  const prevClose = current / (1 + changePct / 100);
-  return { current, prevClose, change: current - prevClose, changePct, asOf: fmtKST(eth.last_updated_at * 1000) };
+  try {
+    const data = await fetchJSON(
+      'https://api.coingecko.com/api/v3/simple/price' +
+      '?ids=ethereum&vs_currencies=usd&include_24hr_change=true&include_last_updated_at=true'
+    );
+    const eth = data.ethereum;
+    if (!eth || typeof eth.usd !== 'number') throw new Error('simple/price 필수 필드 없음');
+    const current   = eth.usd;
+    const changePct = typeof eth.usd_24h_change === 'number' ? eth.usd_24h_change : 0;
+    const prevClose = current / (1 + changePct / 100);
+    const asOf      = eth.last_updated_at ? fmtKST(eth.last_updated_at * 1000) : fmtKST();
+    return { current, prevClose, change: current - prevClose, changePct, asOf, source: 'CoinGecko' };
+  } catch (e) {
+    console.warn(`[eth] CoinGecko 현재가 실패: ${e.message} → Binance/Bybit ticker 폴오버`);
+    return fetchCryptoTicker('ETHUSDT');
+  }
 }
 
 async function fetchHistory30() {
@@ -107,7 +117,21 @@ function recalcChange(item) {
 // 통로(crypto-simple-price.js). 없으면(상세 경로 등) 종전대로 자체 조회한다.
 export async function collectETH({ include90d = true, priceOverride = null } = {}) {
   const price    = priceOverride ?? await fetchCurrentPrice();
-  const history  = await fetchHistory30();
+
+  // 30d 스파크라인: CoinGecko 우선, 실패 시 Binance→Bybit 일봉 klines 동반 폴백(btc.js와
+  // 동일 규약). 둘 다 실패 시 빈 히스토리로 가격만 노출.
+  let history;
+  try {
+    history = await fetchHistory30();
+  } catch (e) {
+    console.warn(`[eth] CoinGecko 30d 실패: ${e.message} → Binance/Bybit 일봉 폴백`);
+    try {
+      history = await fetchCryptoDailyCloses('ETHUSDT', 30);
+    } catch (e2) {
+      console.warn(`[eth] 30d 스파크라인 전 소스 실패: ${e2.message} → 빈 히스토리(가격만)`);
+      history = [];
+    }
+  }
 
   let history_90d = [], ohlc_available = false;
   if (include90d) {
@@ -132,7 +156,7 @@ export async function collectETH({ include90d = true, priceOverride = null } = {
     change:         r2(price.change),
     change_pct:     r4(price.changePct),
     direction:      direction(price.change),
-    source:         'CoinGecko',
+    source:         price.source ?? 'CoinGecko',
     as_of:          price.asOf,
     category:       '크립토',
     history,

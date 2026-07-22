@@ -32,8 +32,11 @@ async function fetchJSON(url) {
 
 /**
  * @param {string[]} ids — CoinGecko coin id 배열 (예: ['bitcoin', 'ethereum'])
- * @returns {Promise<Record<string, {current, prevClose, change, changePct, asOf}>>}
+ * @returns {Promise<Record<string, {current, prevClose, change, changePct, asOf, source}>>}
  *   유효 가격이 없는 id는 결과에서 빠진다(호출부가 개별 폴백을 타게 둠).
+ *   source는 항상 'CoinGecko'(이 함수는 CoinGecko 전용) — collectBTC/ETH가 이 값을
+ *   item.source에 그대로 실어 배지에 표시한다. 배치 자체가 실패하면 호출부가 각
+ *   컬렉터의 fetchCurrentPrice(=Binance/Bybit 폴오버 포함)로 넘어간다.
  */
 export async function fetchSimplePrices(ids) {
   if (!ids || ids.length === 0) return {};
@@ -49,7 +52,7 @@ export async function fetchSimplePrices(ids) {
     const changePct = typeof row.usd_24h_change === 'number' ? row.usd_24h_change : 0;
     const prevClose = current / (1 + changePct / 100);
     const asOf      = row.last_updated_at ? fmtKST(row.last_updated_at * 1000) : fmtKST();
-    out[id] = { current, prevClose, change: current - prevClose, changePct, asOf };
+    out[id] = { current, prevClose, change: current - prevClose, changePct, asOf, source: 'CoinGecko' };
   }
   return out;
 }
