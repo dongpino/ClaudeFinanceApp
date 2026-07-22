@@ -39,7 +39,8 @@ const SOURCE_LABELS = {
   'alternative-me': 'Alternative.me · 공포탐욕',
   'fred':           'FRED · 매크로 지표',
   'rss-yna':        '연합뉴스 RSS',
-  'rss-hankyung':   '한국경제 RSS',
+  'rss-asiae':      '아시아경제 RSS',
+  'rss-edaily':     '이데일리 RSS',
   'rss-coindesk':   'CoinDesk RSS',
 };
 

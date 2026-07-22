@@ -27,7 +27,7 @@ import { Redis } from '@upstash/redis';
 export const SOURCES = [
   'naver', 'naver-index', 'finnhub', 'twelvedata', 'cnbc', 'coingecko',
   'binance', 'bybit', 'alternative-me', 'fred',
-  'rss-yna', 'rss-hankyung', 'rss-coindesk',
+  'rss-yna', 'rss-asiae', 'rss-edaily', 'rss-coindesk',
 ];
 
 // 소스별 기대 갱신 주기(초). lastSuccess가 이 값의 3배 이내면 ok, 초과면 stale.
@@ -36,7 +36,7 @@ const EXPECTED_INTERVAL_SEC = {
   'naver': 300, 'naver-index': 300, 'finnhub': 300, 'twelvedata': 900, 'cnbc': 300,
   'coingecko': 300, 'binance': 300, 'bybit': 300, 'alternative-me': 3600,
   'fred': 43200,                     // FRED 월간 데이터 + 12h 캐시 → 12h
-  'rss-yna': 10800, 'rss-hankyung': 10800, 'rss-coindesk': 10800, // 3h
+  'rss-yna': 10800, 'rss-asiae': 10800, 'rss-edaily': 10800, 'rss-coindesk': 10800, // 3h
 };
 const DEFAULT_INTERVAL_SEC = 600;
 
@@ -60,7 +60,8 @@ export function classifySource(url) {
   if (u.includes('alternative.me'))  return 'alternative-me';
   if (u.includes('stlouisfed.org'))  return 'fred';
   if (u.includes('yna.co.kr'))       return 'rss-yna';
-  if (u.includes('hankyung.com'))    return 'rss-hankyung';
+  if (u.includes('asiae.co.kr'))     return 'rss-asiae';
+  if (u.includes('edaily.co.kr'))    return 'rss-edaily';
   if (u.includes('coindesk.com'))    return 'rss-coindesk';
   // 네이버: 개별종목(검색 ac.* / 종목 /api/stock/)은 'naver', 그 외 지수/시장지표는 'naver-index'
   if (u.includes('stock.naver.com') || u.includes('finance.naver.com')) {
