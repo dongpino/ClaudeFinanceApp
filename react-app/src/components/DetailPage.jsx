@@ -112,7 +112,7 @@ export default function DetailPage({ onBack, activePage, onPageChange, onOpenAna
   const item = detailItem ?? baseItem;
   const {
     direction: dir, name, category, price, change, change_pct, source, as_of, history_90d, unit, grade,
-    change_unavailable, currency,
+    change_unavailable, currency, stale,
   } = item;
   const s = stats90(history_90d);
   const gradeInfo = grade ? GRADE_MAP[grade] : null;
@@ -212,7 +212,15 @@ export default function DetailPage({ onBack, activePage, onPageChange, onOpenAna
         {/* 출처 */}
         <div className="detail-footer">
           <span className="detail-footer-source">출처: {source}</span>
-          <span className="detail-footer-time">{as_of}</span>
+          {/* 카드와 동일 규칙 — stale일 때만 '지연' 칩, 비-stale은 기존 DOM 그대로. */}
+          {stale ? (
+            <span className="detail-footer-right">
+              <span className="stale-chip" title="소스 일시 장애 — 마지막 성공 데이터 표시 중">지연</span>
+              <span className="detail-footer-time">{as_of}</span>
+            </span>
+          ) : (
+            <span className="detail-footer-time">{as_of}</span>
+          )}
         </div>
 
       </div>

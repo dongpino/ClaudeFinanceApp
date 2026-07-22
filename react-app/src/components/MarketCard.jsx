@@ -92,7 +92,7 @@ export default function MarketCard({ item }) {
   const navigate = useNavigate();
   const {
     direction: dir, name, category, price, change, change_pct, source, as_of, history, unit, grade,
-    history_bootstrapping, change_unavailable, currency,
+    history_bootstrapping, change_unavailable, currency, stale,
   } = item;
   const issues = detectIssues(item);
   const gradeInfo = grade ? GRADE_MAP[grade] : null;
@@ -160,7 +160,17 @@ export default function MarketCard({ item }) {
         </div>
         <div className="card-meta-row">
           <span className="meta-label">기준</span>
-          <span className="meta-time">{as_of}</span>
+          {/* stale(마지막 성공본 폴백 서빙 중)일 때만 '지연' 칩을 시각 옆에 붙인다.
+              비-stale은 아래 else로 기존 DOM(meta-time 단독)을 그대로 렌더 → 레이아웃
+              시프트 0. 색은 상태판 '지연'과 동일 톤(.stale-chip이 var(--stale) 공유). */}
+          {stale ? (
+            <span className="meta-right">
+              <span className="stale-chip" title="소스 일시 장애 — 마지막 성공 데이터 표시 중">지연</span>
+              <span className="meta-time">{as_of}</span>
+            </span>
+          ) : (
+            <span className="meta-time">{as_of}</span>
+          )}
         </div>
       </div>
     </article>

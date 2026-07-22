@@ -17,6 +17,9 @@
   --down-dim:     rgba(61,130,239,.12);
   --flat:         #6a6a76;
   --flat-dim:     rgba(106,106,118,.12);
+  /* 지연(stale) 톤 — 상태판 '지연' 텍스트색과 폴백 카드 '지연' 칩이 공유하는 단일 소스 */
+  --stale:        #caa000;
+  --stale-dim:    rgba(202,160,0,.14);
   /* 배경 특수값 — 라이트/다크에서 개별 재정의 */
   --bg-header:    rgba(10,10,11,.95);
   --bg-nav:       rgba(16,16,18,.97);
@@ -41,6 +44,8 @@
   --down-dim:     rgba(26,91,191,.11);
   --flat:         #576880;
   --flat-dim:     rgba(87,104,128,.11);
+  --stale:        #986a00;
+  --stale-dim:    rgba(152,106,0,.13);
   --bg-header:    rgba(240,242,247,.95);
   --bg-nav:       rgba(255,255,255,.97);
   --surface-tint: rgba(0,0,0,.04);
@@ -430,14 +435,14 @@ body {
 .settings-dot.down  { background: var(--up); }
 .settings-dot.standby, .settings-dot.unknown { background: var(--flat); }
 .settings-src-status.ok    { color: #2fb96a; }
-.settings-src-status.stale { color: #caa000; }
+.settings-src-status.stale { color: var(--stale); }
 .settings-src-status.down  { color: var(--up); }
 .settings-src-status.standby, .settings-src-status.unknown { color: var(--text-3); }
 
 [data-theme="light"] .settings-dot.ok    { background: #1a9e4b; }
 [data-theme="light"] .settings-src-status.ok    { color: #178040; }
 [data-theme="light"] .settings-dot.stale { background: #c88a00; }
-[data-theme="light"] .settings-src-status.stale { color: #986a00; }
+/* .settings-src-status.stale 라이트 색은 --stale 변수(테마별 재정의)가 담당 → 별도 override 불필요 */
 
 /* ── 홈 카테고리 슬라이드 트랙 ──────────────── */
 /* 뷰포트(overflow:hidden) 안에 5개 카테고리 패널을 가로로 나란히 두고(트랙
@@ -704,6 +709,18 @@ body {
   max-width: 116px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* stale 폴백 '지연' 칩 — 소스 일시 장애로 마지막 성공본을 서빙 중일 때만(조건부 렌더).
+   색은 상태판 '지연'과 동일 톤(var(--stale)) 공유. .meta-right/.detail-footer-right는
+   칩+시각을 우측에 붙여 배치하는 래퍼(stale일 때만 등장 → 비-stale 레이아웃 불변). */
+.stale-chip {
+  font-size: 8.5px; font-weight: 700;
+  color: var(--stale); background: var(--stale-dim);
+  border-radius: 3px; padding: 1px 5px;
+  flex-shrink: 0; white-space: nowrap;
+}
+.meta-right { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.detail-footer-right { display: inline-flex; align-items: center; gap: 6px; }
 
 /* ── 상태 메시지 ──────────────────────────── */
 .state-wrap {
