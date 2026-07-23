@@ -509,7 +509,10 @@ body {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 80px;             /* 데스크톱 hover 감지 스트립 폭(요구사항) */
+  /* hover 감지 스트립은 원래 80px였으나, 버튼이 88px로 커져 스트립보다 넓어졌다 —
+     버튼(88) + 좌우 여백(6)을 완전히 포함하도록 96px로 넓힌다(버튼이 스트립 밖으로
+     삐져나가 hover/클릭 판정이 어긋나지 않게). */
+  width: 96px;
   display: flex;
   align-items: center;     /* 세로 중앙 */
   pointer-events: none;    /* 모바일 기본: 스트립은 통과, 버튼만 상호작용 */
@@ -528,14 +531,22 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;             /* iOS 최소 탭 타겟 44x44 */
-  height: 44px;
+  width: 88px;             /* 시각적 2배(44 → 88). 셰브론 SVG도 22→44로 비례 확대 */
+  height: 88px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, .12);
+  border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 999px;
-  background: rgba(20, 20, 24, .5);   /* 살짝 어두운 알약 glass(다크 기본) */
+  /* 커진 만큼 존재감이 과하지 않게 배경 알파를 살짝 낮춘다(.5→.36 / .62→.46) —
+     아이콘(var(--text-1))은 선명하게 유지하고 배경 알약만 은은하게. */
+  background: rgba(20, 20, 24, .36);  /* 살짝 어두운 알약 glass(다크 기본) */
   color: var(--text-1);               /* 아이콘색 테마 적응(다크=밝게, 라이트=어둡게) */
   cursor: pointer;
+  /* 세로 중앙 기준에서 위로 소폭 이동 — 88px로 커진 버튼이 세로 중앙(=2행 그리드의
+     행 경계)에 놓이면 2행 카드 우상단 '카테고리 배지'와 겹친다(실측: 배지가 중앙+12px).
+     배지는 카드 상단 패딩만큼(뷰포트 높이와 무관, ~상수) 중앙 아래에 있어, 고정 -36px
+     이동이면 어느 화면 높이에서도 배지를 avoid한다(버튼 하단이 중앙+8 → 배지 상단 중앙+12
+     위로 4px 여유). 좌우 대칭 유지 위해 두 버튼 모두 동일 적용(왼쪽은 원래 미겹침). */
+  transform: translateY(-36px);
   opacity: .3;                        /* 기본 반투명 */
   transition: opacity .2s ease;
   -webkit-backdrop-filter: blur(8px);
@@ -543,8 +554,8 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 [data-theme="light"] .home-cat-nav-btn {
-  background: rgba(255, 255, 255, .62);
-  border-color: rgba(0, 0, 0, .10);
+  background: rgba(255, 255, 255, .46);
+  border-color: rgba(0, 0, 0, .09);
 }
 /* 모바일: hover 없이 반투명 상시, 누르는 동안만 또렷하게. */
 .home-cat-nav-btn:active { opacity: 1; }

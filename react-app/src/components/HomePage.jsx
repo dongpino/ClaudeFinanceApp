@@ -694,7 +694,7 @@ export default function HomePage({ activePage, onPageChange }) {
                 onTouchStart={e => e.stopPropagation()}
                 onClick={() => navigateCat(-1)}
               >
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+                <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor"
                      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <polyline points="15 18 9 12 15 6" />
                 </svg>
@@ -710,7 +710,7 @@ export default function HomePage({ activePage, onPageChange }) {
                 onTouchStart={e => e.stopPropagation()}
                 onClick={() => navigateCat(1)}
               >
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+                <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor"
                      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <polyline points="9 18 15 12 9 6" />
                 </svg>
