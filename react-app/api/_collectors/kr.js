@@ -4,6 +4,7 @@
 
 import { trackedFetch } from '../_lib/health.js';
 import { fetchYahooIndexCurrent, fetchYahooIndexDailyCloses } from './yahoo-index.js';
+import { KR_INDEX_SYMBOLS } from '../_lib/symbol-map.js';
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -238,11 +239,11 @@ export async function collectKR({ include90d = true } = {}) {
   // 코스피·코스닥·원/달러·원/엔을 병렬로 수집 (순차 → 병렬: ~8-12s → ~4-6s)
   const [kospiResult, kosdaqResult, krwResult, jpyResult] = await Promise.allSettled([
 
-    // ── 코스피 ───────────────────────────────────────
-    buildIndexItem({ id: 'kospi', name: '코스피 (^KS11)', symbol: '^KS11', naverCode: 'KOSPI' }, include90d, sign),
+    // ── 코스피 ─────────────────────────────────── (심볼은 symbol-map.js에 집약)
+    buildIndexItem({ id: 'kospi', name: '코스피 (^KS11)', symbol: KR_INDEX_SYMBOLS.kospi.yahoo, naverCode: KR_INDEX_SYMBOLS.kospi.naverIndex }, include90d, sign),
 
     // ── 코스닥 ───────────────────────────────────────
-    buildIndexItem({ id: 'kosdaq', name: '코스닥 (^KQ11)', symbol: '^KQ11', naverCode: 'KOSDAQ' }, include90d, sign),
+    buildIndexItem({ id: 'kosdaq', name: '코스닥 (^KQ11)', symbol: KR_INDEX_SYMBOLS.kosdaq.yahoo, naverCode: KR_INDEX_SYMBOLS.kosdaq.naverIndex }, include90d, sign),
 
     // ── 원/달러 ──────────────────────────────────────
     buildExchangeItem({ id: 'usdkrw', name: '원/달러', symbol: 'USDKRW', marketindexCd: 'FX_USDKRW', fromCcy: 'USD' }, include90d, sign),

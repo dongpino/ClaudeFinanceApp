@@ -16,6 +16,7 @@
  */
 
 import { trackedFetch } from '../_lib/health.js';
+import { fetchDaumQuote, fetchDaumDailyHistory } from './daum-stock.js';
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -70,39 +71,50 @@ export async function fetchKRQuotes(codes) {
   return results.filter(Boolean);
 }
 
+// Naver 현재가 — 실패/이상치는 throw(폴오버 판정용). fetchOneKRQuote가 catch해 Daum으로 넘긴다.
+async function fetchNaverQuote(code) {
+  const data = await fetchJSON(`https://m.stock.naver.com/api/stock/${encodeURIComponent(code)}/basic`);
+
+  const price      = cleanNum(data.closePrice);
+  const change     = cleanNum(data.compareToPreviousClosePrice);
+  const changePct  = cleanNum(data.fluctuationsRatio);
+  if (isNaN(price) || price <= 0) throw new Error(`유효하지 않은 시세 (closePrice=${data.closePrice})`);
+
+  return {
+    id:         code,
+    symbol:     code,
+    // name은 종목명(한글) 그대로 사용 — Finnhub 경로와 달리 워치리스트 name으로
+    // 덮어쓰지 않아도 이미 사람이 읽을 수 있는 값이라 별도 처리 불필요
+    name:       data.stockName ?? code,
+    price,
+    prev_close: r2(price - change),
+    change:     r2(change),
+    change_pct: r2(changePct),
+    direction:  direction(changePct),
+    sparkline:  [],
+    category:   '한국주식',
+    source:     'Naver',
+    // 장 상태 원문(예: 'PREOPEN') — MarketCard.detectIssues가 장 시작 전 0 변동을
+    // "계산 실패"로 오판하지 않도록 그대로 전달한다. 실측 확인된 값은 PREOPEN뿐.
+    marketStatus: data.marketStatus,
+  };
+}
+
+// 현재가: Naver 우선, 실패 시 Daum 폴오버. 둘 다 실패해야 null(호출측 계약 유지).
+// 우선순위: Naver 라이브 > Daum 라이브 > (상위 stock-quote/market-data의) last-good stale.
+// Daum이 성공하면 fresh 수집이라 last-good을 거치지 않는다(성공본 유무와 무관하게 라이브 우선
+// — 성공본 없던 신규/장기장애 종목 카드 실종 사각지대 해소).
 async function fetchOneKRQuote(code) {
   try {
-    const data = await fetchJSON(`https://m.stock.naver.com/api/stock/${encodeURIComponent(code)}/basic`);
-
-    const price      = cleanNum(data.closePrice);
-    const change     = cleanNum(data.compareToPreviousClosePrice);
-    const changePct  = cleanNum(data.fluctuationsRatio);
-    if (isNaN(price) || price <= 0) {
-      console.warn(`[naver-stock] ${code}: 유효하지 않은 시세`);
+    return await fetchNaverQuote(code);
+  } catch (eN) {
+    console.warn(`[naver-stock] ${code} Naver 시세 실패: ${eN.message} → Daum 폴오버`);
+    try {
+      return await fetchDaumQuote(code);
+    } catch (eD) {
+      console.error(`[naver-stock] ${code} 시세 전 소스 실패: Naver(${eN.message}) | Daum(${eD.message})`);
       return null;
     }
-
-    return {
-      id:         code,
-      symbol:     code,
-      // name은 종목명(한글) 그대로 사용 — Finnhub 경로와 달리 워치리스트 name으로
-      // 덮어쓰지 않아도 이미 사람이 읽을 수 있는 값이라 별도 처리 불필요
-      name:       data.stockName ?? code,
-      price,
-      prev_close: r2(price - change),
-      change:     r2(change),
-      change_pct: r2(changePct),
-      direction:  direction(changePct),
-      sparkline:  [],
-      category:   '한국주식',
-      source:     'Naver',
-      // 장 상태 원문(예: 'PREOPEN') — MarketCard.detectIssues가 장 시작 전 0 변동을
-      // "계산 실패"로 오판하지 않도록 그대로 전달한다. 실측 확인된 값은 PREOPEN뿐.
-      marketStatus: data.marketStatus,
-    };
-  } catch (err) {
-    console.error(`[naver-stock] ${code} 시세 조회 실패:`, err.message);
-    return null;
   }
 }
 
@@ -117,7 +129,16 @@ async function fetchOneKRQuote(code) {
  * @param {{ totalRows?: number }} [opts]
  * @returns {Promise<{ history, ohlc_available: true, source: string }>}
  */
-export async function fetchKRDailyHistory(code, { totalRows = 250 } = {}) {
+export async function fetchKRDailyHistory(code, opts = {}) {
+  try {
+    return await fetchNaverDailyHistory(code, opts);
+  } catch (eN) {
+    console.warn(`[naver-stock] ${code} Naver 히스토리 실패: ${eN.message} → Daum 폴오버`);
+    return fetchDaumDailyHistory(code, opts); // Daum도 실패하면 throw(기존 계약 — 호출측이 .catch)
+  }
+}
+
+async function fetchNaverDailyHistory(code, { totalRows = 250 } = {}) {
   const pageSize  = 60;
   const numPages  = Math.ceil(totalRows / pageSize) + 1;   // 여유 1페이지
 

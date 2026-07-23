@@ -17,7 +17,8 @@ const HEALTH_TIMEOUT_MS = 8000;
 // 폴백 전용 소스 — 주 소스가 정상이면 아예 호출되지 않아 'unknown'이 정상 상태다.
 // stale/미수집으로 오해되지 않게 '대기(standby)' 회색으로 따로 표기한다.
 //   · bybit = BTC/ETH 크립토 폴백  · yahoo = 코스피/코스닥 지수 폴백(Naver 장애 시)
-const STANDBY_SOURCES = new Set(['bybit', 'yahoo']);
+//   · daum = 개별 KR 종목 폴백(Naver 장애 시)
+const STANDBY_SOURCES = new Set(['bybit', 'yahoo', 'daum']);
 
 // 특정 화면에서만 수집되는 온디맨드 소스 — 오래 호출이 없어도 '지연(stale)'이 아니므로,
 // 나이 기반 판정 대신 '마지막 호출의 성패'로만 판정한다.
@@ -32,6 +33,7 @@ const SOURCE_LABELS = {
   'naver':          '네이버 · 한국 종목',
   'naver-index':    '네이버 · 지수/환율',
   'yahoo':          'Yahoo · 지수 폴백',
+  'daum':           'Daum · 한국종목 폴백',
   'finnhub':        'Finnhub · 미국 시세',
   'twelvedata':     'Twelve Data · 미국 일봉',
   'cnbc':           'CNBC · 미국 지수',

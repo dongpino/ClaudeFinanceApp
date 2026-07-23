@@ -25,7 +25,7 @@ import { Redis } from '@upstash/redis';
 
 // 대상 소스 식별자(요구사항 1) — /api/health가 이 순서로 상태를 보고한다.
 export const SOURCES = [
-  'naver', 'naver-index', 'yahoo', 'finnhub', 'twelvedata', 'cnbc', 'coingecko',
+  'naver', 'naver-index', 'yahoo', 'daum', 'finnhub', 'twelvedata', 'cnbc', 'coingecko',
   'binance', 'bybit', 'alternative-me', 'fred',
   'rss-yna', 'rss-asiae', 'rss-edaily', 'rss-coindesk',
 ];
@@ -33,7 +33,7 @@ export const SOURCES = [
 // 소스별 기대 갱신 주기(초). lastSuccess가 이 값의 3배 이내면 ok, 초과면 stale.
 // 시세류는 수 분, FRED/RSS는 수 시간(요구사항 5).
 const EXPECTED_INTERVAL_SEC = {
-  'naver': 300, 'naver-index': 300, 'yahoo': 300, 'finnhub': 300, 'twelvedata': 900, 'cnbc': 300,
+  'naver': 300, 'naver-index': 300, 'yahoo': 300, 'daum': 300, 'finnhub': 300, 'twelvedata': 900, 'cnbc': 300,
   'coingecko': 300, 'binance': 300, 'bybit': 300, 'alternative-me': 3600,
   'fred': 43200,                     // FRED 월간 데이터 + 12h 캐시 → 12h
   'rss-yna': 10800, 'rss-asiae': 10800, 'rss-edaily': 10800, 'rss-coindesk': 10800, // 3h
@@ -54,6 +54,8 @@ export function classifySource(url) {
   if (u.includes('twelvedata.com'))  return 'twelvedata';
   // Yahoo v8 chart: 코스피/코스닥 지수 폴오버 전용(yahoo-index.js). query1/query2 공통.
   if (u.includes('finance.yahoo.com')) return 'yahoo';
+  // Daum 금융: 개별 KR 종목 현재가/일봉 폴오버 전용(daum-stock.js).
+  if (u.includes('finance.daum.net')) return 'daum';
   // CNBC: 미국 지수(나스닥/다우/S&P500/SOX/VIX/US10Y/DXY) quote 단일 소스(us-indices.js).
   if (u.includes('cnbc.com'))        return 'cnbc';
   if (u.includes('coingecko.com'))   return 'coingecko';
