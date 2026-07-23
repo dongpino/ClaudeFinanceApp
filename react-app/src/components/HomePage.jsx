@@ -561,6 +561,11 @@ export default function HomePage({ activePage, onPageChange }) {
 
   // 화살표 끝 탭 숨김 판정 — 첫 탭이면 왼쪽, 마지막 탭이면 오른쪽 화살표를 숨긴다
   // (CSS에서 opacity:0 + pointer-events:none, 레이아웃 시프트 없이).
+  // activeIndex는 "현재 표시 중(스프링 애니메이션이 지나가는) 위치"가 아니라 전환 목표
+  // 인덱스다 — settleTrackTo가 클릭/릴리스 즉시 setActiveCat(target)으로 activeCat을
+  // 커밋하고, 스프링은 시각적 posRef/transform만 움직일 뿐 activeCat엔 손대지 않는다.
+  // 따라서 last click wins로 목표가 바뀌면 activeCat도 곧장 바뀌어 화살표 숨김이 목표
+  // 기준으로 즉시 갱신된다(요구사항).
   const atFirst = activeIndex === 0;
   const atLast  = activeIndex === CATEGORY_TABS.length - 1;
 
@@ -661,10 +666,12 @@ export default function HomePage({ activePage, onPageChange }) {
               핸들러(handleTrackPointerDown)에 전파되지 않게 막는다(setPointerCapture는 금지 —
               카드 탭을 깨뜨린 이력). aria-hidden: 접근성 네비게이션은 CategoryTabs 칩이 담당. */}
           <div className="home-cat-nav" aria-hidden="true">
-            <div className="home-cat-nav-strip prev">
+            {/* is-hidden은 strip에 건다 — 끝 탭에선 80px hover 스트립까지 통째로 비활성화해
+                (opacity:0 + pointer-events:none) 데스크톱에서 빈 hover 사각지대가 안 남는다. */}
+            <div className={`home-cat-nav-strip prev${atFirst ? ' is-hidden' : ''}`}>
               <button
                 type="button"
-                className={`home-cat-nav-btn${atFirst ? ' is-hidden' : ''}`}
+                className="home-cat-nav-btn"
                 tabIndex={-1}
                 aria-label="이전 카테고리"
                 onPointerDown={e => e.stopPropagation()}
@@ -677,10 +684,10 @@ export default function HomePage({ activePage, onPageChange }) {
                 </svg>
               </button>
             </div>
-            <div className="home-cat-nav-strip next">
+            <div className={`home-cat-nav-strip next${atLast ? ' is-hidden' : ''}`}>
               <button
                 type="button"
-                className={`home-cat-nav-btn${atLast ? ' is-hidden' : ''}`}
+                className="home-cat-nav-btn"
                 tabIndex={-1}
                 aria-label="다음 카테고리"
                 onPointerDown={e => e.stopPropagation()}

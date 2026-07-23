@@ -494,10 +494,11 @@ body {
 }
 
 /* ── 홈 카테고리 전환 화살표 오버레이 ──────────────
-   [Stage 1] 구조 + 클릭. 좌우 가장자리 세로 중앙에 < > 셰브론.
-   래퍼(.home-cat-nav)는 pointer-events:none — 카드 목록 위에 얹히지만 카드 탭을
-   가리지 않는다. 오직 버튼만 pointer-events:auto. (Stage 2에서 반투명/hover 스트립/
-   끝 탭 숨김 스타일을 얹는다.) */
+   좌우 가장자리 세로 중앙에 < > 셰브론. 래퍼(.home-cat-nav)는 pointer-events:none —
+   카드 목록 위에 얹히지만 카드 탭을 가리지 않는다. 오직 버튼(모바일)과 hover 스트립
+   (데스크톱)만 pointer-events:auto.
+   기본 반투명(0.3) → 데스크톱은 80px hover 스트립 진입 시 1, 모바일은 :active 시 1.
+   끝 탭은 strip에 .is-hidden(opacity:0 + pointer-events:none, 레이아웃 시프트 없음). */
 .home-cat-nav {
   position: absolute;
   inset: 0;
@@ -508,26 +509,51 @@ body {
   position: absolute;
   top: 0;
   bottom: 0;
+  width: 80px;             /* 데스크톱 hover 감지 스트립 폭(요구사항) */
   display: flex;
   align-items: center;     /* 세로 중앙 */
+  pointer-events: none;    /* 모바일 기본: 스트립은 통과, 버튼만 상호작용 */
+  opacity: 1;
+  transition: opacity .2s ease;
+}
+.home-cat-nav-strip.prev { left: 0;  justify-content: flex-start; padding-left: 6px; }
+.home-cat-nav-strip.next { right: 0; justify-content: flex-end;   padding-right: 6px; }
+/* 끝 탭 숨김 — strip 통째로(버튼+hover존) 비활성화. absolute라 레이아웃 시프트 없음. */
+.home-cat-nav-strip.is-hidden {
+  opacity: 0;
   pointer-events: none;
 }
-.home-cat-nav-strip.prev { left: 0;  justify-content: flex-start; padding-left: 4px; }
-.home-cat-nav-strip.next { right: 0; justify-content: flex-end;   padding-right: 4px; }
 .home-cat-nav-btn {
-  pointer-events: auto;    /* 버튼만 상호작용 */
+  pointer-events: auto;    /* 버튼만 상호작용(모바일 탭 타겟) */
   display: flex;
   align-items: center;
   justify-content: center;
   width: 44px;             /* iOS 최소 탭 타겟 44x44 */
   height: 44px;
   padding: 0;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, .12);
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.28);
-  color: #fff;
+  background: rgba(20, 20, 24, .5);   /* 살짝 어두운 알약 glass(다크 기본) */
+  color: var(--text-1);               /* 아이콘색 테마 적응(다크=밝게, 라이트=어둡게) */
   cursor: pointer;
+  opacity: .3;                        /* 기본 반투명 */
+  transition: opacity .2s ease;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   -webkit-tap-highlight-color: transparent;
+}
+[data-theme="light"] .home-cat-nav-btn {
+  background: rgba(255, 255, 255, .62);
+  border-color: rgba(0, 0, 0, .10);
+}
+/* 모바일: hover 없이 반투명 상시, 누르는 동안만 또렷하게. */
+.home-cat-nav-btn:active { opacity: 1; }
+/* 데스크톱(마우스): 좌우 80px hover 스트립에 커서가 들어오면 버튼 또렷하게.
+   mousemove 좌표 추적 없이 순수 CSS :hover. 이 미디어에서만 스트립이 hover를 받도록
+   pointer-events를 켠다(터치 기기에선 켜지 않아 카드 탭을 가리지 않는다). */
+@media (hover: hover) and (pointer: fine) {
+  .home-cat-nav-strip:not(.is-hidden) { pointer-events: auto; }
+  .home-cat-nav-strip:not(.is-hidden):hover .home-cat-nav-btn { opacity: 1; }
 }
 
 /* ── 홈 스와이프 실기기 진단 HUD(?debugSwipe=1) — 계측 전용, 원인 확정 후 제거 예정 ── */
