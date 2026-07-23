@@ -478,6 +478,20 @@ export default function HomePage({ activePage, onPageChange }) {
     return activeIndex;
   }
 
+  // 화살표 버튼 네비게이션 — 스와이프가 커밋에 쓰는 것과 완전히 동일한 경로
+  // (settleTrackTo → setActiveCat + 감쇠 스프링)를 초기 속도 0으로 재사용한다.
+  // 그래서 클릭 전환도 스와이프 커밋과 픽셀·타이밍이 같은 스프링으로 움직인다.
+  // 전환 애니메이션 중 클릭도 settleTrackTo→startSpring이 진행 중 스프링을 cancelSpring으로
+  // 끊고 현재 위치에서 새 목표로 이어받으므로 기존 "last click wins" 정책 그대로다.
+  function navigateCat(dir) {
+    if (editingMajor || editingAvgPrices) return; // 편집 모드에선 칩만 허용(스와이프와 동일)
+    const target = activeIndex + dir;
+    if (target < 0 || target >= CATEGORY_TABS.length) return; // 끝 탭에서 범위 밖 클릭 방어
+    const pw = viewportRef.current?.clientWidth;
+    if (!pw) return;
+    settleTrackTo(target, pw, 0);
+  }
+
   function finishTrackDrag(e) {
     const st = dragRef.current;
     if (!st.active || e.pointerId !== st.pointerId) { resetDrag(); return; }
@@ -544,6 +558,11 @@ export default function HomePage({ activePage, onPageChange }) {
   const totalWarnings = itemsWithIssues.length + missingIds.length;
 
   const isStatic = source === 'static';
+
+  // 화살표 끝 탭 숨김 판정 — 첫 탭이면 왼쪽, 마지막 탭이면 오른쪽 화살표를 숨긴다
+  // (CSS에서 opacity:0 + pointer-events:none, 레이아웃 시프트 없이).
+  const atFirst = activeIndex === 0;
+  const atLast  = activeIndex === CATEGORY_TABS.length - 1;
 
   return (
     <>
@@ -634,6 +653,46 @@ export default function HomePage({ activePage, onPageChange }) {
                 </div>
               );
             })}
+          </div>
+
+          {/* 카테고리 전환 화살표 오버레이 — 카드 위(z-index)에 좌우 가장자리 세로 중앙.
+              래퍼는 pointer-events:none, 버튼만 auto라 카드 탭 네비게이션을 가리지 않는다.
+              버튼에서 시작된 pointerdown/touchstart는 stopPropagation으로 뷰포트의 스와이프
+              핸들러(handleTrackPointerDown)에 전파되지 않게 막는다(setPointerCapture는 금지 —
+              카드 탭을 깨뜨린 이력). aria-hidden: 접근성 네비게이션은 CategoryTabs 칩이 담당. */}
+          <div className="home-cat-nav" aria-hidden="true">
+            <div className="home-cat-nav-strip prev">
+              <button
+                type="button"
+                className={`home-cat-nav-btn${atFirst ? ' is-hidden' : ''}`}
+                tabIndex={-1}
+                aria-label="이전 카테고리"
+                onPointerDown={e => e.stopPropagation()}
+                onTouchStart={e => e.stopPropagation()}
+                onClick={() => navigateCat(-1)}
+              >
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+                     strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+            </div>
+            <div className="home-cat-nav-strip next">
+              <button
+                type="button"
+                className={`home-cat-nav-btn${atLast ? ' is-hidden' : ''}`}
+                tabIndex={-1}
+                aria-label="다음 카테고리"
+                onPointerDown={e => e.stopPropagation()}
+                onTouchStart={e => e.stopPropagation()}
+                onClick={() => navigateCat(1)}
+              >
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+                     strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </div>

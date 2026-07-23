@@ -460,6 +460,7 @@ body {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative; /* 카테고리 전환 화살표 오버레이(.home-cat-nav)의 absolute 기준 */
 }
 .home-cat-track {
   display: flex;
@@ -490,6 +491,43 @@ body {
 .home-cat-viewport.dragging,
 .home-cat-viewport.dragging * {
   user-select: none;
+}
+
+/* ── 홈 카테고리 전환 화살표 오버레이 ──────────────
+   [Stage 1] 구조 + 클릭. 좌우 가장자리 세로 중앙에 < > 셰브론.
+   래퍼(.home-cat-nav)는 pointer-events:none — 카드 목록 위에 얹히지만 카드 탭을
+   가리지 않는다. 오직 버튼만 pointer-events:auto. (Stage 2에서 반투명/hover 스트립/
+   끝 탭 숨김 스타일을 얹는다.) */
+.home-cat-nav {
+  position: absolute;
+  inset: 0;
+  z-index: 5;              /* 카드 위 */
+  pointer-events: none;    /* 래퍼는 탭 통과 */
+}
+.home-cat-nav-strip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;     /* 세로 중앙 */
+  pointer-events: none;
+}
+.home-cat-nav-strip.prev { left: 0;  justify-content: flex-start; padding-left: 4px; }
+.home-cat-nav-strip.next { right: 0; justify-content: flex-end;   padding-right: 4px; }
+.home-cat-nav-btn {
+  pointer-events: auto;    /* 버튼만 상호작용 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;             /* iOS 최소 탭 타겟 44x44 */
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ── 홈 스와이프 실기기 진단 HUD(?debugSwipe=1) — 계측 전용, 원인 확정 후 제거 예정 ── */
