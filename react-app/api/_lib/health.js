@@ -26,7 +26,7 @@ import { Redis } from '@upstash/redis';
 // 대상 소스 식별자(요구사항 1) — /api/health가 이 순서로 상태를 보고한다.
 export const SOURCES = [
   'naver', 'naver-index', 'yahoo', 'daum', 'finnhub', 'twelvedata', 'cnbc', 'coingecko',
-  'binance', 'bybit', 'alternative-me', 'fred',
+  'binance', 'bybit', 'alternative-me', 'fred', 'bok',
   'rss-yna', 'rss-asiae', 'rss-edaily', 'rss-coindesk',
 ];
 
@@ -36,6 +36,7 @@ const EXPECTED_INTERVAL_SEC = {
   'naver': 300, 'naver-index': 300, 'yahoo': 300, 'daum': 300, 'finnhub': 300, 'twelvedata': 900, 'cnbc': 300,
   'coingecko': 300, 'binance': 300, 'bybit': 300, 'alternative-me': 3600,
   'fred': 43200,                     // FRED 월간 데이터 + 12h 캐시 → 12h
+  'bok': 43200,                      // 한국은행 기준금리(연 8회 변경) + 6h 캐시 → 넉넉히 12h
   'rss-yna': 10800, 'rss-asiae': 10800, 'rss-edaily': 10800, 'rss-coindesk': 10800, // 3h
 };
 const DEFAULT_INTERVAL_SEC = 600;
@@ -63,6 +64,7 @@ export function classifySource(url) {
   if (u.includes('binance'))         return 'binance'; // binance.com / data-api.binance.vision
   if (u.includes('alternative.me'))  return 'alternative-me';
   if (u.includes('stlouisfed.org'))  return 'fred';
+  if (u.includes('ecos.bok.or.kr'))  return 'bok'; // 한국은행 ECOS(기준금리)
   if (u.includes('yna.co.kr'))       return 'rss-yna';
   if (u.includes('asiae.co.kr'))     return 'rss-asiae';
   if (u.includes('edaily.co.kr'))    return 'rss-edaily';
