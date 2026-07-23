@@ -492,6 +492,22 @@ export default function HomePage({ activePage, onPageChange }) {
     settleTrackTo(target, pw, 0);
   }
 
+  // 데스크톱 hover 스트립은 pointer-events:auto라(버튼 밖 80px 영역까지) 그 아래 카드
+  // 클릭을 가로챈다. 버튼이 아닌 곳의 클릭은 스트립을 잠깐 통과(pointer-events:none)시켜
+  // document.elementFromPoint로 실제 아래 요소를 찾아 클릭을 재전달한다 → 가장자리 카드도
+  // 정상적으로 상세로 진입. (모바일은 스트립이 pointer-events:none이라 이 경로 자체가
+  // 발생하지 않는다.) 버튼(및 그 안 svg) 위 클릭은 버튼이 직접 처리하므로 건드리지 않는다.
+  function forwardStripClick(e) {
+    if (e.target.closest('.home-cat-nav-btn')) return;
+    const strip = e.currentTarget;
+    const { clientX, clientY } = e;
+    const prevPE = strip.style.pointerEvents;
+    strip.style.pointerEvents = 'none';
+    const below = document.elementFromPoint(clientX, clientY);
+    strip.style.pointerEvents = prevPE; // CSS(:hover 미디어) 제어로 복원
+    if (below && below !== strip && !strip.contains(below)) below.click();
+  }
+
   function finishTrackDrag(e) {
     const st = dragRef.current;
     if (!st.active || e.pointerId !== st.pointerId) { resetDrag(); return; }
@@ -668,7 +684,7 @@ export default function HomePage({ activePage, onPageChange }) {
           <div className="home-cat-nav" aria-hidden="true">
             {/* is-hidden은 strip에 건다 — 끝 탭에선 80px hover 스트립까지 통째로 비활성화해
                 (opacity:0 + pointer-events:none) 데스크톱에서 빈 hover 사각지대가 안 남는다. */}
-            <div className={`home-cat-nav-strip prev${atFirst ? ' is-hidden' : ''}`}>
+            <div className={`home-cat-nav-strip prev${atFirst ? ' is-hidden' : ''}`} onClick={forwardStripClick}>
               <button
                 type="button"
                 className="home-cat-nav-btn"
@@ -684,7 +700,7 @@ export default function HomePage({ activePage, onPageChange }) {
                 </svg>
               </button>
             </div>
-            <div className={`home-cat-nav-strip next${atLast ? ' is-hidden' : ''}`}>
+            <div className={`home-cat-nav-strip next${atLast ? ' is-hidden' : ''}`} onClick={forwardStripClick}>
               <button
                 type="button"
                 className="home-cat-nav-btn"
