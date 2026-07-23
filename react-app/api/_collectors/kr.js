@@ -3,6 +3,7 @@
  */
 
 import { trackedFetch } from '../_lib/health.js';
+import { fetchYahooIndexCurrent, fetchYahooIndexDailyCloses } from './yahoo-index.js';
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -81,8 +82,18 @@ async function fetchIndexHistory90d(naverCode, numPages = 15) {
 }
 
 // 코스피/코스닥 공통 조립 — id/name/symbol/naverCode만 다르고 나머지 로직은 동일.
+// symbol(^KS11/^KQ11)이 곧 Yahoo 심볼 — Naver 실패 시 Yahoo 라이브 폴오버에 재사용한다.
+// 우선순위: Naver 라이브 > Yahoo 라이브 > (상위 market-data의) last-good stale > 실패.
 async function buildIndexItem({ id, name, symbol, naverCode }, include90d, sign) {
-  const kc = await fetchIndexCurrent(naverCode);
+  // 현재가: Naver 우선, 실패(에러/타임아웃/행부족) 시 Yahoo 폴오버. 여기서 Yahoo가 성공하면
+  // 아이템이 fresh로 수집돼 last-good을 아예 거치지 않는다(성공본 유무와 무관하게 라이브 우선).
+  let kc;
+  try {
+    kc = await fetchIndexCurrent(naverCode);
+  } catch (e) {
+    console.warn(`[${id}] Naver 현재가 실패: ${e.message} → Yahoo 폴오버`);
+    kc = await fetchYahooIndexCurrent(symbol);
+  }
   const item = {
     id, name, symbol,
     price: r2(kc.current), prev_close: r2(kc.prevClose),
@@ -91,11 +102,21 @@ async function buildIndexItem({ id, name, symbol, naverCode }, include90d, sign)
     category: '지수', history: [], ohlc_available: false, history_90d: [],
   };
   const tasks = [
-    fetchIndexHistory(naverCode, 30).then(h => { item.history = h; }).catch(e => console.warn(`[${id}] history 실패: ${e.message}`)),
+    fetchIndexHistory(naverCode, 30)
+      .then(h => { item.history = h; })
+      .catch(async e => {
+        console.warn(`[${id}] history Naver 실패: ${e.message} → Yahoo 30d 폴백`);
+        item.history = await fetchYahooIndexDailyCloses(symbol, 30).catch(e2 => { console.warn(`[${id}] history Yahoo도 실패: ${e2.message}`); return []; });
+      }),
   ];
   if (include90d) {
     tasks.push(
-      fetchIndexHistory90d(naverCode, 15).then(h => { item.history_90d = h; }).catch(e => console.warn(`[${id}] history_90d 실패: ${e.message}`))
+      fetchIndexHistory90d(naverCode, 15)
+        .then(h => { item.history_90d = h; })
+        .catch(async e => {
+          console.warn(`[${id}] history_90d Naver 실패: ${e.message} → Yahoo 90d 폴백`);
+          item.history_90d = await fetchYahooIndexDailyCloses(symbol, 90).catch(e2 => { console.warn(`[${id}] history_90d Yahoo도 실패: ${e2.message}`); return []; });
+        })
     );
   }
   await Promise.allSettled(tasks);
