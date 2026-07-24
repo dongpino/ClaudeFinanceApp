@@ -139,7 +139,8 @@ function buildSystemPrompt(hasBok) {
     ? `{"fomc": "...", "cpi": "...", "unemployment": "...", "krRate": "..."}`
     : `{"fomc": "...", "cpi": "...", "unemployment": "..."}`;
   const krConstraint = hasBok
-    ? `\n- krRate 항목은 예외적으로 "한국 기준금리"와 "한미 정책금리차" 두 가지를 함께 다뤄도 됩니다(그 둘은 하나의 주제로 봅니다). 단, 금리차가 환율·자본유출입에 미칠 영향을 단정하거나 예측하지 말고, 제공된 실제 수치(한국 금리, 미국 목표범위, 계산된 금리차)에 근거한 사실 서술에 그치십시오.`
+    ? `\n- krRate 항목은 예외적으로 "한국 기준금리"와 "한미 정책금리차" 두 가지를 함께 다뤄도 됩니다(그 둘은 하나의 주제로 봅니다). 단, 금리차가 환율·자본유출입에 미칠 영향을 단정하거나 예측하지 말고, 제공된 실제 수치에 근거한 사실 서술에 그치십시오.
+- 한미 금리차를 언급할 때는 반드시 입력에 제공된 '상단 기준'/'하단 기준' %p 수치를 그대로 인용하십시오(대표값은 상단 기준). 미국 목표범위 상·하단의 중앙값·평균처럼 제공되지 않은 새 기준이나 수치를 직접 만들어 계산하지 마십시오.`
     : '';
   return `당신은 한국 개인 투자자를 위해 개별 경제지표를 짧게 해설하는 애널리스트입니다.
 
@@ -205,16 +206,20 @@ function buildBokSection(macro) {
   const trend = Array.isArray(bok.history) && bok.history.length > 0
     ? bok.history.slice(-12).map(h => h.close).join(', ')
     : '추세 데이터 없음';
-  const round2 = n => Math.round(n * 100) / 100;
-  const spreadUpper = round2(bok.rate - fomc.rate.upper); // 한국 − 미국 상단
-  const spreadLower = round2(bok.rate - fomc.rate.lower); // 한국 − 미국 하단
-  const sign = n => (n > 0 ? '+' : '');
+  // 금리차는 소수 2자리 고정 문자열로 박아, 모델이 자체 계산할 여지를 없앤다(미국은
+  // 단일 금리가 아니라 목표범위라 상/하단 둘 다 제공하되 '상단 기준'을 대표값으로 명시).
+  const fmt = n => (Math.round(n * 100) / 100).toFixed(2);
+  const spreadUpper = fmt(bok.rate - fomc.rate.upper); // 한국 − 미국 상단(대표값)
+  const spreadLower = fmt(bok.rate - fomc.rate.lower); // 한국 − 미국 하단
   return `[한국 기준금리 / 한미 금리차]
 한국 기준금리(한국은행): ${bok.rate}% (기준일 ${bok.asOf})
 ${lc}
 최근 12개월 추세(오래된순): ${trend}
 미국 기준금리 목표범위: ${fomc.rate.lower}~${fomc.rate.upper}% (기준일 ${fomc.rate.asOf})
-한미 정책금리차(한국 − 미국): 상단 기준 ${sign(spreadUpper)}${spreadUpper}%p, 하단 기준 ${sign(spreadLower)}${spreadLower}%p (음수 = 한국이 미국보다 낮음)`;
+한미 정책금리차(한국 기준금리 − 미국 목표범위, 음수 = 한국이 낮음):
+  · 대표값(상단 기준): ${spreadUpper}%p
+  · 하단 기준: ${spreadLower}%p
+이 두 %p 수치만 사용하고, 중앙값 등 다른 기준을 새로 만들지 마십시오.`;
 }
 
 async function callAnthropicAPI(apiKey, systemPrompt, userPrompt) {
