@@ -19,6 +19,7 @@ import { collectETH }         from './_collectors/eth.js';
 import { collectBtcDominance } from './_collectors/btc-dominance.js';
 import { collectFearGreed }   from './_collectors/fear-greed.js';
 import { collectWatchlist, WATCHLIST_IDS } from './_collectors/watchlist.js';
+import { collectBokRate }    from './_collectors/bok-rate.js';
 import { fetchSimplePrices } from './_collectors/crypto-simple-price.js';
 import { applyLastGoodFallback } from './_lib/last-good.js';
 import { Redis } from '@upstash/redis';
@@ -110,7 +111,7 @@ const ITEM_ORDER   = [
   'nasdaq', 'dow', 'sp500', 'sox', 'kospi', 'kosdaq',
   'btc', 'eth',
   'vix', 'usdkrw', 'jpykrw',
-  'us10y', 'dxy',
+  'us10y', 'dxy', 'kr_base_rate',
   'dominance', 'feargreed',
   ...WATCHLIST_IDS, // '우미 투자' 탭(홈, itemCategories.js) — HYPR/419530/028300/080220
 ];
@@ -166,7 +167,7 @@ async function handleHome(req, res) {
   const cryptoPricesP = fetchSimplePrices(['bitcoin', 'ethereum'])
     .catch(e => { console.warn(`[market-data/home] 크립토 현재가 병합 실패: ${e.message} → 개별 조회`); return {}; });
 
-  const [usResult, btcResult, krResult, ethResult, dominanceResult, fngResult, watchlistResult] = await Promise.allSettled([
+  const [usResult, btcResult, krResult, ethResult, dominanceResult, fngResult, watchlistResult, bokResult] = await Promise.allSettled([
     collectUSIndices({ include90d: false }),
     cryptoPricesP.then(p => collectBTC({ include90d: false, priceOverride: p.bitcoin ?? null })),
     collectKR({ include90d: false }),
@@ -174,13 +175,14 @@ async function handleHome(req, res) {
     collectBtcDominance({ include90d: false }),
     collectFearGreed({ include90d: false }),
     collectWatchlist({ include90d: false }),
+    collectBokRate({ include90d: false }),
   ]);
 
   const itemsById = {};
   for (const [label, result] of [
     ['US 지수', usResult], ['BTC', btcResult], ['KR 지표', krResult],
     ['ETH', ethResult], ['BTC 도미넌스', dominanceResult], ['공포탐욕지수', fngResult],
-    ['우미 워치리스트', watchlistResult],
+    ['우미 워치리스트', watchlistResult], ['한국 기준금리', bokResult],
   ]) {
     if (result.status === 'fulfilled') {
       const arr = Array.isArray(result.value) ? result.value : [result.value];
@@ -264,6 +266,8 @@ async function handleDetail(req, res, id) {
       collected = await collectUSIndices({ include90d: true });
     } else if (WATCHLIST_IDS.includes(id)) {
       collected = await collectWatchlist({ include90d: true });
+    } else if (id === 'kr_base_rate') {
+      collected = [await collectBokRate({ include90d: true })];
     } else {
       collected = await collectKR({ include90d: true });
     }

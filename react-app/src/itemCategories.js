@@ -31,6 +31,7 @@ export const ITEM_CATEGORIES = [
   { id: 'usdkrw',     name: '원/달러',             source: 'kr',          categories: ['fx'] },
   { id: 'kosdaq',     name: '코스닥',              source: 'kr',          categories: ['index'] },
   { id: 'us10y',      name: '미국 10년물 금리',    source: 'us-indices', categories: ['macro'] },
+  { id: 'kr_base_rate', name: '한국 기준금리',      source: 'bok-rate',    categories: ['macro'] },
   { id: 'dxy',        name: '달러인덱스',          source: 'us-indices', categories: ['macro', 'fx'] },
   { id: 'sp500',      name: 'S&P500',              source: 'us-indices', categories: ['index'] },
   { id: 'sox',        name: '필라델피아 반도체(SOX)', source: 'us-indices', categories: ['index'] },

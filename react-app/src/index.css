@@ -703,6 +703,7 @@ body {
 .card-grade.neutral { color: var(--flat); }
 .card-change {
   display: flex; align-items: center; gap: 5px;
+  flex-wrap: wrap; /* 정책금리 '직전 인상 …·N일째' 부가문구가 좁은 카드에서 다음 줄로 */
   font-size: 11px; font-weight: 700;
 }
 .card-change.up   { color: var(--up);   }
@@ -712,11 +713,20 @@ body {
   display: inline-flex; align-items: center;
   padding: 2px 5px; border-radius: 4px;
   font-size: 10.5px; font-variant-numeric: tabular-nums;
+  white-space: nowrap; flex-shrink: 0; /* '⏸ 동결' 등 칩 라벨이 세로로 쪼개지지 않도록 */
 }
 .card-change.up   .change-chip { background: var(--up-dim);   }
 .card-change.down .change-chip { background: var(--down-dim);  }
 .card-change.flat .change-chip { background: var(--flat-dim);  }
 .change-pct { font-variant-numeric: tabular-nums; }
+
+/* 정책금리 카드(한국 기준금리) 부가 문구 — "직전 인상 +0.25%p · 12일째" / "4일째".
+   등락 색을 상속하지 않는 중립 보조 텍스트라 부모 .card-change 색을 덮어쓴다. */
+.rate-note {
+  font-size: 10px; font-weight: 600; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; /* 'N일째'가 낱글자로 쪼개지지 않게 — 안 맞으면 부모 wrap로 통째 다음 줄 */
+}
 
 /* 평단가 수익률 배지 — 기존 등락 배지(.change-chip)와 같은 자리(card-change), 같은
    상승/하락 색 규칙이지만 오늘 등락(dir)이 아니라 평단가 대비 손익 방향이라 부모

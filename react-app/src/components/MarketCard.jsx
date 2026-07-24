@@ -24,6 +24,23 @@ const CURRENCY_PREFIX = { usd: '$', krw: '₩' };
 //   - score   : 공포탐욕지수 등, 값 "72"(단위 없는 0~100 점수) / 등락 포인트 차
 const NON_PRICE_UNITS = new Set(['percent', 'pct_pt', 'score']);
 
+// ── 정책금리 카드(한국 기준금리 등, item.rate_step) 전용 — 인상/인하/동결 3-스탠스 ──
+// 서버가 주는 direction/change는 "직전 정책 변경"의 방향·폭이라, 변경 후 시간이 충분히
+// 지나 사실상 '동결 국면'이어도 계속 인상(빨강)으로 보이는 오해가 생긴다. 마지막 변경이
+// FREEZE_AFTER_DAYS 이상 지났으면(한국은행 금통위 주기 ~6–7주보다 길면 그 사이 최소 한
+// 번은 동결 결정) 현재 스탠스를 '동결'로 표기하고, 직전 변경은 부가 문구로만 남긴다.
+const FREEZE_AFTER_DAYS = 49;
+const STANCE_LABEL = { hike: '인상', cut: '인하' };
+const STANCE_ARROW = { hike: '▲', cut: '▼', freeze: '⏸' };
+const STANCE_CLASS = { hike: 'up', cut: 'down', freeze: 'flat' };
+
+function ratePolicyStance(item) {
+  const frozen = item.direction === 'flat' || item.change === 0 ||
+    (item.days_since_change != null && item.days_since_change >= FREEZE_AFTER_DAYS);
+  if (frozen) return 'freeze';
+  return item.direction === 'down' ? 'cut' : 'hike';
+}
+
 // "이름 (심볼)" 구조 감지 — 이름 본문과 마지막 괄호 사이에 공백이 있어야만 분리
 // 대상으로 본다. 공백 없이 붙은 괄호(예: "원/엔(100엔)")는 심볼이 아니라 이름
 // 자체의 단위 표기라 분리하면 의미가 깨진다 — 이 구분이 핵심.
@@ -105,6 +122,18 @@ export default function MarketCard({ item }) {
   const avgDir = avgPct == null ? null : (avgPct > 0 ? 'up' : avgPct < 0 ? 'down' : 'flat');
   const [nameMain, nameSymbol] = splitNameSymbol(name);
 
+  // 정책금리 카드(한국 기준금리)만 3-스탠스 등락 렌더로 분기. 그 외 pct_pt(BTC 도미넌스)는
+  // 기존 렌더 그대로 — rate_step 힌트가 붙은 카드만 대상이라 회귀 없음.
+  const isPolicyRate = unit === 'pct_pt' && item.rate_step;
+  const stance = isPolicyRate ? ratePolicyStance(item) : null;
+  const days = item.days_since_change;
+  const rateNote = !isPolicyRate ? null
+    : stance === 'freeze'
+      ? (item.last_change_date
+          ? `직전 ${STANCE_LABEL[change > 0 ? 'hike' : 'cut']} ${fcUnit(change, unit)}${days != null ? ` · ${days}일째` : ''}`
+          : '장기 동결')
+      : (days != null ? `${days}일째` : '');
+
   return (
     <article
       className={`card ${dir}`}
@@ -134,23 +163,32 @@ export default function MarketCard({ item }) {
           {CURRENCY_PREFIX[currency] ?? ''}{fpUnit(price, unit)}
           {gradeInfo && <span className={`card-grade ${gradeInfo.tone}`}> · {gradeInfo.ko}</span>}
         </div>
-        <div className={`card-change ${dir}`}>
-          <span className="change-chip">
-            {change_unavailable ? '—' : <>{ARROW[dir]} {fcUnit(change, unit)}</>}
-          </span>
-          {!NON_PRICE_UNITS.has(unit) && !change_unavailable && <span className="change-pct">{fpct(change_pct)}</span>}
-          {avgPct != null && (
-            <span className={`avg-badge ${avgDir}`}>
-              평단 {avgPct > 0 ? '+' : ''}{avgPct.toFixed(1)}%
+        {isPolicyRate ? (
+          <div className={`card-change ${STANCE_CLASS[stance]}`}>
+            <span className="change-chip">
+              {STANCE_ARROW[stance]} {stance === 'freeze' ? '동결' : fcUnit(change, unit)}
             </span>
-          )}
-        </div>
+            {rateNote && <span className="rate-note">{rateNote}</span>}
+          </div>
+        ) : (
+          <div className={`card-change ${dir}`}>
+            <span className="change-chip">
+              {change_unavailable ? '—' : <>{ARROW[dir]} {fcUnit(change, unit)}</>}
+            </span>
+            {!NON_PRICE_UNITS.has(unit) && !change_unavailable && <span className="change-pct">{fpct(change_pct)}</span>}
+            {avgPct != null && (
+              <span className={`avg-badge ${avgDir}`}>
+                평단 {avgPct > 0 ? '+' : ''}{avgPct.toFixed(1)}%
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="card-spark">
         {isCollecting
           ? <div className="spark-collecting">차트 데이터 수집 중 · {history?.length ?? 0}/5일</div>
-          : <Sparkline history={history || []} dir={dir} avgPrice={avgPrice} currency={currency} />}
+          : <Sparkline history={history || []} dir={isPolicyRate ? STANCE_CLASS[stance] : dir} avgPrice={avgPrice} currency={currency} step={!!item.rate_step} />}
       </div>
 
       <div className="card-bottom">

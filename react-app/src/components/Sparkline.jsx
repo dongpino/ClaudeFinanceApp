@@ -14,6 +14,18 @@ function fmtAvgHint(n, currency) {
   return n.toLocaleString('ko-KR', opts);
 }
 
+// 계단형(step-after) 경로 — 정책금리처럼 결정일에만 계단식으로 점프하고 그 사이엔
+// 수평인 시리즈용. 각 구간을 이전 y로 수평 이동한 뒤 다음 y로 수직 점프한다(보간 없음).
+function stepPath(pts) {
+  if (pts.length < 2) return `M${pts[0][0].toFixed(2)},${pts[0][1].toFixed(2)}`;
+  const d = [`M${pts[0][0].toFixed(2)},${pts[0][1].toFixed(2)}`];
+  for (let i = 1; i < pts.length; i++) {
+    d.push(`L${pts[i][0].toFixed(2)},${pts[i - 1][1].toFixed(2)}`); // 수평(이전 레벨 유지)
+    d.push(`L${pts[i][0].toFixed(2)},${pts[i][1].toFixed(2)}`);     // 수직(새 레벨로 점프)
+  }
+  return d.join('');
+}
+
 function smoothPath(pts) {
   if (pts.length < 2) return `M${pts[0][0]},${pts[0][1]}`;
   const d = [`M${pts[0][0].toFixed(2)},${pts[0][1].toFixed(2)}`];
@@ -35,7 +47,7 @@ function smoothPath(pts) {
   return d.join('');
 }
 
-export default function Sparkline({ history, dir, avgPrice, currency }) {
+export default function Sparkline({ history, dir, avgPrice, currency, step = false }) {
   // 컴포넌트 인스턴스마다 고정된 gradient ID 생성
   const gid = useRef('g' + Math.random().toString(36).slice(2, 9)).current;
   const color = COLOR[dir] || COLOR.flat;
@@ -56,7 +68,7 @@ export default function Sparkline({ history, dir, avgPrice, currency }) {
     (H - padY) - ((p - lo) / rng) * (H - 2 * padY),
   ]);
 
-  const linePath = smoothPath(pts);
+  const linePath = step ? stepPath(pts) : smoothPath(pts);
   const last     = pts[pts.length - 1];
   const areaPath = `${linePath}L${last[0].toFixed(2)},${H}L0,${H}Z`;
 
