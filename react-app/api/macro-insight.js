@@ -5,10 +5,11 @@
  *   → api/macro.js가 이미 채워둔 macro:v1 캐시(FRED 재호출 없음)를 읽어 Haiku에게
  *     세 지표 각각의 짧은 해석을 1회 호출로 받아온다.
  *
- * 응답: { fomc: string, cpi: string, unemployment: string } — 셋 다 있어야 캐시/반환.
- *      macro:v1이 아직 없거나 fomc.rate/cpi/unemployment 중 하나라도 없으면(수집
- *      진행 중, 전체 실패 등) 애초에 Haiku를 부르지 않고 그냥 null을 반환한다(1단계는
- *      부분 지표만 있는 경우까지 다루지 않음 — 필요해지면 나중에 지표별로 쪼갠다).
+ * 응답: { fomc, cpi, unemployment[, krRate] } — 앞 셋은 필수, krRate(한국 기준금리 +
+ *      한미 금리차 해석)는 macro:v1에 bok 필드가 있을 때만 함께 생성/반환한다(하위호환:
+ *      bok 없는 구 캐시면 3필드 그대로). macro:v1이 아직 없거나 fomc.rate/cpi/unemployment
+ *      중 하나라도 없으면(수집 진행 중, 전체 실패 등) 애초에 Haiku를 부르지 않고 null을
+ *      반환한다(부분 지표만 있는 경우는 다루지 않음).
  *
  * 캐시 키에 지표 수치 자체를 스냅샷으로 넣는다 — macro:insight:{lower}_{upper}-{cpiYoy}-
  * {unemploymentRate}. 수치가 그대로면(같은 발표 주기 내 재방문) 같은 키로 캐시 HIT,
@@ -120,32 +121,44 @@ async function incrementDailyCount(dayKey) {
 }
 
 // 캐시 키에 지표 수치 자체를 스냅샷으로 새긴다 — 요구사항 그대로
-// "macro:insight:{금리}-{cpi}-{실업률}" 형태(금리는 상/하단을 _로 묶어 한 세그먼트로).
+// "macro:insight:{미금리}-{cpi}-{실업률}[-kr{한국금리}]" 형태(미 금리는 상/하단을 _로
+// 묶어 한 세그먼트로). 한국 기준금리가 있으면 한·미 금리 값이 모두 키에 박혀, 둘 중
+// 어느 쪽이 바뀌어도(한국은행 or FOMC 결정) 키가 달라져 한미 금리차 해석이 자동으로
+// 새로 생성된다 — 별도 무효화 로직 불필요. bok가 없으면 기존 3지표 키 그대로(하위호환).
 function snapshotKey(macro) {
   const rate = `${macro.fomc.rate.lower}_${macro.fomc.rate.upper}`;
-  return `macro:insight:${rate}-${macro.cpi.yoy}-${macro.unemployment.rate}`;
+  const bok = macro.bok?.rate != null ? `-kr${macro.bok.rate}` : '';
+  return `macro:insight:${rate}-${macro.cpi.yoy}-${macro.unemployment.rate}${bok}`;
 }
 
 // ── 프롬프트 ──────────────────────────────────────────────────
-function buildSystemPrompt() {
+// hasBok: 한국 기준금리(+한미 금리차) 해석까지 요청하는지. macro.bok가 있을 때만 켜서
+// 출력 형식·제약·입력 섹션을 4번째 지표까지 확장한다(없으면 기존 3지표 그대로 — 하위호환).
+function buildSystemPrompt(hasBok) {
+  const outputFormat = hasBok
+    ? `{"fomc": "...", "cpi": "...", "unemployment": "...", "krRate": "..."}`
+    : `{"fomc": "...", "cpi": "...", "unemployment": "..."}`;
+  const krConstraint = hasBok
+    ? `\n- krRate 항목은 예외적으로 "한국 기준금리"와 "한미 정책금리차" 두 가지를 함께 다뤄도 됩니다(그 둘은 하나의 주제로 봅니다). 단, 금리차가 환율·자본유출입에 미칠 영향을 단정하거나 예측하지 말고, 제공된 실제 수치(한국 금리, 미국 목표범위, 계산된 금리차)에 근거한 사실 서술에 그치십시오.`
+    : '';
   return `당신은 한국 개인 투자자를 위해 개별 경제지표를 짧게 해설하는 애널리스트입니다.
 
 [제약]
 - 각 지표에 대해 정확히 1~2문장, 한국어로 작성하십시오.
 - 각 해석은 그 지표의 현재 수준·최근 추세·다음 예정 이벤트(제공된 경우)만 다루십시오.
-- 다른 지표를 언급하거나 여러 지표를 연결해서 해석하지 마십시오 — 각 지표는 완전히 독립적으로 서술하십시오.
+- 다른 지표를 언급하거나 여러 지표를 연결해서 해석하지 마십시오 — 각 지표는 완전히 독립적으로 서술하십시오.${krConstraint}
 - 금리 인하·동결·인상 전망 등 통화정책 방향에 대한 결론이나 예측을 내리지 마십시오. 사실 서술에 그치십시오.
 - 확정적 시장 예측이나 매수·매도 같은 투자 조언을 하지 마십시오.
-- 제공되지 않은 수치나 사건을 추측하거나 만들어내지 마십시오.
+- 제공되지 않은 수치나 사건을 추측하거나 만들어내지 마십시오. 특히 금리차 등 수치는 반드시 제공된 값만 쓰고 직접 재계산하거나 바꾸지 마십시오.
 - "내일", "N일 후", "이번 주"처럼 캐시된 뒤 시간이 지나면 틀려지는 상대적 날짜 표현을 쓰지 마십시오. 다음 발표·회의 일정을 언급할 필요가 있으면 "다음 발표를 앞두고"처럼 날짜에 의존하지 않는 표현만 사용하십시오.
 - 수치를 단순히 반복해서 서술하지 마십시오. 해당 수치가 추세상 어느 위치인지(상승·하락·횡보), 역사적으로 높은·낮은·중립적인 수준인지 등 맥락과 의미 위주로 서술하십시오.
 
 [출력 형식]
 아래 JSON 형식으로만 응답하십시오. 그 외 어떤 텍스트도, 마크다운 코드펜스(\`\`\`)도, 서두 인사말도 포함하지 말고 JSON 객체 하나만 반환하십시오:
-{"fomc": "...", "cpi": "...", "unemployment": "..."}`;
+${outputFormat}`;
 }
 
-function buildUserPrompt(macro) {
+function buildUserPrompt(macro, hasBok) {
   const { fomc, cpi, unemployment } = macro;
   const fomcNext = fomc.next
     ? `다음 회의: ${fomc.next.start}~${fomc.next.end}(D-${fomc.next.dDay})`
@@ -175,8 +188,33 @@ ${cpiNext}
 [실업률]
 최근 수치: ${unemployment.rate}% (기준월 ${unemployment.refMonth})
 최근 12개월 추세(오래된순): ${unemploymentTrend}
+${hasBok ? '\n' + buildBokSection(macro) + '\n' : ''}
+위 ${hasBok ? '네' : '세'} 지표 각각에 대해 지정된 JSON 형식으로 해석을 작성하세요.`;
+}
 
-위 세 지표 각각에 대해 지정된 JSON 형식으로 해석을 작성하세요.`;
+// [한국 기준금리 / 한미 금리차] 섹션 — 한국 현재값 + 직전 변경 + 최근 12개월 계단형
+// 추세 + 미국 목표범위 + 금리차(한국−미국)를 상/하단 모두 실제 수치로 미리 계산해 넣는다.
+// 모델이 직접 재계산하지 않도록 값을 완제품으로 제공한다(system prompt의 "제공된 값만
+// 쓰라"와 짝을 이룸).
+function buildBokSection(macro) {
+  const { bok, fomc } = macro;
+  const lc = bok.lastChange
+    ? `직전 변경: ${bok.lastChange.date} ${bok.lastChange.deltaPp > 0 ? '+' : ''}${bok.lastChange.deltaPp}%p (${bok.lastChange.direction === 'up' ? '인상' : '인하'})`
+    : '직전 변경: 최근 24개월 내 변경 없음';
+  // history는 월별 [{date, close}] — 최근 12개만 오래된순으로.
+  const trend = Array.isArray(bok.history) && bok.history.length > 0
+    ? bok.history.slice(-12).map(h => h.close).join(', ')
+    : '추세 데이터 없음';
+  const round2 = n => Math.round(n * 100) / 100;
+  const spreadUpper = round2(bok.rate - fomc.rate.upper); // 한국 − 미국 상단
+  const spreadLower = round2(bok.rate - fomc.rate.lower); // 한국 − 미국 하단
+  const sign = n => (n > 0 ? '+' : '');
+  return `[한국 기준금리 / 한미 금리차]
+한국 기준금리(한국은행): ${bok.rate}% (기준일 ${bok.asOf})
+${lc}
+최근 12개월 추세(오래된순): ${trend}
+미국 기준금리 목표범위: ${fomc.rate.lower}~${fomc.rate.upper}% (기준일 ${fomc.rate.asOf})
+한미 정책금리차(한국 − 미국): 상단 기준 ${sign(spreadUpper)}${spreadUpper}%p, 하단 기준 ${sign(spreadLower)}${spreadLower}%p (음수 = 한국이 미국보다 낮음)`;
 }
 
 async function callAnthropicAPI(apiKey, systemPrompt, userPrompt) {
@@ -210,7 +248,7 @@ async function callAnthropicAPI(apiKey, systemPrompt, userPrompt) {
 
 // 모델이 지침을 어기고 ```json ... ``` 코드펜스나 앞뒤 텍스트를 붙이는 경우까지
 // 방어적으로 벗겨내고 파싱한다 — 그래도 실패하면 호출부가 null 처리한다.
-function parseInsightJSON(text) {
+function parseInsightJSON(text, hasBok) {
   let s = text.trim();
   const fenced = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (fenced) s = fenced[1].trim();
@@ -223,7 +261,13 @@ function parseInsightJSON(text) {
   ) {
     throw new Error('응답 JSON에 fomc/cpi/unemployment 문자열이 모두 있어야 함');
   }
-  return { fomc: parsed.fomc.trim(), cpi: parsed.cpi.trim(), unemployment: parsed.unemployment.trim() };
+  // krRate는 hasBok일 때만 필수 — 없으면 전체를 실패 처리해 캐시하지 않고 재시도를 남긴다.
+  if (hasBok && (typeof parsed.krRate !== 'string' || !parsed.krRate.trim())) {
+    throw new Error('응답 JSON에 krRate 문자열이 있어야 함(bok 요청 시)');
+  }
+  const out = { fomc: parsed.fomc.trim(), cpi: parsed.cpi.trim(), unemployment: parsed.unemployment.trim() };
+  if (hasBok) out.krRate = parsed.krRate.trim();
+  return out;
 }
 
 export default async function handler(req, res) {
@@ -239,6 +283,7 @@ export default async function handler(req, res) {
     return res.status(200).json(null);
   }
 
+  const hasBok = macro.bok?.rate != null; // 한국 기준금리(+한미 금리차) 해석까지 요청할지
   const key = snapshotKey(macro);
 
   const cached = await getCachedInsight(key);
@@ -266,7 +311,7 @@ export default async function handler(req, res) {
   console.log(`[macro-insight] Redis 캐시 MISS (${key}) — Haiku 호출`);
   let aiData;
   try {
-    aiData = await callAnthropicAPI(apiKey, buildSystemPrompt(), buildUserPrompt(macro));
+    aiData = await callAnthropicAPI(apiKey, buildSystemPrompt(hasBok), buildUserPrompt(macro, hasBok));
   } catch (e) {
     console.error('[macro-insight] Anthropic API 실패 — 캐시하지 않고 null 반환:', e.message);
     res.setHeader('X-Cache', 'ERROR');
@@ -276,7 +321,7 @@ export default async function handler(req, res) {
   const rawText = aiData?.content?.[0]?.text ?? '';
   let insight;
   try {
-    insight = parseInsightJSON(rawText);
+    insight = parseInsightJSON(rawText, hasBok);
   } catch (e) {
     console.error('[macro-insight] JSON 파싱 실패 — 캐시하지 않고 null 반환:', e.message, '| raw:', rawText.slice(0, 200));
     res.setHeader('X-Cache', 'ERROR');

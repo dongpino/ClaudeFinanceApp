@@ -30,6 +30,7 @@
 import { Redis } from '@upstash/redis';
 import { getNextFomcMeeting, getNextCpiRelease, getUpcomingEvents } from './_lib/macro-calendar.js';
 import { trackedFetch } from './_lib/health.js';
+import { getBokRateData } from './_collectors/bok-rate.js';
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
 const CACHE_TTL_SEC = 12 * 60 * 60; // 12시간
@@ -143,6 +144,21 @@ async function fetchUnemployment() {
   return { rate: latest.rate, refMonth: latest.month, history };
 }
 
+// 한국 기준금리(한국은행/ECOS) — bok-rate.js의 캐시 우선 조회(getBokRateData)를 그대로
+// 쓰고 브리핑 페이로드용 필드만 추린다. getBokRateData는 자체 6h 캐시 + 7d latest
+// stale-serve를 갖고 있어, 여기서 실패로 rejected 되는 경우는 ECOS 장애 + 승계본까지
+// 없는 드문 상황뿐이다(그땐 아래 mergeField가 macro:v1:latest의 이전 bok를 승계).
+async function fetchBokRate() {
+  const d = await getBokRateData();
+  return {
+    rate: d.rate,
+    asOf: d.asOfDate,
+    history: d.history,               // 월별 24포인트(계단형) [{date, close}]
+    lastChange: d.lastChange,         // {date, prevRate, deltaPp, direction} | null
+    daysSinceChange: d.daysSinceChange,
+  };
+}
+
 // ── Redis 캐시 (briefing-core.js와 동일 패턴: 지연 생성, 실패 시 null 폴백) ──
 let redisClient; // undefined: 아직 시도 안 함, null: 생성 실패/키 없음, Redis: 정상
 
@@ -237,13 +253,14 @@ export default async function handler(req, res) {
     // 성공값"(12시간보다 오래 살아있는 latest 키)을 먼저 읽어 필드별 승계 후보로 둔다.
     const previous = (await getLatestGood()) ?? memCache?.data ?? null;
 
-    const [cpiResult, rateResult, unemploymentResult] = await Promise.allSettled([
-      fetchCPI(), fetchRateRange(), fetchUnemployment(),
+    const [cpiResult, rateResult, unemploymentResult, bokResult] = await Promise.allSettled([
+      fetchCPI(), fetchRateRange(), fetchUnemployment(), fetchBokRate(),
     ]);
 
     if (cpiResult.status === 'rejected') console.warn('[macro] CPI 조회 실패:', cpiResult.reason.message);
     if (rateResult.status === 'rejected') console.warn('[macro] 기준금리 조회 실패:', rateResult.reason.message);
     if (unemploymentResult.status === 'rejected') console.warn('[macro] 실업률 조회 실패:', unemploymentResult.reason.message);
+    if (bokResult.status === 'rejected') console.warn('[macro] 한국 기준금리 조회 실패:', bokResult.reason.message);
 
     const fomcRate = mergeField(
       rateResult.status === 'fulfilled' ? rateResult.value : null,
@@ -260,6 +277,14 @@ export default async function handler(req, res) {
       previous?.unemployment ?? null,
       '실업률',
     );
+    // bok(한국 기준금리)은 부가 지표라 all-null 치명 판정(아래)에는 넣지 않는다 —
+    // 미국 3지표가 다 실패했는데 bok만 있다고 페이로드를 살려두면 브리핑 본 섹션이
+    // 빈 채로 뜨기 때문. bok 자체 실패는 이전 승계 or null로 조용히 흡수한다.
+    const bok = mergeField(
+      bokResult.status === 'fulfilled' ? bokResult.value : null,
+      previous?.bok ?? null,
+      '한국 기준금리',
+    );
 
     // 이번 fetch·승계를 다 합쳐도 전 필드가 null인 최악의 경우(첫 실행이자 전부 실패
     // 등)에만 에러로 처리한다 — 하나라도 값이 있으면 그 필드는 정상 저장해야 한다.
@@ -271,6 +296,7 @@ export default async function handler(req, res) {
       fomc: { rate: fomcRate, next: getNextFomcMeeting() },
       cpi:  cpi ? { ...cpi, next: getNextCpiRelease() } : null,
       unemployment,
+      bok,                                    // 한국 기준금리(없으면 null — 프론트/insight 모두 옵셔널 처리)
       upcoming: getUpcomingEvents(30),
     };
 

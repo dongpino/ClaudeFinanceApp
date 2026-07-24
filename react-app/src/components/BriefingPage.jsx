@@ -952,6 +952,34 @@ function UnemploymentDetailBody({ unemployment, insightPhase, insightText }) {
   );
 }
 
+// 한국 기준금리 상세 본문 — 계단형 스파크라인(bok.history, macro 페이로드 재사용이라
+// 별도 fetch 없음) + 현재 수치·한미 금리차·직전 변경 + Haiku 해석(krRate). FOMC 상세와
+// 달리 정책금리는 결정일에만 계단식으로 변해 lightweight-charts 대신 계단형 Sparkline
+// (step)으로 충분하다 — CPI/실업률 상세와 같은 경량 패턴.
+function BokDetailBody({ bok, bokDir, bokSpread, bokSparkHistory, insightPhase, insightText }) {
+  if (!bok) return null;
+  const lc = bok.lastChange;
+  return (
+    <>
+      <div className="brf-macro-detail-stat">
+        <span className="brf-macro-detail-value">{bok.rate.toFixed(2)}%</span>
+        <span className="brf-macro-detail-sub">
+          {bokSpread != null ? `한미차 ${bokSpread > 0 ? '+' : ''}${bokSpread.toFixed(2)}%p · ` : ''}{bok.asOf} 기준
+        </span>
+      </div>
+      {bokSparkHistory.length >= 2 && (
+        <div className="brf-macro-detail-spark"><Sparkline history={bokSparkHistory} dir={bokDir} step /></div>
+      )}
+      {lc && (
+        <div className="brf-macro-next">
+          직전 변경: {formatMMDD(lc.date)} {lc.deltaPp > 0 ? '+' : ''}{lc.deltaPp}%p ({lc.direction === 'up' ? '인상' : '인하'})
+        </div>
+      )}
+      <MacroInsightNote insightPhase={insightPhase} insightText={insightText} />
+    </>
+  );
+}
+
 // 펼침/접힘 공용 훅 — grid-template-rows 트랜지션 감지 + 펼칠 때 스크롤. 매크로 카드
 // 아코디언(MacroDetailPanel)과 이벤트 배너 아코디언(EventBriefPanel)이 동일하게 공유한다.
 function useAccordionTransition(expanded) {
@@ -1002,6 +1030,7 @@ function MacroDetailPanel({ kind, expanded, orderValue, insightPhase, insightTex
           {kind === 'unemployment' && (
             <UnemploymentDetailBody {...bodyProps} insightPhase={insightPhase} insightText={insightText} />
           )}
+          {kind === 'bok' && <BokDetailBody {...bodyProps} insightPhase={insightPhase} insightText={insightText} />}
         </div>
       </div>
     </div>
@@ -1024,7 +1053,7 @@ function MacroSection({ phase, macro, onPageChange, insightPhase, insight }) {
   // 호출한 뒤(맨 아래)로 미루고 그 전까지는 macro가 null이어도 안전하게 계산한다.
   const ready = phase === 'done' && !!macro && (!!macro.fomc?.rate || !!macro.cpi);
 
-  const { fomc, cpi, unemployment, upcoming } = macro ?? {};
+  const { fomc, cpi, unemployment, upcoming, bok } = macro ?? {};
 
   // 임박 배너 — "다가오는 이벤트"(FOMC/CPI/만기/MSCI/실적 통합) 중 D-3 이내인 것 전부 표시.
   const urgentEvents = ready ? (upcoming ?? []).filter(e => e.dDay <= 3) : [];
@@ -1037,6 +1066,13 @@ function MacroSection({ phase, macro, onPageChange, insightPhase, insight }) {
     ? (cpi.trend.at(-1).yoy >= cpi.trend[0].yoy ? 'up' : 'down')
     : 'flat';
   const cpiSparkHistory = cpi?.trend?.map(t => ({ close: t.yoy })) ?? [];
+
+  // 한국 기준금리(+한미 금리차) — bok는 macro 페이로드의 옵셔널 필드라, 없으면 아래
+  // 카드/패널이 통째로 렌더되지 않는다. dir은 직전 변경 방향(인상=up 빨강/인하=down
+  // 파랑), 금리차는 한국−미국 상단(부호 유지, 음수=한국이 낮음). 스파크라인은 계단형.
+  const bokDir = bok?.lastChange?.direction ?? 'flat';
+  const bokSpread = (bok?.rate != null && fomc?.rate) ? bok.rate - fomc.rate.upper : null;
+  const bokSparkHistory = bok?.history?.map(h => ({ close: h.close, date: h.date })) ?? [];
 
   function toggleCard(key) {
     setExpandedCard(prev => (prev === key ? null : key));
@@ -1052,6 +1088,7 @@ function MacroSection({ phase, macro, onPageChange, insightPhase, insight }) {
   const fomcExpanded = expandedCard === 'fomc';
   const cpiExpanded = expandedCard === 'cpi';
   const unemploymentExpanded = expandedCard === 'unemployment';
+  const bokExpanded = expandedCard === 'bok';
 
   useEffect(() => {
     if (!bannerExpanded || !briefableType || !briefDate) return;
@@ -1233,6 +1270,43 @@ function MacroSection({ phase, macro, onPageChange, insightPhase, insight }) {
             unemployment={unemployment}
             insightPhase={insightPhase}
             insightText={insight?.unemployment}
+          />
+        )}
+
+        {bok?.rate != null && (
+          <div
+            className={`brf-macro-card brf-macro-card-expandable${bokExpanded ? ' active' : ''}`}
+            style={{ order: 40 }}
+            role="button"
+            tabIndex={0}
+            aria-expanded={bokExpanded}
+            onClick={() => toggleCard('bok')}
+            onKeyDown={e => handleCardKeyDown(e, 'bok')}
+          >
+            <div className="brf-macro-card-label-row">
+              <span className="brf-macro-card-label">한국 기준금리</span>
+              <span className="brf-macro-card-chevron" aria-hidden="true">{bokExpanded ? '▴' : '▾'}</span>
+            </div>
+            <div className="brf-macro-card-main">{bok.rate.toFixed(2)}%</div>
+            <div className="brf-macro-card-sub">
+              {bokSpread != null ? `한미차 ${bokSpread > 0 ? '+' : ''}${bokSpread.toFixed(2)}%p · ` : ''}{bok.asOf} 기준
+            </div>
+            {bokSparkHistory.length >= 2 && (
+              <div className="brf-macro-spark"><Sparkline history={bokSparkHistory} dir={bokDir} step /></div>
+            )}
+          </div>
+        )}
+        {bok?.rate != null && (
+          <MacroDetailPanel
+            kind="bok"
+            expanded={bokExpanded}
+            orderValue={45}
+            bok={bok}
+            bokDir={bokDir}
+            bokSpread={bokSpread}
+            bokSparkHistory={bokSparkHistory}
+            insightPhase={insightPhase}
+            insightText={insight?.krRate}
           />
         )}
       </div>
