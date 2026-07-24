@@ -41,6 +41,13 @@ const INSIGHT_CACHE_TTL_SEC = 24 * 60 * 60; // 24시간
 const DAILY_COUNT_TTL_SEC    = 24 * 60 * 60;
 const DAILY_GENERATION_LIMIT = 20; // briefing-core.js와 동일한 값 — 스냅샷 캐시가 있어 실제로는 거의 도달하지 않음
 
+// "YYYY-MM-DD" → "7월 16일" — 기준금리 변경 시점을 프롬프트에 절대 날짜로 못박아,
+// 모델이 "최근" 같은 상대 표현으로 바꾸지 않게 한다(event-brief.js formatKoreanMonthDay와 동일).
+function formatKoreanMonthDay(dateStr) {
+  const [, m, d] = dateStr.split('-').map(Number);
+  return `${m}월 ${d}일`;
+}
+
 function kstDateBucket(date = new Date()) {
   const kst = new Date(new Date(date).getTime() + 9 * 60 * 60 * 1000);
   const y  = kst.getUTCFullYear();
@@ -140,7 +147,8 @@ function buildSystemPrompt(hasBok) {
     : `{"fomc": "...", "cpi": "...", "unemployment": "..."}`;
   const krConstraint = hasBok
     ? `\n- krRate 항목은 예외적으로 "한국 기준금리"와 "한미 정책금리차" 두 가지를 함께 다뤄도 됩니다(그 둘은 하나의 주제로 봅니다). 단, 금리차가 환율·자본유출입에 미칠 영향을 단정하거나 예측하지 말고, 제공된 실제 수치에 근거한 사실 서술에 그치십시오.
-- 한미 금리차를 언급할 때는 반드시 입력에 제공된 '상단 기준'/'하단 기준' %p 수치를 그대로 인용하십시오(대표값은 상단 기준). 미국 목표범위 상·하단의 중앙값·평균처럼 제공되지 않은 새 기준이나 수치를 직접 만들어 계산하지 마십시오.`
+- 한미 금리차를 언급할 때는 반드시 입력에 제공된 '상단 기준'/'하단 기준' %p 수치를 그대로 인용하십시오(대표값은 상단 기준). 미국 목표범위 상·하단의 중앙값·평균처럼 제공되지 않은 새 기준이나 수치를 직접 만들어 계산하지 마십시오.
+- 한국 기준금리 변경 시점을 언급할 때는 입력의 '직전 변경'에 제공된 절대 날짜(예: "7월 16일")를 그대로 쓰고, "최근"·"근래" 같은 상대 표현으로 대체하지 마십시오.`
     : '';
   return `당신은 한국 개인 투자자를 위해 개별 경제지표를 짧게 해설하는 애널리스트입니다.
 
@@ -200,8 +208,8 @@ ${hasBok ? '\n' + buildBokSection(macro) + '\n' : ''}
 function buildBokSection(macro) {
   const { bok, fomc } = macro;
   const lc = bok.lastChange
-    ? `직전 변경: ${bok.lastChange.date} ${bok.lastChange.deltaPp > 0 ? '+' : ''}${bok.lastChange.deltaPp}%p (${bok.lastChange.direction === 'up' ? '인상' : '인하'})`
-    : '직전 변경: 최근 24개월 내 변경 없음';
+    ? `직전 변경: ${formatKoreanMonthDay(bok.lastChange.date)} ${bok.lastChange.deltaPp > 0 ? '+' : ''}${bok.lastChange.deltaPp}%p (${bok.lastChange.direction === 'up' ? '인상' : '인하'})`
+    : '직전 변경: 지난 24개월 내 변경 없음';
   // history는 월별 [{date, close}] — 최근 12개만 오래된순으로.
   const trend = Array.isArray(bok.history) && bok.history.length > 0
     ? bok.history.slice(-12).map(h => h.close).join(', ')
