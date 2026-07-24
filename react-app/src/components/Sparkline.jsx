@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { avgPriceRangeStatus } from '../avgPriceStore';
+import { avgPriceRangeStatus } from '../avgPriceRange';
 
 const COLOR = { up: '#e84040', down: '#3d82ef', flat: '#576880' };
 
@@ -77,8 +77,11 @@ export default function Sparkline({ history, dir, avgPrice, currency, step = fal
   // avgPriceStore.js에 단일화해 상세화면(Chart.jsx)과 공유한다. lo/hi/rng(위 y축
   // 계산)는 절대 건드리지 않고 — 평단선을 그릴 y좌표만 시각 영역 안으로 클램프한다
   // (축 자체를 넓히는 게 아니라 "이미 계산된 축 위에서 선의 위치만 클램프"라 왜곡이 아님).
+  // Preview 배포(VITE_HIDE_WATCHLIST=1)에서는 앞 조건이 false로 접혀 이 블록 전체와
+  // 아래 '평단' 힌트 렌더가 dead가 되고, avgPriceRangeStatus 참조가 사라져
+  // avgPriceStore 모듈이 통째로 트리셰이킹된다(마지막 남은 참조 지점).
   let avgLine = null;
-  if (avgPrice != null) {
+  if (import.meta.env.VITE_HIDE_WATCHLIST !== '1' && avgPrice != null) {
     const status = avgPriceRangeStatus(avgPrice, lo, hi);
     avgLine = status === 'in'
       ? { mode: 'line', y: Math.min(H - padY, Math.max(padY, (H - padY) - ((avgPrice - lo) / rng) * (H - 2 * padY))) }

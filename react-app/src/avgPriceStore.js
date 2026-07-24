@@ -21,28 +21,36 @@ import { loadEditToken } from './editTokenStore';
 
 const WATCHLIST_IDS = ['HYPR', '419530', '028300', '080220'];
 
-let cache = Object.fromEntries(WATCHLIST_IDS.map(id => [id, null]));
-const listeners = new Set();
+// 지연 초기화(중요) — 모듈 최상단에서 Object.fromEntries/new Set을 즉시 호출하면
+// Rolldown이 이 모듈을 "부수효과 있음"으로 보고, Preview 배포(VITE_HIDE_WATCHLIST=1)에서
+// 모든 export가 미사용이어도 side-effect-only import로 모듈을 남긴다(→ WATCHLIST_IDS가
+// 번들에 잔존). 최상단을 순수 선언(배열 리터럴 + 미할당 let)만 두면 부수효과 없는
+// 모듈로 판정돼 통째로 트리셰이킹된다. 첫 접근 시에만 캐시를 만든다.
+let cache;
+let listeners;
+function getCache() {
+  return (cache ??= Object.fromEntries(WATCHLIST_IDS.map(id => [id, null])));
+}
 
 /** @returns {number|null} symbol(=워치리스트 item.id)의 평단가, 없으면 null */
 export function getAvgPrice(symbol) {
-  return cache[symbol] ?? null;
+  return getCache()[symbol] ?? null;
 }
 
 /** 캐시가 바뀔 때마다 호출됨 — 반환값은 구독 해제 함수. */
 export function subscribeAvgPrices(fn) {
-  listeners.add(fn);
-  return () => listeners.delete(fn);
+  (listeners ??= new Set()).add(fn);
+  return () => listeners?.delete(fn);
 }
 
 function applyToCache(value) {
-  const next = { ...cache };
+  const next = { ...getCache() };
   for (const id of WATCHLIST_IDS) {
     const v = value?.[id];
     next[id] = (typeof v === 'number' && Number.isFinite(v) && v > 0) ? v : null;
   }
   cache = next;
-  listeners.forEach(fn => fn());
+  listeners?.forEach(fn => fn());
 }
 
 /**
@@ -104,18 +112,7 @@ export async function saveAvgPrices(value) {
   return data.value;
 }
 
-/**
- * avgPrice가 차트에 실제로 그려지는 가격 범위 [lo,hi] ±5% 여유 안에 있는지 판정 —
- * 카드 스파크라인(Sparkline.jsx)과 상세 캔들차트(Chart.jsx)가 공통으로 쓰는 규칙이라
- * 여기 한 곳에만 둔다(두 곳에 각자 구현하면 여유값이 어긋날 위험). 이 함수는 판정만
- * 하고 y축 스케일에는 관여하지 않는다 — "범위 안 = 라인 / 밖 = 가장자리 힌트"를
- * 나누는 것은 호출부 몫이다(y축 왜곡 금지는 호출부가 지켜야 할 제약).
- * @returns {'in'|'above'|'below'}
- */
-export function avgPriceRangeStatus(avgPrice, lo, hi) {
-  const rng = (hi - lo) || (hi * 0.005) || 1; // lo===hi(플랫) 폴백 — Sparkline.jsx 자체 rng 계산과 동일 규칙
-  const margin = rng * 0.05;
-  if (avgPrice > hi + margin) return 'above';
-  if (avgPrice < lo - margin) return 'below';
-  return 'in';
-}
+// avgPriceRangeStatus는 순수 기하 헬퍼라 avgPriceRange.js로 분리했다 — 그래야 Preview
+// 배포에서 Sparkline/Chart가 이 모듈(avgPriceStore)을 아예 import하지 않게 되어
+// WATCHLIST_IDS·캐시를 포함한 이 파일 전체가 번들에서 트리셰이킹된다. (재노출도 하지
+// 않는다 — 재노출하면 다시 import 경로가 생겨 트리셰이킹이 깨진다.)

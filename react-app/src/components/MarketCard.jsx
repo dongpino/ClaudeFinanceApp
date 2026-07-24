@@ -117,7 +117,9 @@ export default function MarketCard({ item }) {
 
   // 평단가 수익률 배지 — 우미 투자 종목만 avgPrice가 붙는다(그 외는 getAvgPrice가
   // 항상 null). null이면 아래 JSX가 완전히 건너뛰어 기존 렌더와 동일하다.
-  const avgPrice = getAvgPrice(item.id);
+  // Preview 배포(VITE_HIDE_WATCHLIST=1)에서는 삼항이 null로 접혀 getAvgPrice 호출이
+  // dead가 되고, 유일한 참조가 사라져 avgPriceStore 트리셰이킹의 출발점이 된다.
+  const avgPrice = import.meta.env.VITE_HIDE_WATCHLIST === '1' ? null : getAvgPrice(item.id);
   const avgPct = avgPrice != null ? ((price - avgPrice) / avgPrice) * 100 : null;
   const avgDir = avgPct == null ? null : (avgPct > 0 ? 'up' : avgPct < 0 ? 'down' : 'flat');
   const [nameMain, nameSymbol] = splitNameSymbol(name);

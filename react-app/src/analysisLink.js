@@ -26,7 +26,10 @@ const CRYPTO_ID_MAP = {
 
 // 우미 투자 워치리스트 — api/_collectors/watchlist.js의 WATCHLIST와 반드시 같은
 // 심볼 집합을 유지해야 한다(종목 추가/삭제 시 양쪽 다 고칠 것).
-const STOCK_MARKET_MAP = {
+// Preview 배포(VITE_HIDE_WATCHLIST=1)에서는 빈 객체로 접혀 티커(HYPR 등)가 번들에서
+// 제거된다 — 워치리스트 카드가 없어 이 매핑이 조회될 일도 없다(getAnalysisSelection은
+// 미매칭 시 null 반환이라 그대로 안전).
+const STOCK_MARKET_MAP = import.meta.env.VITE_HIDE_WATCHLIST === '1' ? {} : {
   HYPR:     'US',
   '419530': 'KR',
   '028300': 'KR',

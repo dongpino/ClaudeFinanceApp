@@ -12,17 +12,27 @@
  *         실제 데이터 출처, 예: "CNBC")와는 다른 필드이니 혼동하지 말 것.
  */
 
-export const ITEM_CATEGORIES = [
-  // "우미 투자" — 개인 워치리스트 고정 종목 4개(api/_collectors/watchlist.js).
-  // 사용자가 UI에서 추가/삭제하지 않으므로 'major'처럼 편집 패널이 없다 — 종목을
-  // 바꾸려면 이 배열과 watchlist.js의 WATCHLIST 배열을 함께 한 줄씩 고치면 된다.
-  // currency: 평단가 편집 패널(AvgPriceEditPanel.jsx)이 입력 단위(₩ 정수/$ 소수)를
-  // 결정하는 데 쓴다 — item.currency(서버 응답, opt-in 필드)와 동일한 값을 그대로
-  // 미리 알아둔 것뿐, 편집 패널은 서버 응답을 기다리지 않고 즉시 렌더돼야 하므로.
+// "우미 투자" — 개인 워치리스트 고정 종목 4개(api/_collectors/watchlist.js).
+// 사용자가 UI에서 추가/삭제하지 않으므로 'major'처럼 편집 패널이 없다 — 종목을
+// 바꾸려면 이 배열과 watchlist.js의 WATCHLIST 배열을 함께 한 줄씩 고치면 된다.
+// currency: 평단가 편집 패널(AvgPriceEditPanel.jsx)이 입력 단위(₩ 정수/$ 소수)를
+// 결정하는 데 쓴다 — item.currency(서버 응답, opt-in 필드)와 동일한 값을 그대로
+// 미리 알아둔 것뿐, 편집 패널은 서버 응답을 기다리지 않고 즉시 렌더돼야 하므로.
+//
+// ── Preview 배포 제외(빌드 타임 트리셰이킹) ──────────────────────────
+// VITE_HIDE_WATCHLIST=1 빌드에서는 이 배열이 빈 배열로 접혀, 아래 4개 종목 정의
+// (종목명 '하이퍼파인' 등 포함)가 통째로 dead branch가 되어 번들에서 제거된다.
+// import.meta.env.VITE_HIDE_WATCHLIST는 Rolldown이 빌드 타임에 리터럴로 치환하므로
+// 삼항의 죽은 가지(4개 객체 리터럴)가 정적 DCE 대상이 된다(런타임 숨김이 아님).
+const WATCHLIST_ITEMS = import.meta.env.VITE_HIDE_WATCHLIST === '1' ? [] : [
   { id: 'HYPR',       name: '하이퍼파인',          source: 'watchlist', categories: ['umi'], currency: 'usd' },
   { id: '419530',     name: 'SAMG엔터',            source: 'watchlist', categories: ['umi'], currency: 'krw' },
   { id: '028300',     name: 'HLB',                 source: 'watchlist', categories: ['umi'], currency: 'krw' },
   { id: '080220',     name: '제주반도체',          source: 'watchlist', categories: ['umi'], currency: 'krw' },
+];
+
+export const ITEM_CATEGORIES = [
+  ...WATCHLIST_ITEMS,
   { id: 'nasdaq',     name: '나스닥',              source: 'us-indices', categories: ['major', 'index'] },
   { id: 'dow',        name: '다우존스',            source: 'us-indices', categories: ['major', 'index'] },
   { id: 'kospi',      name: '코스피',              source: 'kr',          categories: ['major', 'index'] },
@@ -44,8 +54,11 @@ export const ITEM_CATEGORIES = [
 // 홈 탭 카테고리 버튼 — key는 ITEM_CATEGORIES의 categories 값과 매칭, label은 화면 표시용.
 // 순서가 곧 칩/스와이프 패널 순서(HomePage.jsx가 CATEGORY_TABS.length 기반으로
 // 동작해 배열 길이가 몇 개든 자동으로 대응됨 — 하드코딩된 개수 가정 없음).
+// Preview 배포(VITE_HIDE_WATCHLIST=1)에서는 '우미 투자' 칩이 배열에서 빠져(라벨
+// 문자열까지 dead branch로 제거) '주요'가 첫 탭이 된다. HomePage의 activeIndex/atFirst/
+// 화살표/스와이프는 모두 CATEGORY_TABS 기반이라 자동으로 '주요' 우선으로 맞춰진다.
 export const CATEGORY_TABS = [
-  { key: 'umi',    label: '우미 투자' },
+  ...(import.meta.env.VITE_HIDE_WATCHLIST === '1' ? [] : [{ key: 'umi', label: '우미 투자' }]),
   { key: 'major',  label: '주요' },
   { key: 'index',  label: '지수' },
   { key: 'fx',     label: '환율' },
@@ -53,7 +66,8 @@ export const CATEGORY_TABS = [
   { key: 'macro',  label: '매크로' },
 ];
 
-export const DEFAULT_CATEGORY = 'umi';
+// 기본 진입 탭 — Preview에서는 '우미 투자'가 없으므로 '주요'로 진입한다.
+export const DEFAULT_CATEGORY = import.meta.env.VITE_HIDE_WATCHLIST === '1' ? 'major' : 'umi';
 
 // 'major'(주요) 탭의 기본값 — ITEM_CATEGORIES에 categories:['major']로 태그된 종목들.
 // 사용자가 홈 탭에서 직접 선택을 저장하면(homeMajorStore.js) 이 기본값 대신 그 선택을

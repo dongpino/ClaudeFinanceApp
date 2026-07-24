@@ -29,6 +29,10 @@ export function DataProvider({ children }) {
     // 카드 기본 렌더에는 아무 영향 없이 평단 표시만 계속 비어있는다(avgPriceStore.js
     // 자체가 실패를 조용히 삼킴). 편집 패널에서 저장에 성공했을 때도 이 구독을 통해
     // 홈 화면이 곧바로 갱신된다.
+    // Preview 배포(VITE_HIDE_WATCHLIST=1)에서는 평단가 시스템이 없으므로 조기 반환한다.
+    // 이 상수는 빌드 타임에 접혀 아래 두 호출이 dead가 되고, loadAvgPrices/subscribeAvgPrices
+    // 의 유일한 참조가 사라져 avgPriceStore가 번들에서 제거된다.
+    if (import.meta.env.VITE_HIDE_WATCHLIST === '1') return;
     loadAvgPrices();
     return subscribeAvgPrices(() => bumpAvgPricesTick(t => t + 1));
   }, []);

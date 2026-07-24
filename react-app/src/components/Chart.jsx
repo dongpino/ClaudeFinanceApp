@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
-import { getAvgPrice, avgPriceRangeStatus } from '../avgPriceStore';
+import { getAvgPrice } from '../avgPriceStore';
+import { avgPriceRangeStatus } from '../avgPriceRange';
 
 const UP   = '#e84040';
 const DOWN = '#3d82ef';
@@ -26,7 +27,9 @@ export default function Chart({ item }) {
   // React가 그 노드를 통째로 재마운트해 안에 명령형으로 붙여둔 lightweight-charts
   // 캔버스가 통째로 날아간다 — avgPrice는 item이 바뀔 때만 바뀌므로 effect의
   // [item] 의존성과 항상 같은 타이밍에 구조가 바뀌어 안전하다.
-  const avgPrice = getAvgPrice(item.id);
+  // Preview 배포(VITE_HIDE_WATCHLIST=1)에서는 null로 접혀 아래 평단선/힌트 코드가 전부
+  // dead가 되고 getAvgPrice·avgPriceRangeStatus 참조가 사라진다.
+  const avgPrice = import.meta.env.VITE_HIDE_WATCHLIST === '1' ? null : getAvgPrice(item.id);
   const [avgHint, setAvgHint] = useState(null); // { pos: 'above'|'below' } | null
 
   useEffect(() => {

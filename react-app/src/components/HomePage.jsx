@@ -722,7 +722,10 @@ export default function HomePage({ activePage, onPageChange }) {
       {editingMajor && (
         <MajorEditPanel selectedIds={majorIds} onSave={handleSaveMajor} />
       )}
-      {editingAvgPrices && (
+      {/* Preview 배포(VITE_HIDE_WATCHLIST=1)에서는 조건이 false로 접혀 AvgPriceEditPanel
+          참조가 사라진다 → 임포트가 unused가 되어 패널 모듈(우미 종목명·getAvgPrice·
+          saveAvgPrices 포함)이 통째로 트리셰이킹된다. */}
+      {import.meta.env.VITE_HIDE_WATCHLIST !== '1' && editingAvgPrices && (
         <AvgPriceEditPanel onClose={() => setEditingAvgPrices(false)} />
       )}
       <NewsTicker issues={issues} onClick={() => onPageChange('briefing')} />
