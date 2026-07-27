@@ -427,21 +427,26 @@ body {
 .settings-src-meta {
   font-size: 11px; color: var(--text-3); flex-shrink: 0;
   font-variant-numeric: tabular-nums; text-align: right; min-width: 82px;
+  /* calendar 유사 행의 note("실적 8/26 이후 없음")는 시각/성공률보다 길다 —
+     행 폭을 넘기면 소스명이 잘리므로 메타 쪽도 상한을 두고 말줄임 처리한다. */
+  max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* 상태 색 — 초록(정상)/노랑(지연)/빨강(장애)/회색(대기·미수집) */
+/* 상태 색 — 초록(정상)/노랑(지연·갱신 필요)/빨강(장애)/회색(대기·미수집).
+   warn = 수집 실패가 아니라 "하드코딩 일정 소진 임박"(calendar 유사 행 전용)이라
+   장애(빨강)가 아닌 노랑을 쓰되, 지연(stale)과 같은 색 언어를 공유한다. */
 .settings-dot.ok    { background: #2fb96a; }
-.settings-dot.stale { background: #e0a400; }
+.settings-dot.stale, .settings-dot.warn { background: #e0a400; }
 .settings-dot.down  { background: var(--up); }
 .settings-dot.standby, .settings-dot.unknown { background: var(--flat); }
 .settings-src-status.ok    { color: #2fb96a; }
-.settings-src-status.stale { color: var(--stale); }
+.settings-src-status.stale, .settings-src-status.warn { color: var(--stale); }
 .settings-src-status.down  { color: var(--up); }
 .settings-src-status.standby, .settings-src-status.unknown { color: var(--text-3); }
 
 [data-theme="light"] .settings-dot.ok    { background: #1a9e4b; }
 [data-theme="light"] .settings-src-status.ok    { color: #178040; }
-[data-theme="light"] .settings-dot.stale { background: #c88a00; }
+[data-theme="light"] .settings-dot.stale, [data-theme="light"] .settings-dot.warn { background: #c88a00; }
 /* .settings-src-status.stale 라이트 색은 --stale 변수(테마별 재정의)가 담당 → 별도 override 불필요 */
 
 /* ── 홈 카테고리 슬라이드 트랙 ──────────────── */
@@ -2069,9 +2074,33 @@ body {
 [data-theme="dark"] .cal-chip {
   background: color-mix(in srgb, var(--chip-color, var(--gold)) var(--chip-tint-pct), #0f1419);
 }
+/* 추정(tentative) 일정 칩 — 확정 일정과 한눈에 구분되도록 점선 테두리 + 약간 낮은 대비.
+   색(카테고리 코딩)은 그대로 두고 "확정 여부"만 테두리로 표현한다. */
+.cal-chip-tentative {
+  border: 1px dashed color-mix(in srgb, var(--chip-color, var(--gold)) 70%, transparent);
+  border-left: 3px dashed var(--chip-color, var(--gold));
+  opacity: .82;
+}
 .cal-chip-more {
   font-size: 8px; font-weight: 800; color: var(--text-3);
   padding: 0 4px;
+}
+
+/* "(예정)" 배지 — 상세 행/다가오는 이벤트 행에서 제목 옆에 붙는다. */
+.cal-tentative {
+  flex-shrink: 0;
+  font-size: 10px; font-weight: 700; color: var(--text-3);
+  letter-spacing: -.2px;
+}
+
+/* 원출처 최종 확인일 소표시 — 정보 위계상 가장 낮게(눈에 띄지 않되 확인 가능하게). */
+.cal-verified-note {
+  padding: 2px 2px 4px;
+  font-size: 10.5px; color: var(--text-3);
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+[data-theme="dark"] .cal-verified-note {
+  text-shadow: 0 1px 4px rgba(0,0,0,.9), 0 0 12px rgba(0,0,0,.6);
 }
 
 /* 점(모바일 폴백) */

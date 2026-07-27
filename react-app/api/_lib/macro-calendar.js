@@ -5,19 +5,48 @@
  *  ① 하드코딩 상수(FOMC/CPI/MSCI/실적) — 연도가 바뀌면 배열을 갱신해야 함, 출처 주석 참고.
  *  ② 규칙 기반 계산(선물옵션 동시만기일) — 연도 하드코딩 없이 매년 자동 계산됨.
  *
+ * 연도 병합 구조: 카테고리별로 연도 배열(..._2026 / ..._2027)을 따로 두되, 소비하는
+ * 쪽(getNextFomcMeeting·getNextCpiRelease·getUpcomingEvents·getEventsForMonth·
+ * getScheduleDepletion)은 병합 상수
+ * (FOMC_MEETINGS / CPI_RELEASES / MSCI_REVIEWS / EARNINGS_EVENTS)만 참조한다. 다음
+ * 연도분을 추가할 때 배열 하나를 만들고 병합 라인에 끼워 넣으면 끝이며, 소비부는
+ * 손댈 필요가 없다(연말 연도 경계에서 조용히 null을 반환하던 문제의 구조적 해소).
+ * ⚠️ 병합 배열은 날짜 오름차순을 유지해야 한다 — getNextFomcMeeting/getNextCpiRelease가
+ * find()로 "첫 미래 항목"을 집는다.
+ *
+ * 신빙성 표기 두 가지:
+ *  · VERIFIED_AT — 카테고리별 "원출처 최종 확인일". API 응답과 캘린더 탭에 노출한다.
+ *  · tentative   — 원출처가 아직 확정 공표하지 않아 과거 패턴으로 추정한 날짜. UI에
+ *                  "(예정)"으로 구분 표시하고, 확정되면 날짜 갱신 + 플래그 제거한다.
+ *
  * 출처:
- *  - FOMC: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm (2026-07-06 확인)
+ *  - FOMC: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+ *          (2026-07-27 확인 — 2027년 8회 공표분 반영, 2026년분 원문 재대조 일치)
  *  - CPI:  https://www.bls.gov/schedule/news_release/cpi.htm
  *          교차 확인: https://www.usinflationcalculator.com/inflation/consumer-price-index-release-schedule/
- *          (2026-07-06 확인) — 발표 시각은 미 동부시각(ET) 08:30 고정.
+ *          (2026-07-27 확인) — 발표 시각은 미 동부시각(ET) 08:30 고정.
  *  - MSCI: https://www.msci.com/indexes/index-resources/index-announcements
- *          (2026-07-06 확인, 8월/11월은 MSCI가 사전 공지한 예정일 — 변경 가능성 있음 공식 고지)
- *  - 실적: 삼성전자 IR(news.samsung.com/global/ir), 애플 뉴스룸(9to5mac.com 2026-07-02 보도),
- *          NVIDIA 8-K/IR(tipranks.com) — (2026-07-06 확인, ⚠️ 다음 분기 일정 확정되면 갱신 필요)
+ *          https://www.msci.com/eqb/pressreleases/archive/ir_dates.pdf
+ *          (2026-07-27 확인 — 8월/11월 예정일 원문 일치, 단 MSCI가 변경 가능성 공식 고지)
+ *  - 실적: 삼성전자 IR(news.samsung.com/global/ir), 애플 뉴스룸/8-K, NVIDIA 8-K/IR
+ *          (2026-07-27 확인 — 3Q 일정은 각 사가 통상 3~4주 전에야 공표해 미확정,
+ *           과거 패턴 기반 추정치를 tentative:true로 선반영)
  *
  * ET→KST 변환은 해당 날짜의 실제 서머타임(DST) 여부를 Intl 타임존 데이터로 판정하므로
  * DST 규칙을 직접 하드코딩하지 않고, 매년 값만 넣으면 계속 정확하게 동작한다.
  */
+
+/**
+ * 카테고리별 원출처 최종 확인일(YYYY-MM-DD, KST). 배열을 갱신하거나 원문을 재대조했을
+ * 때 함께 올린다 — 이 값이 오래됐다는 것 자체가 "일정이 바뀌었어도 모른다"는 신호다.
+ * (일정 변경 감지 수단이 없는 현 구조에서 사용자에게 줄 수 있는 최소한의 신빙성 근거)
+ */
+export const VERIFIED_AT = {
+  fomc:     '2026-07-27',
+  cpi:      '2026-07-27',
+  msci:     '2026-07-27',
+  earnings: '2026-07-27',
+};
 
 export const FOMC_MEETINGS_2026 = [
   { start: '2026-01-27', end: '2026-01-28' },
@@ -29,6 +58,22 @@ export const FOMC_MEETINGS_2026 = [
   { start: '2026-10-27', end: '2026-10-28' },
   { start: '2026-12-08', end: '2026-12-09' },
 ];
+
+// 2027년 FOMC — federalreserve.gov 공표분(2026-07-27 확인). 연준은 2년치를 미리 공표한다.
+// SEP(경제전망요약) 동반 회의: 3월·6월·9월·12월.
+export const FOMC_MEETINGS_2027 = [
+  { start: '2027-01-26', end: '2027-01-27' },
+  { start: '2027-03-16', end: '2027-03-17' },
+  { start: '2027-04-27', end: '2027-04-28' },
+  { start: '2027-06-08', end: '2027-06-09' },
+  { start: '2027-07-27', end: '2027-07-28' },
+  { start: '2027-09-14', end: '2027-09-15' },
+  { start: '2027-10-26', end: '2027-10-27' },
+  { start: '2027-12-07', end: '2027-12-08' },
+];
+
+/** 소비부가 참조하는 병합 FOMC 일정(날짜 오름차순) */
+export const FOMC_MEETINGS = [...FOMC_MEETINGS_2026, ...FOMC_MEETINGS_2027];
 
 // date: 발표일(미 동부 캘린더 날짜), refMonth: 해당 발표가 다루는 기준월
 export const CPI_RELEASES_2026 = [
@@ -46,6 +91,15 @@ export const CPI_RELEASES_2026 = [
   { date: '2026-12-10', refMonth: '2026-11' },
 ];
 
+// 2027년 CPI — ⚠️ 미공표(2026-07-27 확인). BLS는 통상 전년 가을에 다음 해 공표 일정을
+// 올리며(bls.gov/schedule/news_release/cpi.htm), 현재 마지막 공표분은 2026-12-10이다.
+// TODO(2026-10-01 재확인): 공표되면 아래 배열을 채우고 VERIFIED_AT.cpi를 함께 갱신할 것.
+//   미채움 상태에서도 병합 구조상 동작에 문제는 없고, 2026-11-10경 CPI 소진 경고가 뜬다.
+export const CPI_RELEASES_2027 = [];
+
+/** 소비부가 참조하는 병합 CPI 일정(날짜 오름차순) */
+export const CPI_RELEASES = [...CPI_RELEASES_2026, ...CPI_RELEASES_2027];
+
 // MSCI 정기 인덱스 리뷰(5·8·11월) — announce: 발표일, effective: 시행일(리밸런싱 반영일)
 const MSCI_REVIEWS_2026 = [
   { announce: '2026-05-12', effective: '2026-05-29', label: '5월' },
@@ -53,14 +107,32 @@ const MSCI_REVIEWS_2026 = [
   { announce: '2026-11-11', effective: '2026-12-01', label: '11월' },
 ];
 
-// 실적 발표 — 2026-07-06 기준 알려진 근접 일정만. 다음 분기분은 확정되는 대로 추가할 것.
-// shortLabel: 캘린더 그리드 셀 칩용 5자 내외 축약(item 1 규칙)
+// TODO(2026-10-01 재확인): 2027년 리뷰 일정(MSCI ir_dates.pdf) 확정 시 MSCI_REVIEWS_2027 추가.
+const MSCI_REVIEWS = [...MSCI_REVIEWS_2026];
+
+/**
+ * 실적 발표. tentative:true = 회사가 아직 공식 공표하지 않아 과거 패턴으로 추정한 날짜.
+ *   · 삼성 잠정실적: 분기 종료 다음 달 초순(10/8은 목요일, 2024·2025년 패턴)
+ *   · 삼성 확정실적: 같은 달 말 컨퍼런스콜(10/29 목)
+ *   · 애플 FY 4분기: 10월 마지막 주 목요일(10/29)
+ *   · 엔비디아 FY 3분기: 11월 셋째 주 수요일(11/18)
+ * 각 사는 통상 3~4주 전에 날짜를 공표하므로, 확정되는 대로 date를 갱신하고 tentative를
+ * 제거한다(UI의 "(예정)" 배지가 자동으로 사라진다).
+ * shortLabel: 캘린더 그리드 셀 칩용 5자 내외 축약(item 1 규칙)
+ */
 export const EARNINGS_EVENTS_2026 = [
   { date: '2026-07-07', title: '삼성전자 2Q26 잠정실적(가이던스) 발표', shortLabel: '삼성 잠정실적', category: 'earnings', region: 'KR' },
   { date: '2026-07-23', title: '삼성전자 2Q26 확정실적(컨퍼런스콜)',   shortLabel: '삼성 확정실적', category: 'earnings', region: 'KR' },
   { date: '2026-07-30', title: '애플 FY26 3분기 실적 발표',            shortLabel: '애플 실적',   category: 'earnings', region: 'US' },
   { date: '2026-08-26', title: '엔비디아 FY27 2분기 실적 발표',        shortLabel: '엔비디아 실적', category: 'earnings', region: 'US' },
+  { date: '2026-10-08', title: '삼성전자 3Q26 잠정실적(가이던스) 발표', shortLabel: '삼성 잠정실적', category: 'earnings', region: 'KR', tentative: true },
+  { date: '2026-10-29', title: '삼성전자 3Q26 확정실적(컨퍼런스콜)',   shortLabel: '삼성 확정실적', category: 'earnings', region: 'KR', tentative: true },
+  { date: '2026-10-29', title: '애플 FY26 4분기 실적 발표',            shortLabel: '애플 실적',   category: 'earnings', region: 'US', tentative: true },
+  { date: '2026-11-18', title: '엔비디아 FY27 3분기 실적 발표',        shortLabel: '엔비디아 실적', category: 'earnings', region: 'US', tentative: true },
 ];
+
+/** 소비부가 참조하는 병합 실적 일정(날짜 오름차순) */
+export const EARNINGS_EVENTS = [...EARNINGS_EVENTS_2026];
 
 const CPI_RELEASE_HOUR_ET = 8;
 const CPI_RELEASE_MIN_ET  = 30;
@@ -175,11 +247,15 @@ export function getScheduleDepletion(withinDays = 30) {
   const today = todayKST();
   // FOMC는 회의 종료일(end), MSCI는 두 이벤트 중 나중인 시행일(effective)이
   // 실질적인 마지막 날짜다. 나머지는 단일 date.
+  // 병합 상수 기준 — 다음 연도 배열을 추가하면 경고가 자동으로 풀린다.
+  // 실적의 tentative(추정) 항목도 포함해 계산한다: 경고의 목적이 "앞이 비었다"를
+  // 알리는 것이므로, 추정치라도 채워져 있으면 소진은 아니다(추정 여부는 UI의
+  // "(예정)" 배지가 따로 알린다).
   const sources = [
-    { category: 'fomc',     dates: FOMC_MEETINGS_2026.map(m => m.end) },
-    { category: 'cpi',      dates: CPI_RELEASES_2026.map(r => r.date) },
-    { category: 'msci',     dates: MSCI_REVIEWS_2026.map(r => r.effective) },
-    { category: 'earnings', dates: EARNINGS_EVENTS_2026.map(e => e.date) },
+    { category: 'fomc',     dates: FOMC_MEETINGS.map(m => m.end) },
+    { category: 'cpi',      dates: CPI_RELEASES.map(r => r.date) },
+    { category: 'msci',     dates: MSCI_REVIEWS.map(r => r.effective) },
+    { category: 'earnings', dates: EARNINGS_EVENTS.map(e => e.date) },
   ];
 
   const depletion = [];
@@ -217,7 +293,7 @@ function msciEventsFor(rev) {
 /** 다음(또는 진행 중인) FOMC 회의 — KST 기준 오늘 날짜로 D-day 계산 */
 export function getNextFomcMeeting() {
   const today = todayKST();
-  const next = FOMC_MEETINGS_2026.find(m => daysBetween(today, m.end) >= 0);
+  const next = FOMC_MEETINGS.find(m => daysBetween(today, m.end) >= 0);
   if (!next) return null;
   return { ...next, dDay: daysBetween(today, next.start) };
 }
@@ -225,7 +301,7 @@ export function getNextFomcMeeting() {
 /** 다음 CPI 발표 — KST 기준 오늘 날짜로 D-day + 발표 시각(KST) 계산 */
 export function getNextCpiRelease() {
   const today = todayKST();
-  const next = CPI_RELEASES_2026.find(r => daysBetween(today, r.date) >= 0);
+  const next = CPI_RELEASES.find(r => daysBetween(today, r.date) >= 0);
   if (!next) return null;
   const { utc, uncertain } = nyWallTimeToUTC(next.date, CPI_RELEASE_HOUR_ET, CPI_RELEASE_MIN_ET);
   return {
@@ -248,7 +324,7 @@ export function getUpcomingEvents(days = 30) {
 
   // FOMC — 2일짜리 회의라 "진행 중"(오늘이 첫날은 지났지만 둘째 날 이전) 케이스를
   // end 기준으로 포함시키고, dDay는 회의 시작일 기준으로 계산(진행 중이면 음수 → UI가 "진행중" 표시)
-  for (const m of FOMC_MEETINGS_2026) {
+  for (const m of FOMC_MEETINGS) {
     if (daysBetween(today, m.end) < 0) continue;
     const dDay = daysBetween(today, m.start);
     if (dDay > days) continue;
@@ -256,7 +332,7 @@ export function getUpcomingEvents(days = 30) {
   }
 
   // CPI
-  for (const r of CPI_RELEASES_2026) {
+  for (const r of CPI_RELEASES) {
     const dDay = daysBetween(today, r.date);
     if (dDay < 0 || dDay > days) continue;
     events.push({ ...cpiEvent(r), dDay });
@@ -271,7 +347,7 @@ export function getUpcomingEvents(days = 30) {
   }
 
   // MSCI 리뷰 — 발표일/시행일을 각각 별개 이벤트로
-  for (const rev of MSCI_REVIEWS_2026) {
+  for (const rev of MSCI_REVIEWS) {
     for (const ev of msciEventsFor(rev)) {
       const dDay = daysBetween(today, ev.date);
       if (dDay < 0 || dDay > days) continue;
@@ -280,7 +356,7 @@ export function getUpcomingEvents(days = 30) {
   }
 
   // 실적
-  for (const e of EARNINGS_EVENTS_2026) {
+  for (const e of EARNINGS_EVENTS) {
     const dDay = daysBetween(today, e.date);
     if (dDay < 0 || dDay > days) continue;
     events.push({ ...e, dDay });
@@ -300,21 +376,21 @@ export function getEventsForMonth(year, month) {
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   const events = [];
 
-  for (const m of FOMC_MEETINGS_2026) {
+  for (const m of FOMC_MEETINGS) {
     if (m.start.startsWith(prefix) || m.end.startsWith(prefix)) events.push(fomcEvent(m));
   }
-  for (const r of CPI_RELEASES_2026) {
+  for (const r of CPI_RELEASES) {
     if (r.date.startsWith(prefix)) events.push(cpiEvent(r));
   }
   for (const expiry of getExpiryEvents(year)) {
     if (expiry.date.startsWith(prefix)) events.push(expiry);
   }
-  for (const rev of MSCI_REVIEWS_2026) {
+  for (const rev of MSCI_REVIEWS) {
     for (const ev of msciEventsFor(rev)) {
       if (ev.date.startsWith(prefix)) events.push(ev);
     }
   }
-  for (const e of EARNINGS_EVENTS_2026) {
+  for (const e of EARNINGS_EVENTS) {
     if (e.date.startsWith(prefix)) events.push(e);
   }
 

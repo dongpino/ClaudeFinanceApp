@@ -45,7 +45,7 @@ import { collectBTC }        from '../_collectors/btc.js';
 import { collectUSIndices }  from '../_collectors/us-indices.js';
 import { collectKR }         from '../_collectors/kr.js';
 import { collectRSSNews }    from '../_collectors/rss.js';
-import { getUpcomingEvents } from './macro-calendar.js';
+import { getUpcomingEvents, getScheduleDepletion } from './macro-calendar.js';
 import { buildSignals }      from './significance.js';
 
 // ── 상수 ──────────────────────────────────────────────────────
@@ -325,13 +325,28 @@ function calendarEventLabel(ev) {
   return ev.shortLabel;
 }
 
-// 향후 N일 이벤트 → D-day 목록(~100토큰, 최대 CALENDAR_MAX_FOR_PROMPT건)
-function buildCalendarContext(events) {
-  if (!events || events.length === 0) return null;
-  return events
+// 소진 임박 카테고리명(프롬프트 주입용) — 캘린더 탭 경고 스트립과 같은 라벨
+const DEPLETION_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적' };
+
+/**
+ * 향후 N일 이벤트 → D-day 목록(~100토큰, 최대 CALENDAR_MAX_FOR_PROMPT건).
+ *
+ * depletion(하드코딩 일정 소진 임박)이 걸려 있으면 목록 끝에 경고 한 줄을 덧붙인다.
+ * 캘린더 탭에는 경고 스트립이 뜨지만 브리핑에는 아무 표시가 없어, 일정이 비어가는
+ * 동안 모델이 "예정 이벤트 없음"을 사실로 단정할 수 있었다(진단 6번 항목).
+ * 이벤트가 하나도 없어도 경고만 단독으로 실어 보낸다.
+ */
+function buildCalendarContext(events, depletion = []) {
+  const lines = (events ?? [])
     .slice(0, CALENDAR_MAX_FOR_PROMPT)
-    .map(ev => `- ${calendarEventLabel(ev)} ${formatDday(ev.dDay)}`)
-    .join('\n');
+    .map(ev => `- ${calendarEventLabel(ev)} ${formatDday(ev.dDay)}`);
+
+  if (depletion.length > 0) {
+    const cats = depletion.map(d => DEPLETION_LABEL[d.category] ?? d.category).join('·');
+    lines.push(`- ⚠️ ${cats} 일정 데이터 만료 임박 — 이 목록이 실제 일정보다 적을 수 있으니 최신 일정 확인 권장`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : null;
 }
 
 const ISSUE_CATEGORY_LABEL = {
@@ -700,7 +715,8 @@ export async function getOrGenerateBriefing({ slot = 'manual' } = {}) {
   }
 
   const calendarEvents  = getUpcomingEvents(CALENDAR_LOOKAHEAD_DAYS);
-  const calendarContext = buildCalendarContext(calendarEvents);
+  const calendarDeplete = getScheduleDepletion(); // 순수 날짜 계산 — 외부 호출/실패 없음
+  const calendarContext = buildCalendarContext(calendarEvents, calendarDeplete);
   const issuesContext   = buildIssuesContext(issuesCached);
 
   let systemPrompt, userPrompt, marketCount, signalsForArchive;

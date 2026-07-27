@@ -10,13 +10,28 @@ const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 const CATEGORY_ICON = { fomc: '🏦', cpi: '📊', expiry: '🎯', msci: '🌐', earnings: '📈' };
 const CATEGORY_COLOR = { fomc: '#22d3ee', cpi: '#f97316', expiry: '#a855f7', msci: '#10b981', earnings: '#fbbf24' };
 
-// 하드코딩 일정 소진 경고 스트립에 쓰는 사람이 읽는 카테고리명(getScheduleDepletion의 category → 라벨)
-const DEPLETION_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적' };
+// 사람이 읽는 카테고리명 — 소진 경고 스트립(getScheduleDepletion)과 확인일 표기(verifiedAt) 공용
+const CATEGORY_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적' };
+
+// 확인일 표기 순서 — 객체 키 순서에 의존하지 않게 고정한다.
+const VERIFIED_ORDER = ['fomc', 'cpi', 'earnings', 'msci'];
 
 // 'YYYY-MM-DD' → 'M/D' (경고 문구용 축약)
 function formatMonthDay(dateStr) {
   const [, m, d] = dateStr.split('-').map(Number);
   return `${m}/${d}`;
+}
+
+// 'YYYY-MM-DD' → 'MM/DD' (확인일 소표시용 — 폭이 흔들리지 않게 0 패딩)
+function formatMonthDay2(dateStr) {
+  const [, m, d] = String(dateStr).split('-');
+  return `${m}/${d}`;
+}
+
+// 원출처가 아직 확정 공표하지 않은(추정) 일정임을 알리는 배지.
+// macro-calendar.js가 tentative:true를 붙인 항목에만 렌더된다.
+function TentativeBadge() {
+  return <span className="cal-tentative" title="회사 공식 공표 전 — 과거 패턴 기반 추정일">(예정)</span>;
 }
 
 function todayKST() {
@@ -53,6 +68,7 @@ function EventDetailRow({ event }) {
     <div className="cal-detail-row">
       <span className="cal-detail-icon">{CATEGORY_ICON[event.category] ?? '🔔'}</span>
       <span className="cal-detail-title">{event.title}</span>
+      {event.tentative && <TentativeBadge />}
       <span className={`brf-event-region brf-event-${event.region}`}>{event.region}</span>
       {event.time && <span className="cal-detail-time">{event.time}</span>}
     </div>
@@ -64,6 +80,7 @@ function UpcomingRow({ event }) {
     <div className="brf-event-row">
       <span className="brf-event-icon">{CATEGORY_ICON[event.category] ?? '🔔'}</span>
       <span className="brf-event-title">{event.title}</span>
+      {event.tentative && <TentativeBadge />}
       <span className={`brf-event-region brf-event-${event.region}`}>{event.region}</span>
       <span className="brf-macro-dday">{formatDDay(event.dDay)}</span>
     </div>
@@ -83,6 +100,7 @@ export default function CalendarPage({ activePage, onPageChange }) {
   const [upcoming, setUpcoming]           = useState([]);
   const [upcomingPhase, setUpcomingPhase] = useState('loading');
   const [depletion, setDepletion]         = useState([]); // 하드코딩 일정 소진 임박 경고(비면 스트립 미렌더)
+  const [verifiedAt, setVerifiedAt]       = useState(null); // 카테고리별 원출처 최종 확인일(없으면 미표시)
 
   const detailRef = useRef(null);
   const scrollRef = useRef(null); // .cal-scroll — PhotoBackground 패럴랙스가 구독하는 스크롤 컨테이너
@@ -116,6 +134,7 @@ export default function CalendarPage({ activePage, onPageChange }) {
       .then(data => {
         setUpcoming(Array.isArray(data.events) ? data.events : []);
         setDepletion(Array.isArray(data.depletion) ? data.depletion : []);
+        setVerifiedAt(data.verifiedAt && typeof data.verifiedAt === 'object' ? data.verifiedAt : null);
         setUpcomingPhase('done');
       })
       .catch(() => setUpcomingPhase('error'));
@@ -160,7 +179,7 @@ export default function CalendarPage({ activePage, onPageChange }) {
                 {depletion.map(dep => (
                   <div key={dep.category} className="cal-warn-row">
                     <span className="cal-warn-icon">⚠</span>
-                    <span>{DEPLETION_LABEL[dep.category] ?? dep.category} 일정 {formatMonthDay(dep.lastDate)} 이후 없음 — 갱신 필요</span>
+                    <span>{CATEGORY_LABEL[dep.category] ?? dep.category} 일정 {formatMonthDay(dep.lastDate)} 이후 없음 — 갱신 필요</span>
                   </div>
                 ))}
               </div>
@@ -202,8 +221,11 @@ export default function CalendarPage({ activePage, onPageChange }) {
                             {dayEvents.slice(0, 2).map((e, j) => (
                               <span
                                 key={j}
-                                className={`cal-chip cal-chip-${e.category}`}
+                                /* 추정 일정은 칩 폭이 좁아 "(예정)" 글자를 넣을 수 없다 —
+                                   점선 테두리로 구분하고 문구는 title/상세 행에서 알린다. */
+                                className={`cal-chip cal-chip-${e.category}${e.tentative ? ' cal-chip-tentative' : ''}`}
                                 style={{ '--chip-color': CATEGORY_COLOR[e.category] ?? '#999' }}
+                                title={e.tentative ? `${e.title} (예정 — 공식 공표 전 추정일)` : e.title}
                               >
                                 {e.shortLabel || e.title.slice(0, 5)}
                               </span>
@@ -237,6 +259,16 @@ export default function CalendarPage({ activePage, onPageChange }) {
               <div className="brf-event-list">
                 <div className="brf-event-list-label">다가오는 이벤트 (30일 이내)</div>
                 {visibleUpcoming.map((e, i) => <UpcomingRow key={i} event={e} />)}
+              </div>
+            )}
+
+            {/* 원출처 최종 확인일 — 일정 변경(실적일 연기 등)을 자동 감지할 수단이 없으므로,
+                "언제 기준 데이터인지"라도 사용자가 볼 수 있게 남기는 최소 근거. */}
+            {verifiedAt && (
+              <div className="cal-verified-note">
+                {VERIFIED_ORDER.filter(k => verifiedAt[k])
+                  .map(k => `${CATEGORY_LABEL[k]} ${formatMonthDay2(verifiedAt[k])}`)
+                  .join(' · ')} 확인
               </div>
             )}
           </div>

@@ -8,7 +8,8 @@ import { useState, useEffect, useCallback } from 'react';
  *  · /api/health(getHealthSnapshot, SOURCES 상수 기준)를 열 때 1회 조회 + 수동 새로고침.
  *    자동 폴링은 하지 않는다(유지보수용 화면).
  *  · 응답의 sources 배열을 그대로 렌더하므로(프론트에서 소스 목록을 하드코딩하지 않음)
- *    cnbc 같은 최근 편입분도 자동으로 목록에 나타난다.
+ *    cnbc 같은 최근 편입분도, 수집기가 없는 calendar 유사 행(kind:'derived')도 자동으로
+ *    목록에 나타난다. 유사 행은 note 필드로 수집 시각/성공률 대신 자체 요약을 낸다.
  *  · 로드 실패는 이 섹션 안에서만 표시(설정의 다른 기능과 격리).
  */
 
@@ -47,14 +48,17 @@ const SOURCE_LABELS = {
   'rss-asiae':      '아시아경제 RSS',
   'rss-edaily':     '이데일리 RSS',
   'rss-coindesk':   'CoinDesk RSS',
+  // 수집기가 없는 유사 행(api/health.js buildCalendarSource) — 하드코딩 일정 소진 감시용
+  'calendar':       '시장 캘린더 · 일정',
 };
 
 const STATUS_META = {
-  ok:      { label: '정상',   cls: 'ok' },
-  stale:   { label: '지연',   cls: 'stale' },
-  down:    { label: '장애',   cls: 'down' },
-  standby: { label: '대기',   cls: 'standby' },
-  unknown: { label: '미수집', cls: 'unknown' },
+  ok:      { label: '정상',      cls: 'ok' },
+  stale:   { label: '지연',      cls: 'stale' },
+  warn:    { label: '갱신 필요', cls: 'warn' },
+  down:    { label: '장애',      cls: 'down' },
+  standby: { label: '대기',      cls: 'standby' },
+  unknown: { label: '미수집',    cls: 'unknown' },
 };
 
 // health 스냅샷의 원시 status를 화면 표기용 상태로 보정한다(standby/onDemand 규칙).
@@ -162,14 +166,16 @@ export default function SettingsPanel({ onClose }) {
                           className={`settings-src-status ${meta.cls}`}
                           title={
                             isStandby ? '주 소스 정상 시 호출되지 않음'
+                            : st === 'warn' ? '하드코딩 일정 소진 임박 — 배열 갱신 필요'
                             : (st === 'down' || st === 'stale') && s.lastError ? `마지막 오류: ${s.lastError}`
                             : undefined
                           }
                         >
                           {meta.label}
                         </span>
-                        <span className="settings-src-meta">
-                          {isStandby ? '대기 중' : (
+                        {/* note가 있는 행(수집기 없는 유사 행)은 수집 시각/성공률 대신 자체 요약을 쓴다 */}
+                        <span className="settings-src-meta" title={s.note || undefined}>
+                          {s.note ? s.note : isStandby ? '대기 중' : (
                             <>
                               {relTime(s.lastSuccessAt)}
                               {rate != null && <> · {rate}%</>}
