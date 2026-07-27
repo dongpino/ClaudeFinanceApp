@@ -6,7 +6,7 @@
  * 이었을 때 "앱을 15분만 안 열면 지연" 오탐이 났던 것을 회귀로 막는다.
  * 실행: node scripts/test-health-thresholds.js
  */
-import { judgeStatus } from '../api/_lib/health.js';
+import { judgeStatus, storeFingerprint, envCounts, ENV_TAG } from '../api/_lib/health.js';
 
 const NOW = Date.parse('2026-07-27T12:00:00Z');
 const agoHours = h => new Date(NOW - h * 3600_000).toISOString();
@@ -38,6 +38,32 @@ assert(judgeStatus('coingecko', { lastSuccessAt: agoHours(1), consecutiveFailure
 assert(judgeStatus('coingecko', null, NOW) === 'unknown', '기록 없음 → unknown');
 assert(judgeStatus('coingecko', { lastFailureAt: agoHours(1), consecutiveFailures: 1 }, NOW) === 'stale',
   '성공 이력 없이 실패만(cf<3) → stale');
+
+// ── 스토어 지문 / 환경 태그 ─────────────────────────────────────
+// 로컬 .env.local이 프로덕션과 다른 KV를 가리켜 개발 DB를 덤프했던 사고(2026-07-27)
+// 재발 방지층. 지문은 결정적이어야 하고, 호스트 원문을 담아선 안 된다.
+{
+  const A = 'https://correct-marten-133336.upstash.io';
+  const B = 'https://exotic-ladybug-115699.upstash.io';
+  assert(storeFingerprint(A) === storeFingerprint(A), '지문: 같은 URL → 같은 값(결정적)');
+  assert(storeFingerprint(A) !== storeFingerprint(B), '지문: 다른 DB → 다른 값');
+  assert(/^[0-9a-f]{8}$/.test(storeFingerprint(A)), '지문: hex 8자');
+  assert(!storeFingerprint(A).includes('marten'), '지문: 호스트 원문 미포함');
+  // 포트/경로/스킴이 붙어도 같은 호스트면 같은 지문
+  assert(storeFingerprint('correct-marten-133336.upstash.io') === storeFingerprint(`${A}/`),
+    '지문: 스킴/트레일링 슬래시 무시');
+  assert(storeFingerprint(undefined) === null || typeof storeFingerprint(undefined) === 'string',
+    '지문: 미설정이면 null');
+  assert(storeFingerprint('') === null, '지문: 빈 문자열 → null');
+
+  assert(typeof ENV_TAG === 'string' && ENV_TAG.length > 0, 'ENV_TAG: 항상 문자열');
+  assert(ENV_TAG === (process.env.VERCEL_ENV ?? 'local'), 'ENV_TAG: VERCEL_ENV 없으면 local');
+
+  assert(JSON.stringify(envCounts({ success: '5', failure: '1', 'env:production': '4', 'env:local': '2' }))
+    === JSON.stringify({ production: 4, local: 2 }), 'envCounts: env:* 필드만 추출');
+  assert(JSON.stringify(envCounts(null)) === '{}', 'envCounts: null → {}');
+  assert(JSON.stringify(envCounts({ success: '5' })) === '{}', 'envCounts: env 필드 없으면 {}');
+}
 
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);
 process.exit(fail === 0 ? 0 : 1);

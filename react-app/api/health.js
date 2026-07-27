@@ -24,7 +24,7 @@
  *     · 그 외                      → 'ok'
  */
 
-import { getHealthSnapshot } from './_lib/health.js';
+import { getHealthSnapshot, storeFingerprint, ENV_TAG } from './_lib/health.js';
 import { getScheduleDepletion, VERIFIED_AT } from './_lib/macro-calendar.js';
 
 const DEPLETION_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적' };
@@ -72,7 +72,14 @@ export default async function handler(req, res) {
     sources.push(buildCalendarSource()); // 목록 끝에 유사 행 1개
     // 상태가 있으므로 캐시는 짧게만 — 관측 목적상 최신값이 중요.
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json({ checkedAt: new Date().toISOString(), sources });
+    return res.status(200).json({
+      checkedAt: new Date().toISOString(),
+      // 이 응답이 "어느 KV를, 어느 환경에서" 읽은 것인지 — 진단 스크립트 출력과
+      // 대조해 다른 DB를 보고 있는 상황을 즉시 잡는다(호스트 원문은 노출 안 함).
+      storeFp: storeFingerprint(),
+      env: ENV_TAG,
+      sources,
+    });
   } catch (e) {
     console.error('[health] 스냅샷 조회 실패:', e.message);
     return res.status(503).json({ error: 'health 조회 실패(Redis)', details: e.message });

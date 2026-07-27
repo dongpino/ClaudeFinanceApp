@@ -22,6 +22,27 @@
  */
 
 import { Redis } from '@upstash/redis';
+import { createHash } from 'node:crypto';
+
+// ── 기록 주체/저장소 식별 ────────────────────────────────────────────
+// 이 두 가지가 없어서 실제로 크게 헤맸다(2026-07-27): 로컬 .env.local의
+// KV_REST_API_URL이 프로덕션과 다른 DB를 가리키는 줄 모르고 개발 DB를 덤프해
+// "크론이 30일간 안 돌았다"는 잘못된 결론까지 냈다. 두 층위로 막는다.
+//   ENV_TAG           — 한 DB를 로컬/프리뷰/프로덕션이 공유할 때 기록이 섞이는 것을 사후 구분
+//   storeFingerprint  — "지금 보는 DB가 배포본이 쓰는 그 DB인가"를 한 줄로 대조
+export const ENV_TAG = process.env.VERCEL_ENV ?? 'local'; // production | preview | development | local
+
+/**
+ * 스토어 지문 — KV 호스트의 sha256 앞 8자. 호스트 원문(=계정 식별자)을 노출하지 않고
+ * 동일성만 비교할 수 있다. /api/health 응답과 진단 스크립트가 같은 값을 내면 같은 DB다.
+ * @param {string} [url] 기본값 process.env.KV_REST_API_URL
+ * @returns {string|null} 미설정이면 null
+ */
+export function storeFingerprint(url = process.env.KV_REST_API_URL) {
+  if (!url) return null;
+  const host = String(url).replace(/^[a-z]+:\/\//, '').replace(/[:/].*$/, '');
+  return createHash('sha256').update(host).digest('hex').slice(0, 8);
+}
 
 // 대상 소스 식별자(요구사항 1) — /api/health가 이 순서로 상태를 보고한다.
 export const SOURCES = [
@@ -128,13 +149,15 @@ async function persist(source, ok, err) {
     const srcKey   = `health:src:${source}`;
     const p = r.pipeline();
     if (ok) {
-      p.hset(srcKey, { lastSuccessAt: now, consecutiveFailures: 0 });
+      p.hset(srcKey, { lastSuccessAt: now, consecutiveFailures: 0, lastEnv: ENV_TAG });
       p.hincrby(dailyKey, 'success', 1);
     } else {
-      p.hset(srcKey, { lastFailureAt: now, lastError: summarize(err) });
+      p.hset(srcKey, { lastFailureAt: now, lastError: summarize(err), lastEnv: ENV_TAG });
       p.hincrby(srcKey, 'consecutiveFailures', 1);
       p.hincrby(dailyKey, 'failure', 1);
     }
+    // 일자별 출처 구성비 — "이 날 기록의 몇 %가 로컬발인가"가 바로 보인다.
+    p.hincrby(dailyKey, `env:${ENV_TAG}`, 1);
     p.expire(dailyKey, DAILY_TTL_SEC);
     await p.exec();
   } catch (e) {
@@ -178,6 +201,15 @@ export function judgeStatus(source, srcHash, nowMs) {
   return ageSec <= expected * 3 ? 'ok' : 'stale';
 }
 
+// daily 해시의 env:* 필드만 { production: n, local: m } 형태로 추린다.
+export function envCounts(dailyHash) {
+  const out = {};
+  for (const [k, v] of Object.entries(dailyHash ?? {})) {
+    if (k.startsWith('env:')) out[k.slice(4)] = Number(v) || 0;
+  }
+  return out;
+}
+
 /**
  * 소스별 상태 + 원시 수치. Redis만 읽고 외부 API는 치지 않는다(요구사항 6).
  * @returns {Array<{source,status,lastSuccessAt,lastFailureAt,lastError,consecutiveFailures,todayRate,today}>}
@@ -191,6 +223,7 @@ export async function getHealthSnapshot() {
     return SOURCES.map(source => ({
       source, status: 'unknown', lastSuccessAt: null, lastFailureAt: null,
       lastError: null, consecutiveFailures: 0, todayRate: null, today: { success: 0, failure: 0 },
+      lastEnv: null, todayEnv: {},
     }));
   }
 
@@ -218,6 +251,10 @@ export async function getHealthSnapshot() {
       consecutiveFailures: Number(srcHash?.consecutiveFailures ?? 0),
       todayRate: total ? Math.round((success / total) * 100) / 100 : null,
       today: { success, failure },
+      // 마지막 기록을 남긴 실행 환경. 'production'이 아니면 그 행은 배포본 신호가 아니다.
+      lastEnv: srcHash?.lastEnv ?? null,
+      // 오늘 기록의 환경별 구성 { production: 12, local: 3 } — env:* 필드만 추려서.
+      todayEnv: envCounts(daily),
     };
   });
 }

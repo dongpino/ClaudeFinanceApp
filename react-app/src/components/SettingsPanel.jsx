@@ -108,6 +108,7 @@ export default function SettingsPanel({ onClose }) {
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState('');
   const [checkedAt, setCheckedAt] = useState(null);
+  const [store, setStore]         = useState(null); // { storeFp, env } — 어느 KV/환경을 보고 있는지
   const [expanded, setExpanded]   = useState(false); // 유지보수용 — 기본 접힘
 
   const load = useCallback(() => {
@@ -121,6 +122,7 @@ export default function SettingsPanel({ onClose }) {
         if (!Array.isArray(data.sources)) throw new Error('sources 배열 없음');
         setSources(data.sources);
         setCheckedAt(data.checkedAt ?? new Date().toISOString());
+        setStore(data.storeFp ? { storeFp: data.storeFp, env: data.env ?? '?' } : null);
       })
       .catch(e => { if (e.name !== 'AbortError') setError(e.message || '상태 조회 실패'); })
       .finally(() => { clearTimeout(tid); setLoading(false); });
@@ -157,6 +159,13 @@ export default function SettingsPanel({ onClose }) {
               <div className="settings-health-toolbar">
                 <span className="settings-health-checked">
                   {checkedAt ? `${relTime(checkedAt)} 확인` : ''}
+                  {/* 어느 KV를 보고 있는지 — 진단 스크립트 STORE_FP와 대조용.
+                      env가 production이 아니면 배포본 신호가 아니라는 뜻이라 함께 표기. */}
+                  {store && (
+                    <span className="settings-store-fp" title={`KV 지문 ${store.storeFp} · 환경 ${store.env}`}>
+                      {` · ${store.storeFp}`}{store.env !== 'production' && ` (${store.env})`}
+                    </span>
+                  )}
                 </span>
                 <button className="settings-refresh-btn" onClick={load} disabled={loading}>
                   {loading ? '조회 중…' : '새로고침'}
@@ -201,6 +210,8 @@ export default function SettingsPanel({ onClose }) {
                             <>
                               {relTime(s.lastSuccessAt)}
                               {rate != null && <> · {rate}%</>}
+                              {/* 배포본이 아닌 기록이면 표시 — production에선 나타나지 않는다 */}
+                              {s.lastEnv && s.lastEnv !== 'production' && <> · {s.lastEnv}</>}
                             </>
                           )}
                         </span>
