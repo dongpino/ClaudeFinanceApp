@@ -32,9 +32,18 @@ export const SOURCES = [
 
 // 소스별 기대 갱신 주기(초). lastSuccess가 이 값의 3배 이내면 ok, 초과면 stale.
 // 시세류는 수 분, FRED/RSS는 수 시간(요구사항 5).
+//
+// ⚠️ 이 값은 "호출 주기"가 아니라 "호출이 없어도 이상하지 않은 시간"이다. 홈 시세류는
+// 크론이 아니라 사용자 트래픽으로 돌고, market-data.js가 Redis 공유 캐시 5분(CACHE_TTL_SEC)
+// 을 앞단에 두므로 실호출 간격은 최소 5분 + 트래픽 공백만큼 벌어진다. 5분 기준(×3=15분)
+// 이면 앱을 15분만 안 열어도 '지연'으로 뜨는 오탐이 된다 — 실제 보장 하한은
+// briefing-cron(하루 1회, collectUSIndices/collectBTC 경유)이므로 그 주기에 맞춘다.
 const EXPECTED_INTERVAL_SEC = {
-  'naver': 300, 'naver-index': 300, 'yahoo': 300, 'daum': 300, 'finnhub': 300, 'twelvedata': 900, 'cnbc': 300,
-  'coingecko': 300, 'binance': 300, 'bybit': 300, 'alternative-me': 3600,
+  'naver': 300, 'naver-index': 300, 'yahoo': 300, 'daum': 300, 'finnhub': 300, 'twelvedata': 900,
+  // cnbc/coingecko: 홈 카드 + 일 1회 크론 경로. 8h(×3=24h) — 크론이 하루 한 번은
+  // 반드시 건드리므로, 24시간 넘게 성공이 없으면 그때는 진짜 이상이다.
+  'cnbc': 28800, 'coingecko': 28800,
+  'binance': 300, 'bybit': 300, 'alternative-me': 3600,
   'fred': 43200,                     // FRED 월간 데이터 + 12h 캐시 → 12h
   'bok': 43200,                      // 한국은행 기준금리(연 8회 변경) + 6h 캐시 → 넉넉히 12h
   'rss-yna': 10800, 'rss-asiae': 10800, 'rss-edaily': 10800, 'rss-coindesk': 10800, // 3h
@@ -155,7 +164,8 @@ export async function trackedFetch(url, options) {
 }
 
 // ── 상태 판정 + 스냅샷(조회 전용, 외부 API 미접속) ───────────────────
-function judgeStatus(source, srcHash, nowMs) {
+// (기대주기 허용폭 회귀를 scripts/test-health-thresholds.js에서 고정하려고 export)
+export function judgeStatus(source, srcHash, nowMs) {
   const cf = Number(srcHash?.consecutiveFailures ?? 0);
   const lastSuccessAt = srcHash?.lastSuccessAt ?? null;
   const lastFailureAt = srcHash?.lastFailureAt ?? null;

@@ -24,10 +24,16 @@ const STANDBY_SOURCES = new Set(['bybit', 'yahoo', 'daum']);
 // 특정 화면에서만 수집되는 온디맨드 소스 — 오래 호출이 없어도 '지연(stale)'이 아니므로,
 // 나이 기반 판정 대신 '마지막 호출의 성패'로만 판정한다.
 //   · twelvedata = 미국 일봉(상세/분석 화면에서만)
-//   · binance    = BTC/ETH 상세·크립토 분석 차트에서만(홈/크론 경로엔 전혀 없음). 예전엔
-//                  기대주기 5분 가정이라 15분만 안 열려도 false stale이 떴다(진단 2).
-//                  bybit(폴백 전용 standby)와 달리 열리면 실제로 쓰는 주 소스라 onDemand로 분류.
+//   · binance    = BTC/ETH 상세·크립토 분석 차트(btc-intraday.js/crypto-adapter.js)에서
+//                  주 소스로 직접 호출된다. 홈 카드 경로에서는 CoinGecko 실패 시의
+//                  폴백이기도 해서 역할이 둘인데, 상세/분석에선 '열리면 실제로 쓰는 주
+//                  소스'라 bybit(폴백 전용 standby)와 달리 onDemand로 분류한다.
 const ONDEMAND_SOURCES = new Set(['twelvedata', 'binance']);
+
+// 온디맨드 소스가 이 시간 넘게 한 번도 호출되지 않았으면 마지막 성패는 이미 현재 상태를
+// 말해주지 못한다 — '정상/지연' 대신 '대기(미호출)'로 표기한다. 며칠 전 결과를 근거로
+// 초록불을 켜 두면 상태판이 거짓 안심을 주기 때문.
+const ONDEMAND_IDLE_MS = 24 * 60 * 60 * 1000;
 
 // 소스 id → 사람이 읽는 라벨. 없는 id는 raw 그대로 노출(신규 편입분이 사라지지 않게).
 const SOURCE_LABELS = {
@@ -67,12 +73,22 @@ function presentStatus(s) {
   if (ONDEMAND_SOURCES.has(s.source)) {
     if (Number(s.consecutiveFailures) >= 3) return 'down';
     if (!s.lastSuccessAt && !s.lastFailureAt) return 'unknown';
+    // 마지막 '시도'(성공/실패 중 나중)가 너무 오래됐으면 현재 상태 근거가 못 된다.
+    const lastAttempt = Math.max(Date.parse(s.lastSuccessAt) || 0, Date.parse(s.lastFailureAt) || 0);
+    if (Date.now() - lastAttempt > ONDEMAND_IDLE_MS) return 'standby';
     // 나이 무시 — 가장 최근 '호출'이 성공이면 ok, 실패면 stale.
     const okLast = s.lastSuccessAt &&
       (!s.lastFailureAt || Date.parse(s.lastSuccessAt) >= Date.parse(s.lastFailureAt));
     return okLast ? 'ok' : 'stale';
   }
   return s.status;
+}
+
+// '대기'는 두 가지 사유로 뜬다 — 문구가 달라야 오해가 없다.
+//   fallback: 폴백 전용 소스라 주 소스가 정상이면 아예 호출되지 않음(bybit/yahoo/daum)
+//   idle    : 온디맨드 소스인데 최근 호출 자체가 없었음(binance/twelvedata)
+function standbyKind(source) {
+  return STANDBY_SOURCES.has(source) ? 'fallback' : 'idle';
 }
 
 function relTime(iso) {
@@ -157,6 +173,7 @@ export default function SettingsPanel({ onClose }) {
                     const st        = presentStatus(s);
                     const meta      = STATUS_META[st] ?? STATUS_META.unknown;
                     const isStandby = st === 'standby';
+                    const sbKind    = isStandby ? standbyKind(s.source) : null;
                     const rate      = s.todayRate == null ? null : Math.round(s.todayRate * 100);
                     return (
                       <li key={s.source} className="settings-health-row">
@@ -165,7 +182,8 @@ export default function SettingsPanel({ onClose }) {
                         <span
                           className={`settings-src-status ${meta.cls}`}
                           title={
-                            isStandby ? '주 소스 정상 시 호출되지 않음'
+                            sbKind === 'fallback' ? '주 소스 정상 시 호출되지 않음'
+                            : sbKind === 'idle' ? '해당 화면을 열 때만 호출되는 소스 — 최근 24시간 호출 없음'
                             : st === 'warn' ? '하드코딩 일정 소진 임박 — 배열 갱신 필요'
                             : (st === 'down' || st === 'stale') && s.lastError ? `마지막 오류: ${s.lastError}`
                             : undefined
@@ -175,7 +193,11 @@ export default function SettingsPanel({ onClose }) {
                         </span>
                         {/* note가 있는 행(수집기 없는 유사 행)은 수집 시각/성공률 대신 자체 요약을 쓴다 */}
                         <span className="settings-src-meta" title={s.note || undefined}>
-                          {s.note ? s.note : isStandby ? '대기 중' : (
+                          {/* idle 대기는 "언제가 마지막이었나"가 실제 정보라 시각을 그대로 보여준다 */}
+                          {s.note ? s.note
+                            : sbKind === 'fallback' ? '대기 중'
+                            : sbKind === 'idle' ? `미호출 · ${relTime(s.lastSuccessAt)}`
+                            : (
                             <>
                               {relTime(s.lastSuccessAt)}
                               {rate != null && <> · {rate}%</>}
