@@ -11,8 +11,6 @@
  * 종목 추가·소스 확장 시 이 파일의 TF 상수만 수정하면 됨.
  */
 
-import { trackedFetch } from '../_lib/health.js';
-
 // ── capability 정의 (설정 분리) ─────────────────────────────
 const TF = {
   CRYPTO_FULL:      ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'],
@@ -28,9 +26,15 @@ export const TIMEFRAME_SETS = TF;
 const BINANCE_LISTED_CACHE = {};           // symbol(대문자) → { listed: bool, ts }
 const BINANCE_CACHE_TTL    = 24 * 60 * 60 * 1000;   // 24시간 (상장 여부는 거의 안 바뀜)
 
+// ⚠️ 여기만 trackedFetch가 아니라 생 fetch를 쓴다(2026-07-28).
+// 이 호출에서 400은 장애가 아니라 "그런 심볼 없다"는 정상 답변이라, trackedFetch로
+// 감싸면 !res.ok 한 줄 때문에 health에 binance 실패로 기록된다. 실제로 미상장 코인을
+// 한 번 조회한 것만으로 health:src:binance에 lastError "HTTP 400"이 박혀 상태판이
+// '지연'으로 뜨는 위양성이 났다(사용자 흐름은 CoinGecko로 정상 진행됐는데도).
+// 가용성 신호는 klines 경로(btc-intraday.js / crypto-adapter.js)만으로 충분하다.
 async function fetchExchangeInfo(baseUrl, pair) {
   const url = `${baseUrl}/api/v3/exchangeInfo?symbol=${pair}`;
-  const res = await trackedFetch(url, { signal: AbortSignal.timeout(8000) });
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) {
     // Binance는 존재하지 않는 심볼 조회 시 400 + {code:-1121,...} 반환
     if (res.status === 400) return false;

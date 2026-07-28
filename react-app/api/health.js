@@ -2,7 +2,7 @@
  * api/health.js — 데이터 소스 상태 점검 엔드포인트 (관측성 1단계)
  *
  * GET /api/health → 소스별 상태 판정 + 원시 수치
- *   [{ source, status: 'ok'|'stale'|'down'|'unknown',
+ *   [{ source, status: 'ok'|'stale'|'idle'|'down'|'unknown',
  *      lastSuccessAt, lastFailureAt, lastError, consecutiveFailures, todayRate, today }]
  *
  * 판정 규칙(_lib/health.js getHealthSnapshot):
@@ -10,6 +10,9 @@
  *   - lastSuccessAt이 기대 주기의 3배 이내 → ok
  *   - 그 외(성공 있었으나 오래됨/실패만)   → stale
  *   - 수집 이력 자체가 없음                → unknown
+ *   - 온디맨드 소스(ON_DEMAND_SOURCES: binance/twelvedata)는 호출 보장 하한이 없어
+ *     나이로 판정하지 않는다. 마지막 '시도'가 24h 안이면 그 성패로 ok/stale,
+ *     넘으면 → idle (상태판 '대기 · 미호출'). 자세한 근거는 _lib/health.js 주석.
  *
  * 조회 전용·민감정보 없음 → 인증 불필요. Redis만 읽고 외부 API는 절대 치지
  * 않는다(health 확인이 시세/뉴스 API 쿼터를 소모하면 안 됨 — 요구사항 6).

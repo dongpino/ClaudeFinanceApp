@@ -21,19 +21,10 @@ const HEALTH_TIMEOUT_MS = 8000;
 //   · daum = 개별 KR 종목 폴백(Naver 장애 시)
 const STANDBY_SOURCES = new Set(['bybit', 'yahoo', 'daum']);
 
-// 특정 화면에서만 수집되는 온디맨드 소스 — 오래 호출이 없어도 '지연(stale)'이 아니므로,
-// 나이 기반 판정 대신 '마지막 호출의 성패'로만 판정한다.
-//   · twelvedata = 미국 일봉(상세/분석 화면에서만)
-//   · binance    = BTC/ETH 상세·크립토 분석 차트(btc-intraday.js/crypto-adapter.js)에서
-//                  주 소스로 직접 호출된다. 홈 카드 경로에서는 CoinGecko 실패 시의
-//                  폴백이기도 해서 역할이 둘인데, 상세/분석에선 '열리면 실제로 쓰는 주
-//                  소스'라 bybit(폴백 전용 standby)와 달리 onDemand로 분류한다.
-const ONDEMAND_SOURCES = new Set(['twelvedata', 'binance']);
-
-// 온디맨드 소스가 이 시간 넘게 한 번도 호출되지 않았으면 마지막 성패는 이미 현재 상태를
-// 말해주지 못한다 — '정상/지연' 대신 '대기(미호출)'로 표기한다. 며칠 전 결과를 근거로
-// 초록불을 켜 두면 상태판이 거짓 안심을 주기 때문.
-const ONDEMAND_IDLE_MS = 24 * 60 * 60 * 1000;
+// 온디맨드 소스(binance/twelvedata — 분석·상세 화면에서만 호출)는 나이 기반 판정이
+// 성립하지 않아 별도 규칙으로 본다. 그 판정은 서버(_lib/health.js의 ON_DEMAND_SOURCES /
+// judgeStatus)가 'idle'로 내려주므로 여기서 다시 계산하지 않는다 — 임계값이 두 곳에
+// 흩어져 어긋나는 걸 막으려고 2026-07-28에 서버로 일원화했다.
 
 // 소스 id → 사람이 읽는 라벨. 없는 id는 raw 그대로 노출(신규 편입분이 사라지지 않게).
 const SOURCE_LABELS = {
@@ -67,28 +58,20 @@ const STATUS_META = {
   unknown: { label: '미수집',    cls: 'unknown' },
 };
 
-// health 스냅샷의 원시 status를 화면 표기용 상태로 보정한다(standby/onDemand 규칙).
+// health 스냅샷의 원시 status를 화면 표기용 상태로 보정한다.
+// 서버가 내리는 'idle'(온디맨드 미호출)과 폴백 전용 소스의 'unknown'은 둘 다 화면에선
+// 같은 '대기' 배지로 묶는다 — 사유 구분은 standbyKind()가 문구로 한다.
 function presentStatus(s) {
   if (STANDBY_SOURCES.has(s.source) && s.status === 'unknown') return 'standby';
-  if (ONDEMAND_SOURCES.has(s.source)) {
-    if (Number(s.consecutiveFailures) >= 3) return 'down';
-    if (!s.lastSuccessAt && !s.lastFailureAt) return 'unknown';
-    // 마지막 '시도'(성공/실패 중 나중)가 너무 오래됐으면 현재 상태 근거가 못 된다.
-    const lastAttempt = Math.max(Date.parse(s.lastSuccessAt) || 0, Date.parse(s.lastFailureAt) || 0);
-    if (Date.now() - lastAttempt > ONDEMAND_IDLE_MS) return 'standby';
-    // 나이 무시 — 가장 최근 '호출'이 성공이면 ok, 실패면 stale.
-    const okLast = s.lastSuccessAt &&
-      (!s.lastFailureAt || Date.parse(s.lastSuccessAt) >= Date.parse(s.lastFailureAt));
-    return okLast ? 'ok' : 'stale';
-  }
+  if (s.status === 'idle') return 'standby';
   return s.status;
 }
 
 // '대기'는 두 가지 사유로 뜬다 — 문구가 달라야 오해가 없다.
 //   fallback: 폴백 전용 소스라 주 소스가 정상이면 아예 호출되지 않음(bybit/yahoo/daum)
 //   idle    : 온디맨드 소스인데 최근 호출 자체가 없었음(binance/twelvedata)
-function standbyKind(source) {
-  return STANDBY_SOURCES.has(source) ? 'fallback' : 'idle';
+function standbyKind(s) {
+  return s.status === 'idle' ? 'idle' : 'fallback';
 }
 
 function relTime(iso) {
@@ -182,7 +165,7 @@ export default function SettingsPanel({ onClose }) {
                     const st        = presentStatus(s);
                     const meta      = STATUS_META[st] ?? STATUS_META.unknown;
                     const isStandby = st === 'standby';
-                    const sbKind    = isStandby ? standbyKind(s.source) : null;
+                    const sbKind    = isStandby ? standbyKind(s) : null;
                     const rate      = s.todayRate == null ? null : Math.round(s.todayRate * 100);
                     return (
                       <li key={s.source} className="settings-health-row">

@@ -24,6 +24,32 @@ for (const src of ['coingecko', 'cnbc']) {
   assert(judge(src, 25)  === 'stale', `${src}: 25시간 전 → stale (크론도 안 돈 것)`);
 }
 
+// ── 온디맨드 소스(binance/twelvedata): 나이 기반 판정 배제 ──────
+// 분석 탭/상세를 열 때만 호출돼 "호출 보장 하한"이 없다. 며칠 안 열었다고 '지연'이
+// 뜨면 안 되고, 반대로 며칠 전 성공으로 초록불을 켜 둬도 안 된다(거짓 안심).
+// 실제 사고(2026-07-27): exchangeInfo 미상장 400 1건이 binance를 '지연'으로 만들었다.
+for (const src of ['binance', 'twelvedata']) {
+  // 마지막 시도가 24h 안 → 나이와 무관하게 그 성패로만 판정
+  assert(judge(src, 20) === 'ok', `${src}: 20시간 전 성공 → ok (나이 무시)`);
+  assert(judgeStatus(src, { lastSuccessAt: agoHours(20), lastFailureAt: agoHours(2),
+    consecutiveFailures: 1 }, NOW) === 'stale', `${src}: 최근 시도가 실패 → stale`);
+  assert(judgeStatus(src, { lastSuccessAt: agoHours(2), lastFailureAt: agoHours(20),
+    consecutiveFailures: 0 }, NOW) === 'ok', `${src}: 최근 시도가 성공 → ok (옛 실패 무시)`);
+
+  // 마지막 시도가 24h 초과 → idle. 성공이든 실패든 현재 상태의 근거가 못 된다.
+  assert(judge(src, 30) === 'idle', `${src}: 30시간 전 성공 → idle (미호출)`);
+  assert(judgeStatus(src, { lastSuccessAt: agoHours(120), lastFailureAt: agoHours(30),
+    consecutiveFailures: 1 }, NOW) === 'idle', `${src}: 5일 방치 → stale 아닌 idle`);
+
+  // 예외 규칙은 그대로 우선한다
+  assert(judgeStatus(src, { lastSuccessAt: agoHours(1), consecutiveFailures: 3 }, NOW) === 'down',
+    `${src}: cf>=3이면 온디맨드라도 down`);
+  assert(judgeStatus(src, null, NOW) === 'unknown', `${src}: 기록 없음 → unknown`);
+}
+// 온디맨드 소스는 EXPECTED_INTERVAL_SEC에 남아 있으면 안 된다(값이 죽은 채 오해를 부름).
+assert(judge('binance', 30) !== judge('coingecko', 30),
+  'binance는 coingecko의 8h 기준을 따라가지 않는다');
+
 // ── 기존 기준이 흔들리지 않았는지(회귀) ─────────────────────────
 assert(judge('naver', 0.1)  === 'ok',    'naver: 6분 전 → ok');
 assert(judge('naver', 0.5)  === 'stale', 'naver: 30분 전 → stale (5분 기준 유지)');

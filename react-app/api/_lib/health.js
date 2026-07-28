@@ -51,20 +51,43 @@ export const SOURCES = [
   'rss-yna', 'rss-asiae', 'rss-edaily', 'rss-coindesk',
 ];
 
+// ── 온디맨드 소스: 나이 기반 판정 자체가 성립하지 않는 소스 ───────────
+// 아래 소스들은 특정 화면(분석 탭 / 종목 상세)을 열 때만 호출된다. 크론도, 홈 카드
+// 경로도 건드리지 않으므로 "이 시간 안에는 반드시 한 번 불린다"는 보장 하한이 아예
+// 없다 — 며칠 안 열면 성공이 0인 게 정상이다. 그래서 EXPECTED_INTERVAL_SEC에 넣지
+// 않고(어떤 값을 넣어도 임의값이다) judgeStatus에서 별도 규칙으로 판정한다.
+//   · binance    = BTC/ETH 상세 90d + 분석 탭 klines(btc-intraday/crypto-adapter)
+//   · twelvedata = 미국 일봉(상세/분석 화면 전용)
+export const ON_DEMAND_SOURCES = new Set(['binance', 'twelvedata']);
+
+// 마지막 '시도'(성공/실패 중 나중)가 이 시간을 넘으면 그 성패는 더 이상 현재 상태의
+// 근거가 못 된다 → 'idle'(상태판 '대기 · 미호출' 표기). 며칠 전 성공으로 초록불을
+// 켜 두면 상태판이 거짓 안심을 준다.
+// ⚠️ SettingsPanel.jsx가 이 판정을 그대로 받아 쓰므로(프론트 재계산 없음) 임계값은
+//    여기 한 곳에만 있다.
+const ONDEMAND_IDLE_SEC = 24 * 60 * 60;
+
 // 소스별 기대 갱신 주기(초). lastSuccess가 이 값의 3배 이내면 ok, 초과면 stale.
 // 시세류는 수 분, FRED/RSS는 수 시간(요구사항 5).
 //
 // ⚠️ 이 값은 "호출 주기"가 아니라 "호출이 없어도 이상하지 않은 시간"이다. 홈 시세류는
 // 크론이 아니라 사용자 트래픽으로 돌고, market-data.js가 Redis 공유 캐시 5분(CACHE_TTL_SEC)
 // 을 앞단에 두므로 실호출 간격은 최소 5분 + 트래픽 공백만큼 벌어진다. 5분 기준(×3=15분)
-// 이면 앱을 15분만 안 열어도 '지연'으로 뜨는 오탐이 된다 — 실제 보장 하한은
-// briefing-cron(하루 1회, collectUSIndices/collectBTC 경유)이므로 그 주기에 맞춘다.
+// 이면 앱을 15분만 안 열어도 '지연'으로 뜨는 오탐이 된다 — 그래서 홈 카드를 실제로
+// 그리는 경로마다 "그 경로가 보장하는 호출 하한"을 근거로 값을 정한다.
 const EXPECTED_INTERVAL_SEC = {
-  'naver': 300, 'naver-index': 300, 'yahoo': 300, 'daum': 300, 'finnhub': 300, 'twelvedata': 900,
-  // cnbc/coingecko: 홈 카드 + 일 1회 크론 경로. 8h(×3=24h) — 크론이 하루 한 번은
-  // 반드시 건드리므로, 24시간 넘게 성공이 없으면 그때는 진짜 이상이다.
+  'naver': 300, 'naver-index': 300, 'yahoo': 300, 'daum': 300, 'finnhub': 300,
+  // cnbc/coingecko: 홈 카드 + 일 1회 briefing-cron 경로. 8h(×3=24h) — 크론이
+  // collectUSIndices/collectBTC를 거쳐 하루 한 번은 반드시 건드리므로, 24시간 넘게
+  // 성공이 없으면 그때는 진짜 이상이다.
+  //
+  // ⚠️ binance를 여기 두면 안 된다(2026-07-28 정정): 같은 크론 경로를 근거로 binance도
+  //    5분(×3=15분)으로 잡혀 있었는데, 그 전제가 틀렸다. 크론/홈이 부르는
+  //    collectBTC({ include90d: false })는 현재가·30d를 모두 CoinGecko로 받고 90d
+  //    klines는 건너뛴다(btc.js) — CoinGecko가 건강하면 Binance는 단 한 번도 호출되지
+  //    않는다. 그래서 binance는 위 ON_DEMAND_SOURCES로 옮겼다.
   'cnbc': 28800, 'coingecko': 28800,
-  'binance': 300, 'bybit': 300, 'alternative-me': 3600,
+  'bybit': 300, 'alternative-me': 3600,
   'fred': 43200,                     // FRED 월간 데이터 + 12h 캐시 → 12h
   'bok': 43200,                      // 한국은행 기준금리(연 8회 변경) + 6h 캐시 → 넉넉히 12h
   'rss-yna': 10800, 'rss-asiae': 10800, 'rss-edaily': 10800, 'rss-coindesk': 10800, // 3h
@@ -195,6 +218,16 @@ export function judgeStatus(source, srcHash, nowMs) {
 
   if (!lastSuccessAt && !lastFailureAt) return 'unknown'; // 아직 한 번도 수집 안 됨
   if (cf >= DOWN_THRESHOLD) return 'down';
+
+  // 온디맨드 소스: 호출 보장 하한이 없어 나이로는 아무것도 말할 수 없다 → 마지막
+  // '시도'가 최근이면 그 성패로, 오래됐으면 'idle'로 판정한다.
+  if (ON_DEMAND_SOURCES.has(source)) {
+    const successMs = Date.parse(lastSuccessAt) || 0;
+    const failureMs = Date.parse(lastFailureAt) || 0;
+    if ((nowMs - Math.max(successMs, failureMs)) / 1000 > ONDEMAND_IDLE_SEC) return 'idle';
+    return successMs >= failureMs ? 'ok' : 'stale';
+  }
+
   if (!lastSuccessAt) return 'stale'; // 실패만 있고(cf<3) 성공 이력 없음
   const ageSec = (nowMs - Date.parse(lastSuccessAt)) / 1000;
   const expected = EXPECTED_INTERVAL_SEC[source] ?? DEFAULT_INTERVAL_SEC;
