@@ -143,6 +143,11 @@ async function fetchExchangeCurrent(marketindexCd) {
            asOf: matches[0][1].replace(/\./g, '-') + ' (Naver 환율)', source: 'Naver환율' };
 }
 
+// ⚠️ asOf는 반드시 응답의 날짜를 그대로 쓴다 — 이전엔 fmtKST()(호출 시각)를 찍어서
+// "하루 전 값에 현재 시각 도장"이 찍혔다(2026-07-28 감사에서 발견). Frankfurter는 ECB
+// 기준환율이라 하루 1회만 공표돼 구조적으로 전일자다(실측: Naver 2026-07-28 894.49 vs
+// Frankfurter 2026-07-27 8.9838×100=898.38, 차이 0.44%는 전부 이 날짜 시차 때문).
+// 폴백이 하루 묵은 값을 주는 것 자체는 어쩔 수 없지만, 그걸 최신인 척 표기하면 안 된다.
 async function fetchFrankfurterCurrent(fromCcy, perUnits = 1) {
   const data  = await fetchJSON(`https://api.frankfurter.app/${daysAgo(7)}..${todayKST()}?from=${fromCcy}&to=KRW`);
   const rates = Object.entries(data.rates ?? {}).sort(([a], [b]) => (a < b ? -1 : 1));
@@ -150,7 +155,7 @@ async function fetchFrankfurterCurrent(fromCcy, perUnits = 1) {
   const current = rates.at(-1)[1].KRW * perUnits, prevClose = rates.at(-2)[1].KRW * perUnits;
   return { current, prevClose, change: current - prevClose,
            changePct: prevClose ? (current - prevClose) / prevClose * 100 : 0,
-           asOf: fmtKST(), source: 'Frankfurter' };
+           asOf: `${rates.at(-1)[0]} (ECB 기준환율)`, source: 'Frankfurter' };
 }
 
 async function fetchExchangeHistory(marketindexCd, numPages = 3) {

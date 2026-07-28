@@ -240,6 +240,14 @@ export async function fetchLongKOSPI() {
 }
 
 // USD/KRW: Frankfurter 250 거래일 (1.8 × 250 ≈ 450 달력일)
+//
+// ⚠️ 여기엔 kr.js의 perUnits 정규화가 **없다**. USD는 1달러당이라 1:1이어서 지금은
+//    문제가 없지만, 이 함수를 본떠 JPY를 추가하면 곧바로 100배 오차가 난다 —
+//    한국 관례는 "100엔당 원화"이고 Frankfurter는 1엔당을 준다(실측 2026-07-28:
+//    Naver 894.49 vs Frankfurter 8.9838). kr.js의 buildExchangeItem이 jpykrw에
+//    perUnits:100을 넘기는 이유가 그것이다.
+//    현재 분석 탭 ITEM_ORDER에 jpykrw가 없어 노출 경로는 없다(그래서 지금은 주석만).
+//    JPY/기타 통화를 추가할 때는 kr.js와 동일하게 perUnits를 받아 곱할 것.
 export async function fetchLongUSDKRW() {
   const tradingDays = 250;
   const calDays     = Math.round(tradingDays * 1.8);

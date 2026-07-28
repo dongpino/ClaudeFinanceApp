@@ -57,6 +57,8 @@ export const VERIFIED_AT = {
   msci:     '2026-07-27',
   // 2026-07-28: 네이버 IR / 삼성 global IR / Finnhub와 재대조해 오류 3건 정정(위 출처 주석).
   earnings: '2026-07-28',
+  // 만기일 보정용 휴장일 표(MARKET_HOLIDAYS) — 다른 하드코딩 배열과 같은 규율을 적용한다.
+  holidays: '2026-07-28',
 };
 
 export const FOMC_MEETINGS_2026 = [
@@ -231,6 +233,117 @@ function nthWeekdayOfMonth(year, monthIndex0, weekday, n) {
 const QUARTER_MONTHS_0 = [2, 5, 8, 11]; // 0-indexed: 3·6·9·12월
 
 /**
+ * 증시 휴장일 — **만기일 보정 전용 최소 테이블**(2026~2027).
+ *
+ * 왜 만드는가: getExpiryEvents는 순수 요일 규칙(한국 둘째 목요일 / 미국 셋째 금요일)이라
+ * 그 날이 휴장일이면 틀린 날짜를 낸다. 실제로 2026-06-19(금)은 Juneteenth로 NYSE가
+ * 전휴장했는데 앱은 그날을 "미국 쿼드러플 위칭데이"로 표시했다(2026-07-28 감사에서
+ * 발견, 이미 지나가 정정 대상은 아니지만 사례로 남긴다). 남은 충돌은 2027년 2건이다.
+ *
+ * ⚠️ 범위를 의도적으로 좁게 잡았다 — 이건 "한국/미국 공휴일 달력"이 아니라 만기일
+ *    보정에만 쓰이는 표다. 다른 용도로 재사용하기 전에 완전성을 다시 따져야 한다.
+ *    특히 미국 조기폐장(half-day)은 **거래일이므로 일부러 넣지 않았다** — 만기일
+ *    보정에 영향이 없고, 넣으면 거래일을 휴장으로 오판한다.
+ *    (참고: 2026 조기폐장은 11/27 추수감사절 다음날·12/24 크리스마스 이브, 각 13:00 ET)
+ *
+ * ⚠️ 커버리지 밖(2028~) 연도는 보정이 조용히 사라진다 — 그래서 getScheduleDepletion의
+ *    'holidays' 카테고리로 편입해 표가 소진되기 전에 경고가 뜨게 했다. 다른 하드코딩
+ *    배열과 같은 관리 규율(VERIFIED_AT + 출처 주석 + 소진 경고)을 그대로 적용한다.
+ *
+ * 출처(2026-07-28 확인):
+ *  - 한국: 관공서의 공휴일에 관한 규정 + KRX 휴장(근로자의날·연말 폐장일 포함).
+ *          요일/대체공휴일 규칙은 전 항목 프로그램으로 검산함(대체공휴일 적용 대상에
+ *          현충일이 빠지는 것까지 확인). 2027 부처님오신날(음력 4/8)은 양력 환산이
+ *          필요해 별도 교차 확인: time.is 2027 한국 달력 + 웹 검색 모두 5/13(목).
+ *  - 미국: NYSE Group 2025~2027 Holiday and Early Closings Calendar.
+ *          2026-06-19 Juneteenth 전휴장은 Fidelity/Kiplinger로 교차 확인.
+ *
+ * TODO(미확정): 2026 추석 연휴가 토요일(9/26)과 겹쳐 대체공휴일(9/28 월)이 생기는지
+ *   확정하지 못했다. 넣지 않았고, 넣지 않아도 만기일 판정에는 영향이 없다 —
+ *   2026년 한국 만기일 12건(1/8, 2/12, 3/12, 4/9, 5/14, 6/11, 7/9, 8/13, 9/10,
+ *   10/8, 11/12, 12/10) 중 9/28과 겹치는 날이 없기 때문. 표를 다른 용도로 확장할
+ *   때 이 항목부터 확인할 것.
+ */
+export const MARKET_HOLIDAYS_KR_2026 = {
+  '2026-01-01': '신정',        '2026-02-16': '설날 연휴',   '2026-02-17': '설날',
+  '2026-02-18': '설날 연휴',   '2026-03-01': '삼일절',      '2026-03-02': '삼일절 대체공휴일',
+  '2026-05-01': '근로자의날',  '2026-05-05': '어린이날',    '2026-05-24': '부처님오신날',
+  '2026-05-25': '부처님오신날 대체공휴일',                  '2026-06-03': '지방선거',
+  '2026-06-06': '현충일',      '2026-08-15': '광복절',      '2026-08-17': '광복절 대체공휴일',
+  '2026-09-24': '추석 연휴',   '2026-09-25': '추석',        '2026-09-26': '추석 연휴',
+  '2026-10-03': '개천절',      '2026-10-05': '개천절 대체공휴일',
+  '2026-10-09': '한글날',      '2026-12-25': '성탄절',      '2026-12-31': '증시 폐장일',
+};
+
+export const MARKET_HOLIDAYS_KR_2027 = {
+  '2027-01-01': '신정',        '2027-02-06': '설날 연휴',   '2027-02-07': '설날',
+  '2027-02-08': '설날 연휴',   '2027-02-09': '설날 대체공휴일',
+  '2027-03-01': '삼일절',      '2027-05-01': '근로자의날',  '2027-05-05': '어린이날',
+  '2027-05-13': '부처님오신날',
+  '2027-06-06': '현충일',      '2027-08-15': '광복절',      '2027-08-16': '광복절 대체공휴일',
+  '2027-09-14': '추석 연휴',   '2027-09-15': '추석',        '2027-09-16': '추석 연휴',
+  '2027-10-03': '개천절',      '2027-10-04': '개천절 대체공휴일',
+  '2027-10-09': '한글날',      '2027-10-11': '한글날 대체공휴일',
+  '2027-12-25': '성탄절',      '2027-12-27': '성탄절 대체공휴일', '2027-12-31': '증시 폐장일',
+};
+
+export const MARKET_HOLIDAYS_US_2026 = {
+  '2026-01-01': "New Year's Day",       '2026-01-19': 'MLK Day',
+  '2026-02-16': "Presidents' Day",      '2026-04-03': 'Good Friday',
+  '2026-05-25': 'Memorial Day',         '2026-06-19': 'Juneteenth',
+  '2026-07-03': 'Independence Day(관측)', '2026-09-07': 'Labor Day',
+  '2026-11-26': 'Thanksgiving',         '2026-12-25': 'Christmas',
+};
+
+export const MARKET_HOLIDAYS_US_2027 = {
+  '2027-01-01': "New Year's Day",       '2027-01-18': 'MLK Day',
+  '2027-02-15': "Presidents' Day",      '2027-03-26': 'Good Friday',
+  '2027-05-31': 'Memorial Day',         '2027-06-18': 'Juneteenth(관측)',
+  '2027-07-05': 'Independence Day(관측)', '2027-09-06': 'Labor Day',
+  '2027-11-25': 'Thanksgiving',         '2027-12-24': 'Christmas(관측)',
+};
+
+/** 지역별 병합 휴장일 — 연도 배열 추가 시 여기만 끼워 넣으면 된다(다른 상수와 동일 규율) */
+export const MARKET_HOLIDAYS = {
+  KR: { ...MARKET_HOLIDAYS_KR_2026, ...MARKET_HOLIDAYS_KR_2027 },
+  US: { ...MARKET_HOLIDAYS_US_2026, ...MARKET_HOLIDAYS_US_2027 },
+};
+
+/**
+ * 만기일이 휴장일/주말이면 직전 거래일로 앞당긴다(한국·미국 공통 관행).
+ * 요일 규칙이 낳는 날짜는 항상 평일이라 주말 검사는 보수적 방어다.
+ * 커버리지 밖 연도는 휴일이 조회되지 않아 자연히 무보정 — 기존 동작과 동일하다.
+ * @returns {{ date: string, adjustedFrom?: string, adjustedReason?: string }}
+ */
+/**
+ * 휴장일 표의 커버리지 수평선 — KR/US 중 **먼저 끝나는 쪽**의 마지막 날짜.
+ * 한쪽만 갱신하고 다른 쪽을 잊는 상황에서 짧은 쪽이 경고를 내야 하기 때문이다.
+ * (getScheduleDepletion에서 export하지 않고 내부 사용 — 테스트는 결과로 검증한다)
+ */
+function holidayCoverageEnd() {
+  const ends = ['KR', 'US'].map(r =>
+    Object.keys(MARKET_HOLIDAYS[r] ?? {}).reduce((a, b) => (a > b ? a : b), ''));
+  return ends.filter(Boolean).reduce((a, b) => (a < b ? a : b), '9999-12-31');
+}
+
+function adjustToPrevTradingDay(dateUtc, region) {
+  const original = toDateStr(dateUtc);
+  const holidays = MARKET_HOLIDAYS[region] ?? {};
+  const d = new Date(dateUtc.getTime());
+  // 최장 연휴(추석/설 3일 + 주말)를 넘겨도 남는 여유. 10일을 다 써도 못 찾으면
+  // 표가 이상한 것이므로 보정을 포기하고 원래 날짜를 낸다(조용한 무한루프 금지).
+  for (let i = 0; i < 10; i++) {
+    const s = toDateStr(d);
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !holidays[s]) {
+      return s === original ? { date: s } : { date: s, adjustedFrom: original, adjustedReason: holidays[original] ?? '휴장' };
+    }
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  return { date: original };
+}
+
+/**
  * 규칙 기반 선물옵션 동시만기일 계산 — 연도 하드코딩 없음.
  *  한국: 매월 둘째 목요일(분기월엔 "네 마녀의 날", 그 외엔 월간 옵션만기)
  *  미국: 3·6·9·12월 셋째 금요일(쿼드러플 위칭)만 해당 — 미국은 매월이 아님.
@@ -240,15 +353,19 @@ export function getExpiryEvents(year) {
   const events = [];
   for (let month = 0; month < 12; month++) {
     const isQuarterly = QUARTER_MONTHS_0.includes(month);
+    // 휴장일이면 직전 거래일로 앞당긴다. 보정이 일어난 경우에만 adjustedFrom/
+    // adjustedReason이 붙으므로, 기존 소비부는 date만 읽어 그대로 동작한다.
+    const kr = adjustToPrevTradingDay(nthWeekdayOfMonth(year, month, 4, 2), 'KR'); // 목요일=4, 둘째주
     events.push({
-      date: toDateStr(nthWeekdayOfMonth(year, month, 4, 2)), // 목요일=4, 둘째주
+      ...kr,
       title: isQuarterly ? '한국 선물옵션 동시만기일(네 마녀의 날)' : '한국 옵션만기일',
       shortLabel: isQuarterly ? '동시만기' : '옵션만기',
       category: 'expiry', region: 'KR',
     });
     if (isQuarterly) {
+      const us = adjustToPrevTradingDay(nthWeekdayOfMonth(year, month, 5, 3), 'US'); // 금요일=5, 셋째주
       events.push({
-        date: toDateStr(nthWeekdayOfMonth(year, month, 5, 3)), // 금요일=5, 셋째주
+        ...us,
         title: '미국 쿼드러플 위칭데이',
         shortLabel: '위칭데이',
         category: 'expiry', region: 'US',
@@ -265,8 +382,12 @@ export function getExpiryEvents(year) {
  * 자동으로 해제된다.
  *
  * 판정: 각 배열의 가장 늦은 이벤트 날짜가 오늘로부터 withinDays일 이내(또는
- * 이미 과거)면 소진 임박으로 본다. 규칙 계산인 선물옵션 만기(getExpiryEvents)는
- * 연도 하드코딩이 없어 소진 개념 자체가 없으므로 대상에서 제외한다.
+ * 이미 과거)면 소진 임박으로 본다. 선물옵션 만기(getExpiryEvents) 자체는 규칙 계산이라
+ * 연도 하드코딩이 없어 소진 개념이 없지만, 그 **휴장일 보정 표**(MARKET_HOLIDAYS)는
+ * 수동 테이블이므로 'holidays'로 편입했다(2026-07-28).
+ * 편입 이유: 표가 소진되면 보정이 조용히 사라지는데, 그 결과가 다른 카테고리보다
+ * 위험하다 — FOMC 배열이 비면 캘린더가 비어 눈에 띄지만, 휴장일 표가 비면 만기일이
+ * "그럴듯하지만 틀린 날짜"로 계속 표시돼 알아챌 방법이 없다.
  *
  * @param {number} withinDays 임박 판정 임계(기본 30일)
  * @returns {Array<{category: string, lastDate: string, daysLeft: number}>}
@@ -285,6 +406,10 @@ export function getScheduleDepletion(withinDays = 30) {
     { category: 'cpi',      dates: CPI_RELEASES.map(r => r.date) },
     { category: 'msci',     dates: MSCI_REVIEWS.map(r => r.effective) },
     { category: 'earnings', dates: EARNINGS_EVENTS.map(e => e.date) },
+    // 휴장일 표는 "이벤트 목록"이 아니라 "커버리지 범위"다 — 마지막 날짜가 곧 수평선.
+    // 아래 reduce가 최댓값을 집으므로, KR/US 각각의 최대를 그대로 넣으면 늦게 끝나는
+    // 쪽이 이겨 먼저 소진되는 쪽을 가린다. 실질 한계는 먼저 끝나는 쪽이라 min을 넣는다.
+    { category: 'holidays', dates: [holidayCoverageEnd()] },
   ];
 
   const depletion = [];

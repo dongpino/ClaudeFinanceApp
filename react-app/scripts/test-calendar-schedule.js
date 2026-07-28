@@ -13,8 +13,8 @@
  */
 import {
   getScheduleDepletion, getNextFomcMeeting, getNextCpiRelease,
-  getUpcomingEvents, getEventsForMonth,
-  FOMC_MEETINGS, CPI_RELEASES, EARNINGS_EVENTS, VERIFIED_AT,
+  getUpcomingEvents, getEventsForMonth, getExpiryEvents,
+  FOMC_MEETINGS, CPI_RELEASES, EARNINGS_EVENTS, VERIFIED_AT, MARKET_HOLIDAYS,
 } from '../api/_lib/macro-calendar.js';
 import { buildCalendarSource } from '../api/health.js';
 
@@ -141,8 +141,66 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
 
 // ── 6. verifiedAt 계약 ─────────────────────────────────────────
 {
-  const keys = ['fomc', 'cpi', 'msci', 'earnings'];
-  assert(keys.every(k => /^\d{4}-\d{2}-\d{2}$/.test(VERIFIED_AT[k] ?? '')), '6: 4개 카테고리 모두 YYYY-MM-DD');
+  const keys = ['fomc', 'cpi', 'msci', 'earnings', 'holidays'];
+  assert(keys.every(k => /^\d{4}-\d{2}-\d{2}$/.test(VERIFIED_AT[k] ?? '')), '6: 5개 카테고리 모두 YYYY-MM-DD');
+}
+
+// ── 7. 만기일 휴장일 보정 ──────────────────────────────────────
+// 2026-06-19(금)은 Juneteenth로 NYSE 전휴장인데 위칭데이로 표시됐다(2026-07-28 감사).
+// 요일 규칙만으로는 못 막으므로 휴장일 표를 근거로 직전 거래일로 앞당긴다.
+{
+  const byRegion = (y, r) => getExpiryEvents(y).filter(e => e.region === r);
+  const find = (y, d) => getExpiryEvents(y).find(e => e.date === d);
+
+  // 보정이 실제로 일어나야 하는 3건
+  const us26 = find(2026, '2026-06-18');
+  assert(us26?.region === 'US', '7: 2026 미국 위칭데이는 6/18 (6/19 Juneteenth 회피)');
+  assert(us26?.adjustedFrom === '2026-06-19', `7: 보정 출처 표기 (실제: ${us26?.adjustedFrom})`);
+  assert(/Juneteenth/.test(us26?.adjustedReason ?? ''), '7: 보정 사유에 휴일명');
+
+  const kr27 = find(2027, '2027-05-12');
+  assert(kr27?.region === 'KR', '7: 2027 한국 5월 만기는 5/12 (5/13 부처님오신날 회피)');
+  assert(kr27?.adjustedFrom === '2027-05-13', '7: 2027 KR 보정 출처');
+  const us27 = find(2027, '2027-06-17');
+  assert(us27?.region === 'US', '7: 2027 미국 위칭데이는 6/17 (6/18 Juneteenth 회피)');
+
+  // 보정 건수 — 과잉 보정(휴일 아닌 날을 옮김)이 없어야 한다
+  assert(getExpiryEvents(2026).filter(e => e.adjustedFrom).length === 1, '7: 2026 보정은 1건뿐');
+  assert(getExpiryEvents(2027).filter(e => e.adjustedFrom).length === 2, '7: 2027 보정은 2건뿐');
+
+  // 회귀 — 2026 한국 만기일 12건은 보정 전과 완전히 동일해야 한다
+  assert(byRegion(2026, 'KR').map(e => e.date).join(',') ===
+    ['2026-01-08','2026-02-12','2026-03-12','2026-04-09','2026-05-14','2026-06-11',
+     '2026-07-09','2026-08-13','2026-09-10','2026-10-08','2026-11-12','2026-12-10'].join(','),
+    '7: 2026 한국 만기일 12건 불변(회귀)');
+  // 미국은 6월만 바뀌고 3/9/12월은 그대로
+  assert(byRegion(2026, 'US').map(e => e.date).join(',') ===
+    '2026-03-20,2026-06-18,2026-09-18,2026-12-18', '7: 2026 미국 위칭데이(6월만 보정)');
+
+  // 보정이 없으면 adjustedFrom 필드 자체가 붙지 않는다(기존 소비부 무영향)
+  assert(!('adjustedFrom' in (find(2026, '2026-03-20') ?? {})), '7: 무보정 항목엔 adjustedFrom 없음');
+
+  // 커버리지 밖 연도는 조용히 무보정 — 기존 동작과 동일(크래시 금지)
+  const y2030 = getExpiryEvents(2030);
+  assert(y2030.length === 16, '7: 커버리지 밖 연도도 정상 생성');
+  assert(y2030.every(e => !e.adjustedFrom), '7: 커버리지 밖 연도는 무보정');
+
+  // 표 자체의 형식 — 키가 하나라도 형식을 벗어나면 그 날짜는 영원히 매칭되지 않아
+  // "휴일을 적어 뒀는데 보정이 안 되는" 조용한 실패가 된다.
+  for (const region of ['KR', 'US']) {
+    const keys = Object.keys(MARKET_HOLIDAYS[region]);
+    assert(keys.length > 0, `7: ${region} 휴장일 표 비어있지 않음`);
+    assert(keys.every(k => /^\d{4}-\d{2}-\d{2}$/.test(k)), `7: ${region} 키 전부 YYYY-MM-DD`);
+    assert(keys.every(k => typeof MARKET_HOLIDAYS[region][k] === 'string'
+      && MARKET_HOLIDAYS[region][k].length > 0), `7: ${region} 값(휴일명) 전부 비어있지 않음`);
+    assert(keys.every(k => k >= '2026-01-01' && k <= '2027-12-31'), `7: ${region} 2026~2027 범위`);
+  }
+
+  // 휴장일 표가 depletion 대상에 편입됐는지 — 표가 마르면 경고가 떠야 한다
+  const far = withToday('2027-12-01', () => getScheduleDepletion());
+  assert(far.some(d => d.category === 'holidays'), '7: 표 소진 임박 시 holidays 경고');
+  const now = withToday('2026-07-28', () => getScheduleDepletion());
+  assert(!now.some(d => d.category === 'holidays'), '7: 커버리지 충분하면 경고 없음');
 }
 
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);
