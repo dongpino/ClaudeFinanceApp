@@ -150,43 +150,53 @@ export const CPI_RELEASES = [...CPI_RELEASES_2026, ...CPI_RELEASES_2027];
  * "X일 장마감 기준 적용"으로 표기한다. effective(익영업일)는 지수에 반영되는 시점일 뿐
  * 거래가 일어나는 날이 아니다.
  *
- * ⚠️ close 날짜는 **역산하지 않는다**. MSCI 공식 일정 공표물(ir_dates.csv)에는
- *    Announcement Date와 Effective Date만 있고 close 날짜가 없다 — close는 각 리뷰의
- *    결과 보도자료("all changes will be implemented as of the close of X")에만 나온다.
- *    그 보도자료는 리뷰 시점에야 발행되므로, 미래 리뷰는 close를 알 수 없다.
- *    확인 안 된 항목은 close를 **비워 두고**(시행 이벤트가 생성되지 않는다) 아래
- *    TODO로 남긴다. effective 값을 close 자리에 끼워 넣지 말 것.
+ * ⚠️ close 날짜는 **역산하지 않는다**. close는 각 리뷰 결과 보도자료에서만 공표된다
+ *    (일정표 ir_dates.csv에는 announce/effective만 존재) — 미래 close는 원리적 미확보.
+ *    확보 시 close 이벤트로 승격하고 effective 이벤트를 대체한다. 승격 절차는 실적
+ *    감시기 설계에 편입 예정(2026-07-28).
+ *
+ * 시행 이벤트 생성 규칙 — 전 리뷰가 시행 이벤트를 하나씩 갖되 근거가 다르다:
+ *    · close 확보분  → close 날짜, "리밸런싱 반영(종가)"
+ *    · close 미확보분 → effective 날짜, "지수 반영" + 매매 시점이 전 영업일 종가임을 병기
+ *    두 라벨을 구분하는 이유: 같은 "MSCI 리뷰 반영"이라도 전자는 수급이 실제로 터지는
+ *    날이고 후자는 지수 구성이 갈리는 날이라, 하나로 뭉뚱그리면 하루 오해가 생긴다.
+ *    effective를 close인 척 쓰지 않으므로 역산 금지 규칙과 충돌하지 않는다.
  *
  * TODO(규약): region:'KR'의 의미가 정의돼 있지 않다 — "발표 주체 국가"인지 "영향받는
  *   시장"인지. MSCI는 글로벌 지수사업자(발표는 CET 23:00)라 두 해석이 갈린다.
  *   FOMC/CPI의 'US'도 같은 모호성을 갖는다(그쪽은 둘이 일치해 드러나지 않을 뿐).
  *   규약을 정한 뒤 일괄 정리할 것.
  */
-// announce: MSCI ir_dates.csv 원문(2026-05-12 공표분) 및 개별 사전공지 보도자료.
-// close: 각 리뷰 **결과** 보도자료의 "as of the close of X" 문구에서 직접 읽은 값만.
+// 필드 3종 — 전부 공표 원문 값이며 어느 것도 계산·역산하지 않는다.
+//   announce  : ir_dates.csv 원문(2026-05-12 공표분) 및 개별 사전공지 보도자료
+//   close     : 각 리뷰 **결과** 보도자료의 "as of the close of X" 문구에서 직접 읽은 값
+//   effective : ir_dates.csv의 Effective Date 컬럼(또는 결과 보도자료의 "Effective date")
 export const MSCI_REVIEWS_2026 = [
-  // "All changes will be implemented as of the close of February 27, 2026"
+  // close: "All changes will be implemented as of the close of February 27, 2026"
+  // effective: 같은 보도자료의 "Effective date March 02, 2026"
   //   — MSCI Equity Indexes February 2026 Index Review (businesswire 20260210452023)
-  { announce: '2026-02-10', close: '2026-02-27', label: '2월' },
-  // "all changes implemented as of the close of May 29, 2026"
+  { announce: '2026-02-10', close: '2026-02-27', effective: '2026-03-02', label: '2월' },
+  // close: "all changes implemented as of the close of May 29, 2026"
   //   — MSCI Equity Indexes May 2026 Index Review (businesswire 20260512311750)
-  { announce: '2026-05-12', close: '2026-05-29', label: '5월' },
-  // TODO(close 날짜 원문 미확인): 미래 리뷰라 결과 보도자료가 아직 없다. 발표일
-  //   (8/12) 이후 "as of the close of X"를 확인해 채울 것. ir_dates의 Effective Date
-  //   09-01-2026은 익영업일 값이므로 close 자리에 넣지 말 것.
-  { announce: '2026-08-12', label: '8월' },
-  // TODO(close 날짜 원문 미확인): 위와 동일. Effective Date는 12-01-2026.
-  { announce: '2026-11-11', label: '11월' },
+  // effective: 같은 리뷰의 사전공지 "Effective date: June 01, 2026"
+  { announce: '2026-05-12', close: '2026-05-29', effective: '2026-06-01', label: '5월' },
+  // TODO(close 날짜 원문 미확인): 미래 리뷰라 결과 보도자료가 아직 없다. 발표일(8/12)
+  //   이후 "as of the close of X"를 확인해 close로 승격할 것. effective는 ir_dates.csv
+  //   원문값이며 close 자리에 옮겨 적지 말 것(그건 역산이다).
+  { announce: '2026-08-12', effective: '2026-09-01', label: '8월' },
+  // TODO(close 날짜 원문 미확인): 위와 동일.
+  { announce: '2026-11-11', effective: '2026-12-01', label: '11월' },
 ];
 
-// MSCI press release 2026-05-12 (ir_dates.csv/pdf) 원문 확인 — announce는 확정값.
-// close는 4건 모두 미래 리뷰라 원문이 없다(TODO). ir_dates의 Effective Date는
-// 각각 03-01-2027 / 05-28-2027 / 09-01-2027 / 12-01-2027이지만 저장하지 않는다.
+// MSCI press release 2026-05-12 (ir_dates.csv) 원문 확인 — announce/effective 모두
+// 그 CSV의 컬럼값 그대로다. close는 4건 모두 미래 리뷰라 원문이 존재하지 않는다(TODO).
+// ⚠️ 2027-05만 effective가 월초가 아니라 05-28이다 — MSCI 원문이 그러하므로 그대로 둔다
+//    (다른 분기는 03-01 / 09-01 / 12-01). 오탈자로 보고 "고치지" 말 것.
 export const MSCI_REVIEWS_2027 = [
-  { announce: '2027-02-09', label: '2월' },  // TODO(close 날짜 원문 미확인)
-  { announce: '2027-05-10', label: '5월' },  // TODO(close 날짜 원문 미확인)
-  { announce: '2027-08-12', label: '8월' },  // TODO(close 날짜 원문 미확인)
-  { announce: '2027-11-11', label: '11월' }, // TODO(close 날짜 원문 미확인)
+  { announce: '2027-02-09', effective: '2027-03-01', label: '2월' },  // TODO(close 원문 미확인)
+  { announce: '2027-05-10', effective: '2027-05-28', label: '5월' },  // TODO(close 원문 미확인)
+  { announce: '2027-08-12', effective: '2027-09-01', label: '8월' },  // TODO(close 원문 미확인)
+  { announce: '2027-11-11', effective: '2027-12-01', label: '11월' }, // TODO(close 원문 미확인)
 ];
 
 const MSCI_REVIEWS = [...MSCI_REVIEWS_2026, ...MSCI_REVIEWS_2027];
@@ -560,11 +570,18 @@ function msciEventsFor(rev) {
   const events = [
     { date: rev.announce, title: `MSCI ${rev.label} 리뷰 발표`, shortLabel: 'MSCI', category: 'msci', region: 'KR' },
   ];
-  // close가 확인된 리뷰만 시행 이벤트를 만든다 — 원문 미확인분에 effective를 대신
-  // 끼워 넣으면 "종가 기준 적용일"을 하루 늦게 알리는 셈이 된다(규약 주석 참조).
+  // 시행 이벤트는 전 리뷰가 갖되 근거에 따라 날짜·라벨이 다르다(규약 주석 참조).
+  // effective를 close인 척 쓰지 않는 것이 핵심 — 라벨이 다르므로 오해가 없다.
   if (rev.close) {
     events.push({
       date: rev.close, title: `MSCI ${rev.label} 리밸런싱 반영(종가)`,
+      shortLabel: 'MSCI', category: 'msci', region: 'KR',
+    });
+  } else if (rev.effective) {
+    // 설명을 title에 넣는 이유: CalendarPage의 이벤트 행은 title/region/time만 렌더하고
+    // note 같은 부가 필드를 표시하지 않는다 — 별도 필드로 두면 사용자에게 안 보인다.
+    events.push({
+      date: rev.effective, title: `MSCI ${rev.label} 지수 반영(리밸런싱 매매는 전 영업일 종가)`,
       shortLabel: 'MSCI', category: 'msci', region: 'KR',
     });
   }

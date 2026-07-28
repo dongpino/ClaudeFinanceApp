@@ -162,31 +162,34 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   assert(MSCI_REVIEWS_2026[0].announce === '2026-02-10' && MSCI_REVIEWS_2026[0].close === '2026-02-27',
     '8: MSCI 2026-02 소급 추가분(발표 2/10, close 2/27)');
 
-  // ── 시행 규약: close 날짜만 저장, effective는 저장하지 않는다(2026-07-28 통일) ──
-  // 역산 금지 규칙 — close는 결과 보도자료 원문에서만 온다. 미래 리뷰는 값이 없어야
-  // 정상이고, 누가 effective를 끼워 넣으면 여기서 걸린다.
+  // ── 시행 규약(2026-07-28): close 확보분은 close, 미확보분은 effective ──
+  // 역산 금지 — close는 결과 보도자료 원문에서만 온다. effective는 별도 필드로 보관하되
+  // close 자리에 옮겨 적지 않는다(옮기면 "종가 기준일"을 하루 늦게 알리게 된다).
   const allRev = [...MSCI_REVIEWS_2026, ...MSCI_REVIEWS_2027];
-  assert(allRev.every(r => !('effective' in r)), '8: effective 필드는 저장하지 않음');
   assert(MSCI_REVIEWS_2026.filter(r => r.close).length === 2, '8: 2026 close 확인분은 2건(2월·5월)');
   assert(MSCI_REVIEWS_2027.every(r => !r.close), '8: 2027은 close 전부 미확인(미래 리뷰)');
-  // close가 들어간 값이 effective(=익영업일)가 아닌지 — 알려진 effective 값 방어
-  assert(!allRev.some(r => ['2026-03-02', '2026-06-01', '2026-09-01', '2026-12-01',
-    '2027-03-01', '2027-05-28', '2027-09-01', '2027-12-01'].includes(r.close ?? '')),
-    '8: effective 값이 close 자리에 끼어들지 않음');
+  assert(allRev.every(r => r.effective), '8: effective는 전 리뷰가 보유(공표 원문값)');
+  assert(allRev.every(r => !r.close || r.close < r.effective), '8: close는 항상 effective보다 앞');
 
-  // 시행 이벤트는 close 있는 리뷰에만 생성되고, 항상 announce보다 뒤에 온다
-  for (const rev of allRev) {
-    const evs = getEventsForMonth(Number(rev.announce.slice(0, 4)), Number(rev.announce.slice(5, 7)))
-      .filter(e => e.category === 'msci');
-    assert(evs.some(e => e.date === rev.announce), `8: ${rev.announce} 발표 이벤트 생성`);
-  }
+  // 시행 이벤트 — 전 리뷰 8건 복원. 근거에 따라 날짜와 라벨이 갈린다.
   const msciAll = [2026, 2027].flatMap(y => [...Array(12)].flatMap((_, i) =>
     getEventsForMonth(y, i + 1).filter(e => e.category === 'msci')));
-  assert(msciAll.filter(e => e.title.includes('리밸런싱 반영(종가)')).length === 2,
-    `8: 시행 이벤트는 close 확인분 2건만 (실제: ${msciAll.filter(e => e.title.includes('리밸런싱')).length})`);
+  const settle = msciAll.filter(e => !e.title.includes('리뷰 발표'));
+  assert(settle.length === 8, `8: 시행 이벤트 8건 복원 (실제: ${settle.length})`);
+  assert(msciAll.filter(e => e.title.includes('리뷰 발표')).length === 8, '8: 발표 이벤트 8건 유지');
+  assert(settle.filter(e => e.title.includes('리밸런싱 반영(종가)')).length === 2, '8: 종가 라벨은 close 확보분 2건');
+  assert(settle.filter(e => e.title.includes('지수 반영')).length === 6, '8: 지수 반영 라벨은 미확보분 6건');
+  assert(settle.filter(e => e.title.includes('지수 반영')).every(e => e.title.includes('전 영업일 종가')),
+    '8: 지수 반영 이벤트에 매매 시점 설명 병기');
   assert(!msciAll.some(e => e.title.includes('리뷰 시행')), '8: 옛 "리뷰 시행" 라벨 잔존 없음');
-  for (const rev of allRev.filter(r => r.close)) {
-    assert(rev.close > rev.announce, `8: ${rev.label} close(${rev.close})가 announce(${rev.announce})보다 뒤`);
+
+  // 이벤트 날짜가 올바른 필드에서 왔는지 — 리뷰별로 대조
+  for (const rev of allRev) {
+    const ev = settle.find(e => e.title.includes(`MSCI ${rev.label} `) && e.date.startsWith(rev.announce.slice(0, 4)));
+    assert(ev, `8: ${rev.announce} 시행 이벤트 존재`);
+    const expected = rev.close ?? rev.effective;
+    assert(ev?.date === expected, `8: ${rev.announce} 시행일=${expected} (실제: ${ev?.date})`);
+    assert(ev?.date > rev.announce, `8: ${rev.announce} 시행일이 발표일보다 뒤`);
   }
 
   // 금통위 — 통방만 연 8회(금융안정회의 4회는 제외 대상)
