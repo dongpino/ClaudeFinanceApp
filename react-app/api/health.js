@@ -3,7 +3,12 @@
  *
  * GET /api/health → 소스별 상태 판정 + 원시 수치
  *   [{ source, status: 'ok'|'stale'|'idle'|'down'|'unknown',
- *      lastSuccessAt, lastFailureAt, lastError, consecutiveFailures, todayRate, today }]
+ *      lastSuccessAt, lastFailureAt, lastError, lastErrorCode, lastErrorResolved,
+ *      consecutiveFailures, todayRate, today, todayErrors, lastEnv, todayEnv }]
+ *
+ * lastError는 성공해도 지워지지 않는다(간헐 실패 소스는 그 이력이 유일한 단서).
+ * 대신 lastErrorResolved=true면 그 뒤에 성공이 있었다는 뜻 — 현재 장애가 아니다.
+ * todayErrors는 원인별 히스토그램 { 'ECONNRESET': 9, 'http-403': 2 }.
  *
  * 판정 규칙(_lib/health.js getHealthSnapshot):
  *   - consecutiveFailures >= 3            → down
@@ -63,7 +68,9 @@ export function buildCalendarSource() {
     verifiedAt,
     // 아래는 상태판이 공통으로 읽는 필드 — 캘린더엔 수집 개념이 없어 전부 중립값.
     lastSuccessAt: null, lastFailureAt: null, lastError: null,
+    lastErrorCode: null, lastErrorResolved: false,
     consecutiveFailures: 0, todayRate: null, today: { success: 0, failure: 0 },
+    todayErrors: {},
   };
 }
 

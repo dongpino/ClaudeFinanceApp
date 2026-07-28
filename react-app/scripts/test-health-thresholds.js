@@ -6,7 +6,9 @@
  * 이었을 때 "앱을 15분만 안 열면 지연" 오탐이 났던 것을 회귀로 막는다.
  * 실행: node scripts/test-health-thresholds.js
  */
-import { judgeStatus, storeFingerprint, envCounts, ENV_TAG } from '../api/_lib/health.js';
+import {
+  judgeStatus, storeFingerprint, envCounts, errorCounts, classifyError, kstHour, ENV_TAG,
+} from '../api/_lib/health.js';
 
 const NOW = Date.parse('2026-07-27T12:00:00Z');
 const agoHours = h => new Date(NOW - h * 3600_000).toISOString();
@@ -89,6 +91,58 @@ assert(judgeStatus('coingecko', { lastFailureAt: agoHours(1), consecutiveFailure
     === JSON.stringify({ production: 4, local: 2 }), 'envCounts: env:* 필드만 추출');
   assert(JSON.stringify(envCounts(null)) === '{}', 'envCounts: null → {}');
   assert(JSON.stringify(envCounts({ success: '5' })) === '{}', 'envCounts: env 필드 없으면 {}');
+}
+
+// ── classifyError: undici cause까지 벗겨내는지 ──────────────────
+// rss-yna 간헐 실패가 lastError "fetch failed"로만 남아 정체 규명이 불가능했다.
+// 진짜 원인은 err.cause.code에 있다 — 그걸 못 꺼내면 히스토그램이 무의미해진다.
+{
+  const wrapped = (code, message = 'some detail') => {
+    const e = new TypeError('fetch failed');
+    e.cause = Object.assign(new Error(message), code ? { code } : {});
+    return e;
+  };
+  assert(classifyError(wrapped('ECONNRESET')) === 'ECONNRESET', 'cause.code ECONNRESET 추출');
+  assert(classifyError(wrapped('ENOTFOUND')) === 'ENOTFOUND', 'cause.code ENOTFOUND 추출');
+  assert(classifyError(wrapped('UND_ERR_CONNECT_TIMEOUT')) === 'UND_ERR_CONNECT_TIMEOUT',
+    'undici 커넥트 타임아웃 코드 추출');
+  assert(classifyError(new TypeError('fetch failed')) === 'fetch-failed',
+    'cause 없는 fetch failed → fetch-failed');
+
+  assert(classifyError(new Error('HTTP 403')) === 'http-403', 'HTTP 상태 → http-403');
+  assert(classifyError(new Error('HTTP 429')) === 'http-429', 'HTTP 상태 → http-429');
+  assert(classifyError(new Error('non-XML 응답 — 챌린지 의심')) === 'non-xml', '챌린지 → non-xml');
+
+  const abort = new Error('The operation was aborted'); abort.name = 'AbortError';
+  assert(classifyError(abort) === 'timeout', 'AbortError → timeout');
+  const tout = new Error('timed out'); tout.name = 'TimeoutError';
+  assert(classifyError(tout) === 'timeout', 'TimeoutError → timeout');
+
+  // 해시 필드명이 되므로 카디널리티가 폭발하면 안 된다 — 공백/특수문자 정규화 확인
+  const weird = new TypeError('fetch failed');
+  weird.cause = Object.assign(new Error('x'), { code: 'WEIRD CODE: with/slash' });
+  const c = classifyError(weird);
+  assert(/^[A-Za-z0-9._-]+$/.test(c), `코드 정규화(해시 필드 안전): ${c}`);
+  assert(c.length <= 40, '코드 길이 40자 이하로 클램프');
+  assert(classifyError(null) === 'unknown', 'null → unknown');
+}
+
+// ── errorCounts / kstHour ───────────────────────────────────────
+{
+  assert(JSON.stringify(errorCounts({ success: '3', failure: '11', 'err:ECONNRESET': '9', 'err:http-403': '2' }))
+    === JSON.stringify({ ECONNRESET: 9, 'http-403': 2 }), 'errorCounts: err:* 필드만 추출');
+  assert(JSON.stringify(errorCounts(null)) === '{}', 'errorCounts: null → {}');
+  // env:*와 err:*가 같은 해시에 섞여 있어도 서로 침범하지 않아야 한다
+  const mixed = { 'env:production': '5', 'err:timeout': '2' };
+  assert(JSON.stringify(envCounts(mixed)) === JSON.stringify({ production: 5 }), 'envCounts: err:* 미포함');
+  assert(JSON.stringify(errorCounts(mixed)) === JSON.stringify({ timeout: 2 }), 'errorCounts: env:* 미포함');
+
+  // KST 시간 버킷: UTC 15:00 = KST 자정 → 날짜가 넘어가고 시각은 '00'(24 아님)
+  assert(kstHour(new Date('2026-07-27T15:00:00Z')) === '2026-07-28T00',
+    'kstHour: UTC 15:00 → KST 익일 00시 (h23, 24 아님)');
+  assert(kstHour(new Date('2026-07-27T14:59:59Z')) === '2026-07-27T23', 'kstHour: 경계 직전 23시');
+  assert(kstHour(new Date('2026-07-27T05:39:28Z')) === '2026-07-27T14', 'kstHour: UTC 05:39 → KST 14시');
+  assert(/^\d{4}-\d{2}-\d{2}T\d{2}$/.test(kstHour()), 'kstHour: YYYY-MM-DDTHH 형식');
 }
 
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);

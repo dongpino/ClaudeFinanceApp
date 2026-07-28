@@ -177,7 +177,10 @@ export default function SettingsPanel({ onClose }) {
                             sbKind === 'fallback' ? '주 소스 정상 시 호출되지 않음'
                             : sbKind === 'idle' ? '해당 화면을 열 때만 호출되는 소스 — 최근 24시간 호출 없음'
                             : st === 'warn' ? '하드코딩 일정 소진 임박 — 배열 갱신 필요'
-                            : (st === 'down' || st === 'stale') && s.lastError ? `마지막 오류: ${s.lastError}`
+                            : (st === 'down' || st === 'stale') && s.lastError
+                              // lastError는 성공해도 남으므로 '지금 유효한 오류'인지 밝혀야
+                              // 옛 오류를 현재 장애로 오독하지 않는다(binance 위양성 교훈).
+                              ? `마지막 오류: ${s.lastError}${s.lastErrorResolved ? ' (이후 성공 있음 — 해소됨)' : ''}`
                             : undefined
                           }
                         >

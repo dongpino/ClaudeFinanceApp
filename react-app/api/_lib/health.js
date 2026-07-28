@@ -15,10 +15,17 @@
  *
  * ── 저장 스키마 ──────────────────────────────────────────────────────
  *  health:src:{source}          (해시, TTL 없음)
- *     lastSuccessAt, lastFailureAt, lastError, consecutiveFailures
+ *     lastSuccessAt, lastFailureAt, lastError, lastErrorCode,
+ *     consecutiveFailures, lastEnv
  *  health:daily:{source}:{YYYY-MM-DD KST}  (해시, TTL 7일)
  *     success, failure   — 키 이름에 KST 날짜가 들어가 자정에 새 키로 넘어가며
  *                          "자정 리셋" 효과 + 7일치 추이 보관을 동시에 만족.
+ *     err:{code}         — 실패 원인별 히스토그램(classifyError). "실패 11건"이
+ *                          한 원인인지 여러 원인인지 총합만으론 알 수 없어서.
+ *     env:{tag}          — 기록 주체 구성비.
+ *  health:hour:{source}:{YYYY-MM-DDTHH KST}  (해시, TTL 48시간)
+ *     success, failure   — 시간대 집중도 확인용 단기 버킷. 간헐 실패가 특정 시각에
+ *                          몰리는지(상대 서버 배치/방화벽 주기) 균일한지 판별한다.
  */
 
 import { Redis } from '@upstash/redis';
@@ -95,6 +102,7 @@ const EXPECTED_INTERVAL_SEC = {
 const DEFAULT_INTERVAL_SEC = 600;
 
 const DAILY_TTL_SEC = 7 * 24 * 60 * 60; // 7일 추이 보관
+const HOUR_TTL_SEC  = 48 * 60 * 60;     // 시간대 버킷은 48시간만(진단용 단기 관찰)
 const DOWN_THRESHOLD = 3;               // consecutiveFailures 이 값 이상이면 down
 
 // ── URL → 소스 분류 ──────────────────────────────────────────────────
@@ -149,8 +157,64 @@ function kstToday() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
 }
 
+// 'YYYY-MM-DDTHH' (KST). hourCycle:'h23'을 명시해야 자정이 '24'로 나오는 ICU 차이를 피한다.
+export function kstHour(d = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit',
+  }).formatToParts(d);
+  const g = t => parts.find(p => p.type === t)?.value ?? '00';
+  return `${g('year')}-${g('month')}-${g('day')}T${g('hour')}`;
+}
+
+// ── 에러 정체 규명 ───────────────────────────────────────────────────
+// undici(Node fetch)는 네트워크 실패를 전부 TypeError("fetch failed")로 상위 래핑하고
+// 진짜 원인은 err.cause에 숨긴다. "fetch failed"만 보면 DNS 실패인지, TLS 문제인지,
+// 커넥션 리셋인지, 커넥트 타임아웃인지 구분이 안 된다 — rss-yna 간헐 실패(2026-07)가
+// 정확히 이 상태였다. 그래서 기록 시 cause까지 벗겨낸다.
+
+function sanitizeCode(s) {
+  return String(s).trim().replace(/\s+/g, '-').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 40) || 'unknown';
+}
+
+/**
+ * 에러 → 히스토그램용 짧은 코드. Redis 해시 필드명이 되므로 값 종류가 폭발하지
+ * 않게 정규화한다(자유 문자열 금지).
+ * @returns {string} 예: 'http-403' | 'timeout' | 'ECONNRESET' | 'ENOTFOUND' |
+ *                   'UND_ERR_CONNECT_TIMEOUT' | 'non-xml' | 'fetch-failed'
+ */
+export function classifyError(err) {
+  const msg = String(err?.message ?? err ?? '');
+
+  // 수집기가 직접 만든 'HTTP 403' 형태 — 상태코드를 그대로 코드로 쓴다.
+  const http = /\bHTTP (\d{3})\b/.exec(msg);
+  if (http) return `http-${http[1]}`;
+
+  // rss.js가 판정하는 "200인데 XML이 아님"(챌린지 의심)
+  if (/non-XML/i.test(msg)) return 'non-xml';
+
+  // AbortController(rss.js FETCH_TIMEOUT_MS) / AbortSignal.timeout()
+  if (err?.name === 'AbortError' || err?.name === 'TimeoutError') return 'timeout';
+
+  // 여기가 핵심 — cause.code가 실제 정체(ECONNRESET/ENOTFOUND/EAI_AGAIN/
+  // UND_ERR_CONNECT_TIMEOUT/CERT_HAS_EXPIRED …)
+  const causeCode = err?.cause?.code ?? err?.code ?? null;
+  if (causeCode) return sanitizeCode(causeCode);
+
+  // code 없는 cause라도 메시지 첫 토큰은 남긴다(정체불명 'fetch-failed'보다 낫다)
+  const causeMsg = err?.cause?.message;
+  if (causeMsg) return sanitizeCode(causeMsg.split(/[:(]/)[0]);
+
+  if (/fetch failed/i.test(msg)) return 'fetch-failed';
+  return err?.name ? sanitizeCode(err.name) : 'unknown';
+}
+
 function summarize(err) {
-  return String(err?.message ?? err ?? 'unknown').slice(0, 200);
+  const base = String(err?.message ?? err ?? 'unknown');
+  // cause를 본문에 덧붙여 lastError만 봐도 정체가 드러나게 한다.
+  const cause = err?.cause;
+  const detail = cause ? [cause.code, cause.message].filter(Boolean).join(' ') : '';
+  return (detail ? `${base} — ${detail}` : base).slice(0, 200);
 }
 
 // ── 기록(fire-and-forget) ────────────────────────────────────────────
@@ -169,19 +233,30 @@ async function persist(source, ok, err) {
   try {
     const now = new Date().toISOString();
     const dailyKey = `health:daily:${source}:${kstToday()}`;
+    const hourKey  = `health:hour:${source}:${kstHour()}`;
     const srcKey   = `health:src:${source}`;
     const p = r.pipeline();
     if (ok) {
+      // lastError/lastFailureAt은 일부러 지우지 않는다 — 간헐 실패 소스는 그 이력이
+      // 유일한 단서다. "지금 유효한 에러인가"는 lastFailureAt vs lastSuccessAt 비교로
+      // 알 수 있고(getHealthSnapshot의 lastErrorResolved), 그게 삭제보다 정보가 많다.
       p.hset(srcKey, { lastSuccessAt: now, consecutiveFailures: 0, lastEnv: ENV_TAG });
       p.hincrby(dailyKey, 'success', 1);
+      p.hincrby(hourKey, 'success', 1);
     } else {
-      p.hset(srcKey, { lastFailureAt: now, lastError: summarize(err), lastEnv: ENV_TAG });
+      const code = classifyError(err);
+      p.hset(srcKey, { lastFailureAt: now, lastError: summarize(err), lastErrorCode: code, lastEnv: ENV_TAG });
       p.hincrby(srcKey, 'consecutiveFailures', 1);
       p.hincrby(dailyKey, 'failure', 1);
+      // 에러 코드 히스토그램 — "실패 11건"이 한 원인인지 여러 원인인지 하루치로 드러난다.
+      p.hincrby(dailyKey, `err:${code}`, 1);
+      p.hincrby(hourKey, 'failure', 1);
     }
     // 일자별 출처 구성비 — "이 날 기록의 몇 %가 로컬발인가"가 바로 보인다.
     p.hincrby(dailyKey, `env:${ENV_TAG}`, 1);
     p.expire(dailyKey, DAILY_TTL_SEC);
+    // 시간대 버킷 — 특정 시각 집중(상대 서버 배치/방화벽 주기)인지 균일 분포인지 판별.
+    p.expire(hourKey, HOUR_TTL_SEC);
     await p.exec();
   } catch (e) {
     // 기록층 에러는 무시(로그만) — 수집에 절대 전파하지 않는다(요구사항 3).
@@ -236,9 +311,19 @@ export function judgeStatus(source, srcHash, nowMs) {
 
 // daily 해시의 env:* 필드만 { production: n, local: m } 형태로 추린다.
 export function envCounts(dailyHash) {
+  return prefixCounts(dailyHash, 'env:');
+}
+
+// daily 해시의 err:* 필드만 { 'http-403': 2, ECONNRESET: 9 } 형태로 추린다.
+// 실패 총합만 보면 한 원인인지 여러 원인인지 알 수 없어서 코드별로 쪼개 둔다.
+export function errorCounts(dailyHash) {
+  return prefixCounts(dailyHash, 'err:');
+}
+
+function prefixCounts(hash, prefix) {
   const out = {};
-  for (const [k, v] of Object.entries(dailyHash ?? {})) {
-    if (k.startsWith('env:')) out[k.slice(4)] = Number(v) || 0;
+  for (const [k, v] of Object.entries(hash ?? {})) {
+    if (k.startsWith(prefix)) out[k.slice(prefix.length)] = Number(v) || 0;
   }
   return out;
 }
@@ -255,8 +340,9 @@ export async function getHealthSnapshot() {
   if (!r) {
     return SOURCES.map(source => ({
       source, status: 'unknown', lastSuccessAt: null, lastFailureAt: null,
-      lastError: null, consecutiveFailures: 0, todayRate: null, today: { success: 0, failure: 0 },
-      lastEnv: null, todayEnv: {},
+      lastError: null, lastErrorCode: null, lastErrorResolved: false,
+      consecutiveFailures: 0, todayRate: null, today: { success: 0, failure: 0 },
+      lastEnv: null, todayEnv: {}, todayErrors: {},
     }));
   }
 
@@ -281,9 +367,20 @@ export async function getHealthSnapshot() {
       // 마지막 실패 원인 요약(persist가 저장) — 진단 시 429/타임아웃/스키마 구분에 씀.
       // 그동안 스냅샷에서 누락돼 /api/health로는 안 보였다(관측성 갭 보완).
       lastError: srcHash?.lastError ?? null,
+      // 히스토그램과 같은 코드 체계(classifyError) — lastError 원문 파싱 없이 대조 가능.
+      lastErrorCode: srcHash?.lastErrorCode ?? null,
+      // 그 에러가 '이미 해소된 과거 사건'인지. lastError는 성공해도 지워지지 않으므로
+      // (간헐 실패 진단에 필요) 이 플래그가 없으면 옛 에러가 현재 장애처럼 읽힌다 —
+      // binance "HTTP 400" 위양성이 오래 남았던 것이 정확히 그 사례.
+      lastErrorResolved: Boolean(
+        srcHash?.lastFailureAt && srcHash?.lastSuccessAt &&
+        Date.parse(srcHash.lastSuccessAt) > Date.parse(srcHash.lastFailureAt)
+      ),
       consecutiveFailures: Number(srcHash?.consecutiveFailures ?? 0),
       todayRate: total ? Math.round((success / total) * 100) / 100 : null,
       today: { success, failure },
+      // 오늘 실패의 원인별 분포 { 'ECONNRESET': 9, 'http-403': 2 }
+      todayErrors: errorCounts(daily),
       // 마지막 기록을 남긴 실행 환경. 'production'이 아니면 그 행은 배포본 신호가 아니다.
       lastEnv: srcHash?.lastEnv ?? null,
       // 오늘 기록의 환경별 구성 { production: 12, local: 3 } — env:* 필드만 추려서.
