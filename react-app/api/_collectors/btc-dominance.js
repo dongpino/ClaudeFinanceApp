@@ -46,15 +46,17 @@ async function fetchJSON(url) {
   return res.json();
 }
 
+// updated_at(unix초)까지 함께 돌려준다 — as_of의 근거다(호출 시각이 아니라 소스 갱신 시각).
+// 필드가 없으면 null → 호출측이 현재 시각으로 폴백한다(수집을 깨뜨리지 않는다).
 async function fetchCurrentDominance() {
   const data = await fetchJSON('https://api.coingecko.com/api/v3/global');
   const pct  = data?.data?.market_cap_percentage?.btc;
   if (typeof pct !== 'number') throw new Error('BTC 도미넌스 데이터 없음');
-  return r2(pct);
+  return { pct: r2(pct), updatedAt: Number(data?.data?.updated_at) || null };
 }
 
 export async function collectBtcDominance({ include90d = true } = {}) {
-  const current = await fetchCurrentDominance();
+  const { pct: current, updatedAt } = await fetchCurrentDominance();
 
   // 오늘 값 기록(이미 있으면 no-op) — 히스토리 축적은 이 한 줄이 전부.
   await recordTodayIfMissing(current);
@@ -80,7 +82,10 @@ export async function collectBtcDominance({ include90d = true } = {}) {
     change_pct:     changePct,
     direction:      direction(change),
     source:         'CoinGecko',
-    as_of:          fmtKST(),
+    // ⚠️ 예전엔 fmtKST()(호출 시각). 소스의 updated_at을 KST 날짜로 환산해 쓴다
+    // (2026-07-28 감사). fmtKST가 이미 KST 변환을 하므로 앞 10자만 잘라 쓴다 —
+    // 환율 선례와 같은 'YYYY-MM-DD (라벨)' 형식.
+    as_of:          `${(updatedAt ? fmtKST(updatedAt * 1000) : fmtKST()).slice(0, 10)} (수시 갱신)`,
     category:       '크립토',
     unit:           'pct_pt',
     // 이 종목의 history는 Redis 일별 축적물이라 짧은 게 "장애"가 아니라 정상 상태다 —

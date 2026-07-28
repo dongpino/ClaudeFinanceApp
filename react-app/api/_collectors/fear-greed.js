@@ -17,15 +17,8 @@ const HEADERS = {
   'Accept':          'application/json, text/plain, */*',
 };
 
-function fmtKST(date = new Date()) {
-  const kst = new Date(new Date(date).getTime() + 9 * 60 * 60 * 1000);
-  const y  = kst.getUTCFullYear();
-  const mo = String(kst.getUTCMonth() + 1).padStart(2, '0');
-  const dy = String(kst.getUTCDate()).padStart(2, '0');
-  const h  = String(kst.getUTCHours()).padStart(2, '0');
-  const mi = String(kst.getUTCMinutes()).padStart(2, '0');
-  return `${y}-${mo}-${dy} ${h}:${mi} KST`;
-}
+// (fmtKST 제거 — as_of가 소스 timestamp 기반으로 바뀌면서 이 파일의 유일한 사용처가
+//  사라졌다. 남겨 두면 "여기서도 현재 시각을 쓴다"는 오해를 부른다.)
 
 function direction(change) { return change > 0 ? 'up' : change < 0 ? 'down' : 'flat'; }
 function r4(n) { return Math.round(n * 10000) / 10000; }
@@ -61,7 +54,11 @@ export async function collectFearGreed({ include90d = true } = {}) {
     change_pct:     changePct,
     direction:      direction(change),
     source:         'Alternative.me',
-    as_of:          fmtKST(),
+    // ⚠️ 예전엔 fmtKST()(호출 시각)를 찍었다 — 이 지표는 00:00 UTC(=09:00 KST) 기준
+    // 하루 한 번만 갱신되므로, 오후에 열어도 "지금 값"인 것처럼 보였다(2026-07-28 감사).
+    // 소스가 주는 timestamp를 쓴다. 바로 위 history가 이미 같은 필드를 toDate()로 쓰고
+    // 있어 헬퍼를 그대로 재사용 — as_of와 history 마지막 날짜가 항상 일치한다.
+    as_of:          `${toDate(latest.timestamp)} (일 1회 갱신)`,
     category:       '크립토',
     unit:           'score',
     grade:          latest.value_classification, // 'Extreme Fear'|'Fear'|'Neutral'|'Greed'|'Extreme Greed'
