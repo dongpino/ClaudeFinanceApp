@@ -18,7 +18,7 @@
  * graceful fallback: 한 피드 실패해도 나머지 결과 반환
  */
 
-import { recordSuccess, recordFailure, classifySource } from '../_lib/health.js';
+import { recordSuccess, recordFailure, recordRetry, classifySource, classifyError } from '../_lib/health.js';
 
 // export 이유: api/probe-backup.js가 "프로덕션이 실제로 보내는 그 요청"을 그대로
 // 재현해야 IP축 검증이 의미를 갖는다. URL/헤더/타임아웃을 복제하면 드리프트가 생기므로
@@ -206,10 +206,53 @@ async function fetchFeedOnce(url) {
   }
 }
 
+// ── 네트워크 계열 1회 재시도 ─────────────────────────────────
+// 커넥션 리셋/타임아웃은 재시도 한 번이면 대개 붙는다(rss-yna 2026-07 실측: 콜드
+// 단발 호출에서만 재현, 바로 다음 시도는 성공). 4피드 공통 적용 — yna 전용 특례를
+// 만들면 다음에 다른 피드가 같은 증상을 낼 때 또 개별 대응해야 한다.
+//
+// HTTP 상태(4xx/5xx)는 여기서 재시도하지 않는다:
+//   · 4xx는 재시도해도 같은 답이 온다(무의미한 지연 + 상대 서버 부담)
+//   · 403/429만 "일시적 차단일 수 있다"는 별도 근거로 위 RETRY_STATUSES가 이미 처리
+const NET_RETRY_CODES = new Set([
+  'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'EPIPE',
+  'ETIMEDOUT', 'EAI_AGAIN',            // 일시적 DNS 실패(ENOTFOUND=영구는 제외)
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+  'timeout',                            // 자체 AbortController 타임아웃
+  'fetch-failed',                       // cause를 못 얻은 네트워크 실패(정체 불명이지만 네트워크축)
+]);
+const NET_RETRY_DELAY_MS = 400;
+
+function isRetriableNetworkError(err) {
+  return NET_RETRY_CODES.has(classifyError(err));
+}
+
+// 네트워크 계열이면 짧은 백오프 후 1회만 재시도. 재시도 발동/구제 여부는 health에
+// 별도 카운터로 남긴다 — 구제된 건은 최종 성공으로 집계되므로 카운터가 없으면 효과가
+// 성공률에 묻혀 보이지 않는다.
+async function fetchFeedWithRetry(url, src) {
+  try {
+    return await fetchFeedOnce(url);
+  } catch (err) {
+    if (!isRetriableNetworkError(err)) throw err;
+    const code = classifyError(err);
+    console.warn(`[rss] ${url} ${code} — ${NET_RETRY_DELAY_MS}ms 후 1회 재시도`);
+    await sleep(NET_RETRY_DELAY_MS);
+    try {
+      const res = await fetchFeedOnce(url);
+      recordRetry(src, { recovered: true });
+      return res;
+    } catch (err2) {
+      recordRetry(src, { recovered: false });
+      throw err2;
+    }
+  }
+}
+
 async function fetchFeed({ url, source }) {
   const src = classifySource(url); // 'rss-yna' | 'rss-asiae' | 'rss-edaily' | 'rss-coindesk' | null
   try {
-    let res = await fetchFeedOnce(url);
+    let res = await fetchFeedWithRetry(url, src);
 
     // 403/429 → 1회 백오프 재시도(Retry-After 존중). 1차 실패는 그대로 기록(정직한 신호).
     if (RETRY_STATUSES.has(res.status)) {
@@ -217,7 +260,7 @@ async function fetchFeed({ url, source }) {
       console.warn(`[rss] ${source} HTTP ${res.status} — ${wait}ms 후 1회 재시도`);
       recordFailure(src, new Error(`HTTP ${res.status}`));
       await sleep(wait);
-      res = await fetchFeedOnce(url);
+      res = await fetchFeedWithRetry(url, src);
     }
 
     if (!res.ok) {

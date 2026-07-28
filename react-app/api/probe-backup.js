@@ -58,9 +58,22 @@ async function probe(label, url, { headers = {}, timeout = 9000, extract } = {})
 }
 
 // ── RSS 반복 프로브 ─────────────────────────────────────────────────
-const RSS_ATTEMPTS   = 5;
-const RSS_GAP_MS     = 200;   // 회차 간 간격 — 상대 서버 부담/버스트 오탐 방지
+const RSS_ATTEMPTS = 5;
+const WARM_GAP_MS  = 200;      // 웜: 커넥션 재사용 구간 — 상대 서버 부담/버스트 오탐 방지
+// 콜드(?cold=1): 실제 수집기의 조건 재현. 브리핑 크론은 하루 몇 번, 서로 몇 시간 떨어져
+// 도는 "콜드 단발 호출"이라 커넥션이 항상 새로 맺힌다. 웜 프로브(200ms 간격)는 2회차부터
+// 소켓을 재사용해 버려서 그 조건을 전혀 재현하지 못한다 — 로컬 웜 100% vs 프로덕션 20%
+// 격차의 유력 후보가 정확히 이 지점이다.
+//   · 30초 간격  → undici 기본 keepAliveTimeout(4초)을 훌쩍 넘겨 소켓이 이미 닫힘
+//   · connection: close → 응답 후 즉시 종료를 명시(undici가 수용함을 실측 확인)
+// 두 장치를 겹쳐 "매 호출 새 커넥션"을 보장한다.
+const COLD_GAP_MS  = 30_000;
 const rssSleep = ms => new Promise(r => setTimeout(r, ms));
+
+// 콜드 모드는 라운드당 최대 (피드수 × 타임아웃)이 걸릴 수 있어 함수 실행 한도(300s)에
+// 부딪힐 수 있다. 남은 시간이 모자라면 라운드를 더 돌지 않고 거기까지를 결과로 낸다
+// (조용한 절단 금지 — 응답에 실제 수행 라운드 수를 명시한다).
+const COLD_DEADLINE_MS = 210_000;
 
 // 회차 시퀀스에서 실패 패턴을 읽는다. 총계만으론 구분 안 되는 축을 가른다.
 function detectPattern(attempts) {
@@ -72,34 +85,57 @@ function detectPattern(attempts) {
   return 'sporadic(레이트리밋/LB노드/패킷유실 등 다른 축)';
 }
 
-// 피드 1개를 N회 연속 호출. rss.js의 fetchFeedOnce와 동일 조건(헤더/타임아웃)을 쓰되
-// health는 절대 건드리지 않는다.
-async function probeFeedRepeated({ url, source }, sourceKey) {
-  const attempts = [];
-  for (let i = 1; i <= RSS_ATTEMPTS; i++) {
-    const t0 = Date.now();
-    try {
-      const res  = await fetch(url, { headers: RSS_HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-      const buf  = await res.arrayBuffer();
-      const ms   = Date.now() - t0;
-      const ct   = (res.headers.get('content-type') || '').split(';')[0];
-      const server = res.headers.get('cf-ray') ? 'cloudflare' : (res.headers.get('server') || '(none)');
-      attempts.push({
-        i, ok: res.ok, status: res.status, ms, bytes: buf.byteLength, contentType: ct, server,
-        ...(res.ok ? {} : { code: `http-${res.status}` }),
-      });
-    } catch (e) {
-      // undici는 원인을 cause에 숨긴다 — health 히스토그램과 같은 어휘로 정규화한다.
-      attempts.push({
-        i, ok: false, status: 0, ms: Date.now() - t0,
-        error: `${e.name}: ${e.message}`,
-        causeCode: e.cause?.code ?? null,
-        code: classifyError(e),
-      });
-    }
-    if (i < RSS_ATTEMPTS) await rssSleep(RSS_GAP_MS);
+// 단발 시도. rss.js의 fetchFeedOnce와 동일 조건(헤더/타임아웃)을 쓰되 health는 절대
+// 건드리지 않는다(프로브 트래픽이 상태판에 집계되면 안 됨).
+async function probeAttempt(url, { cold }) {
+  const headers = cold ? { ...RSS_HEADERS, connection: 'close' } : RSS_HEADERS;
+  const t0 = Date.now();
+  try {
+    const res  = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    const buf  = await res.arrayBuffer();
+    const ct   = (res.headers.get('content-type') || '').split(';')[0];
+    const server = res.headers.get('cf-ray') ? 'cloudflare' : (res.headers.get('server') || '(none)');
+    return {
+      ok: res.ok, status: res.status, ms: Date.now() - t0, bytes: buf.byteLength, contentType: ct, server,
+      ...(res.ok ? {} : { code: `http-${res.status}` }),
+    };
+  } catch (e) {
+    // undici는 원인을 cause에 숨긴다 — health 히스토그램과 같은 어휘로 정규화한다.
+    return {
+      ok: false, status: 0, ms: Date.now() - t0,
+      error: `${e.name}: ${e.message}`,
+      causeCode: e.cause?.code ?? null,
+      code: classifyError(e),
+    };
   }
+}
 
+/**
+ * 라운드 로빈 실행 — 라운드마다 전 피드를 1회씩 돌고, 라운드 사이에만 간격을 둔다.
+ * 피드별로 5회를 연속 돌리면 콜드(30초)에서 총 소요가 피드 수만큼 배가돼 함수 한도를
+ * 넘는다. 피드는 서로 다른 호스트라 커넥션 풀이 분리돼 있어 라운드 로빈이 같은 피드의
+ * "시도 간 간격"을 그대로 보장한다.
+ */
+async function runRssRounds(feeds, { cold }) {
+  const perFeed = new Map(feeds.map(f => [f.url, []]));
+  const startedAt = Date.now();
+  const gap = cold ? COLD_GAP_MS : WARM_GAP_MS;
+  let rounds = 0;
+
+  for (let round = 1; round <= RSS_ATTEMPTS; round++) {
+    for (const f of feeds) {
+      perFeed.get(f.url).push({ i: round, ...(await probeAttempt(f.url, { cold })) });
+    }
+    rounds = round;
+    if (round === RSS_ATTEMPTS) break;
+    // 남은 시간이 모자라면 여기서 멈춘다(절단 사실은 응답에 그대로 표기).
+    if (cold && Date.now() - startedAt + gap > COLD_DEADLINE_MS) break;
+    await rssSleep(gap);
+  }
+  return { rounds, perFeed };
+}
+
+function summarizeFeed({ url, source }, sourceKey, attempts) {
   const okAttempts = attempts.filter(a => a.ok);
   const errors = {};
   for (const a of attempts) if (!a.ok) errors[a.code] = (errors[a.code] ?? 0) + 1;
@@ -108,9 +144,9 @@ async function probeFeedRepeated({ url, source }, sourceKey) {
     source: sourceKey,
     label: source,
     url,
-    attempts: RSS_ATTEMPTS,
+    attempts: attempts.length,
     okCount: okAttempts.length,
-    rate: Math.round((okAttempts.length / RSS_ATTEMPTS) * 100) / 100,
+    rate: attempts.length ? Math.round((okAttempts.length / attempts.length) * 100) / 100 : null,
     avgMs: okAttempts.length ? Math.round(okAttempts.reduce((s, a) => s + a.ms, 0) / okAttempts.length) : null,
     bytes: okAttempts[0]?.bytes ?? null,
     server: okAttempts[0]?.server ?? null,
@@ -151,6 +187,9 @@ export default async function handler(req, res) {
   if (!expected || provided !== expected) {
     return res.status(403).json({ error: '접근 권한 없음' });
   }
+
+  // ?cold=1 — RSS 구간을 콜드 커넥션 조건으로 실행(수집기의 단발 호출 재현).
+  const cold = req.query?.cold === '1' || req.query?.cold === 'true';
 
   const daumH     = { ...UA, Referer: 'https://finance.daum.net/' };
   const daumChartH = { ...UA, Referer: 'https://finance.daum.net/quotes/A005930', 'X-Requested-With': 'XMLHttpRequest' };
@@ -203,24 +242,28 @@ export default async function handler(req, res) {
     };
 
     // ── RSS 4종 반복 프로브 ──
-    // 순차 실행: 동시에 쏘면 우리 쪽 커넥션 경합이 변수로 섞여 IP축 판정이 흐려진다.
-    const rssResults = [];
-    for (const feed of [...RSS_FEEDS, COINDESK_FEED]) {
-      rssResults.push(await probeFeedRepeated(feed, classifySource(feed.url) ?? feed.url));
-    }
+    // 라운드 내에서는 피드를 순차로 — 동시에 쏘면 우리 쪽 커넥션 경합이 변수로 섞여
+    // IP축 판정이 흐려진다.
+    const feeds = [...RSS_FEEDS, COINDESK_FEED];
+    const { rounds, perFeed } = await runRssRounds(feeds, { cold });
+    const rssResults = feeds.map(f =>
+      summarizeFeed(f, classifySource(f.url) ?? f.url, perFeed.get(f.url)));
 
     const worst = rssResults.reduce((w, r) => (r.rate < w.rate ? r : w), rssResults[0]);
-    const others = rssResults.filter(r => r !== worst);
-    const othersAllOk = others.every(r => r.rate === 1);
+    const othersAllOk = rssResults.filter(r => r !== worst).every(r => r.rate === 1);
 
     const rssVerdict = {
+      mode: cold ? 'cold (매 호출 새 커넥션 — 수집기 조건 재현)' : 'warm (커넥션 재사용)',
       summary: rssResults.map(r => `${r.source} ${r.sequence} ${Math.round(r.rate * 100)}%`).join(' | '),
       worst: `${worst.source} ${Math.round(worst.rate * 100)}% (${worst.pattern})`,
       // 한 피드만 저하 + 나머지 전부 정상이면 우리 쪽 egress 공통 문제가 아니다.
       axis: worst.rate === 1 ? '전 피드 정상 — 이 시점엔 재현 안 됨'
         : othersAllOk ? `${worst.source}만 저하 — 공통 egress 문제가 아니라 해당 호스트 축(IP 평판/레이트리밋/상대 인프라)`
         : '복수 피드 저하 — Vercel egress 공통 축 의심',
-      note: `로컬 대비 성공률 격차를 볼 것. rss.js와 동일 조건(헤더/타임아웃 ${FETCH_TIMEOUT_MS}ms).`,
+      coldHypothesis: cold
+        ? '이 모드에서만 저하가 재현되면 콜드 커넥션 가설 확정(웜에선 소켓 재사용으로 가려짐)'
+        : '?cold=1 로 재호출해 콜드 조건과 비교할 것',
+      note: `rss.js와 동일 조건(헤더/타임아웃 ${FETCH_TIMEOUT_MS}ms).`,
     };
 
     return res.status(200).json({
@@ -229,8 +272,12 @@ export default async function handler(req, res) {
       verdict,
       results: [a, b, c, d, e],
       rss: {
-        attemptsPerFeed: RSS_ATTEMPTS,
-        gapMs: RSS_GAP_MS,
+        cold,
+        attemptsPlanned: RSS_ATTEMPTS,
+        // 콜드는 함수 한도 때문에 조기 종료될 수 있다 — 실제 수행 라운드를 밝힌다.
+        roundsCompleted: rounds,
+        truncated: rounds < RSS_ATTEMPTS,
+        gapMs: cold ? COLD_GAP_MS : WARM_GAP_MS,
         timeoutMs: FETCH_TIMEOUT_MS,
         verdict: rssVerdict,
         results: rssResults,

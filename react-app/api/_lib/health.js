@@ -227,6 +227,33 @@ export function recordFailure(source, err) {
   void persist(source, false, err);
 }
 
+/**
+ * 재시도 계측 — "재시도가 실제로 몇 건을 구제했는지"를 관찰하려고 분리해서 센다.
+ * 재시도로 살아난 호출은 최종적으로 recordSuccess가 성공으로 집계하므로, 이 카운터가
+ * 없으면 그 구제 효과가 성공률에 묻혀 보이지 않는다(도입 판단 근거가 사라진다).
+ * @param {string} source
+ * @param {{recovered: boolean}} opts recovered=true면 재시도가 성공으로 끝났다는 뜻
+ */
+export function recordRetry(source, { recovered } = {}) {
+  if (!source) return;
+  void persistRetry(source, Boolean(recovered));
+}
+
+async function persistRetry(source, recovered) {
+  const r = getRedis();
+  if (!r) return;
+  try {
+    const dailyKey = `health:daily:${source}:${kstToday()}`;
+    const p = r.pipeline();
+    p.hincrby(dailyKey, 'retry:attempt', 1);
+    if (recovered) p.hincrby(dailyKey, 'retry:recovered', 1);
+    p.expire(dailyKey, DAILY_TTL_SEC);
+    await p.exec();
+  } catch (e) {
+    console.warn(`[health] 재시도 기록 실패(${source}) — 무시: ${e.message}`);
+  }
+}
+
 async function persist(source, ok, err) {
   const r = getRedis();
   if (!r) return;
@@ -342,7 +369,7 @@ export async function getHealthSnapshot() {
       source, status: 'unknown', lastSuccessAt: null, lastFailureAt: null,
       lastError: null, lastErrorCode: null, lastErrorResolved: false,
       consecutiveFailures: 0, todayRate: null, today: { success: 0, failure: 0 },
-      lastEnv: null, todayEnv: {}, todayErrors: {},
+      lastEnv: null, todayEnv: {}, todayErrors: {}, todayRetry: { attempt: 0, recovered: 0 },
     }));
   }
 
@@ -381,6 +408,11 @@ export async function getHealthSnapshot() {
       today: { success, failure },
       // 오늘 실패의 원인별 분포 { 'ECONNRESET': 9, 'http-403': 2 }
       todayErrors: errorCounts(daily),
+      // 오늘 재시도 발동/구제 건수 — recovered가 곧 "재시도가 없었으면 실패했을 건수".
+      todayRetry: {
+        attempt: Number(daily?.['retry:attempt'] ?? 0),
+        recovered: Number(daily?.['retry:recovered'] ?? 0),
+      },
       // 마지막 기록을 남긴 실행 환경. 'production'이 아니면 그 행은 배포본 신호가 아니다.
       lastEnv: srcHash?.lastEnv ?? null,
       // 오늘 기록의 환경별 구성 { production: 12, local: 3 } — env:* 필드만 추려서.
