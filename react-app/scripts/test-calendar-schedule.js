@@ -15,6 +15,7 @@ import {
   getScheduleDepletion, getNextFomcMeeting, getNextCpiRelease,
   getUpcomingEvents, getEventsForMonth, getExpiryEvents,
   FOMC_MEETINGS, CPI_RELEASES, EARNINGS_EVENTS, VERIFIED_AT, MARKET_HOLIDAYS,
+  MSCI_REVIEWS_2026, MSCI_REVIEWS_2027, BOK_MEETINGS_2026,
 } from '../api/_lib/macro-calendar.js';
 import { buildCalendarSource } from '../api/health.js';
 
@@ -121,7 +122,11 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   assert(dep[0].category === 'earnings', `4: 가장 급한 건 실적(11/17) (실제: ${dep[0].category})`);
   // 2027 병합의 효과 — 예전 구조라면 FOMC(2026-12-09)도 함께 소진 경고에 올랐다.
   assert(!dep.some(d => d.category === 'fomc'), '4: FOMC는 2027 병합으로 소진 대상 아님');
-  assert(dep.length === 3, `4: 실적·MSCI·CPI 3건 (실제: ${dep.map(d => d.category).join(',')})`);
+  // 2026-07-28: MSCI 2027 배열 신설로 MSCI가 소진 목록에서 빠지고, 금통위(2027 미공표)가
+  // 대신 들어왔다 — 건수는 3으로 같지만 구성이 바뀌었으므로 구성까지 명시해 고정한다.
+  assert(dep.map(d => d.category).sort().join(',') === 'bok,cpi,earnings',
+    `4: 실적·금통위·CPI 3건 (실제: ${dep.map(d => d.category).join(',')})`);
+  assert(!dep.some(d => d.category === 'msci'), '4: MSCI는 2027 신설로 소진 대상 아님');
 }
 
 // ── 5. 상태판 calendar 유사 행 ──────────────────────────────────
@@ -141,8 +146,49 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
 
 // ── 6. verifiedAt 계약 ─────────────────────────────────────────
 {
-  const keys = ['fomc', 'cpi', 'msci', 'earnings', 'holidays'];
-  assert(keys.every(k => /^\d{4}-\d{2}-\d{2}$/.test(VERIFIED_AT[k] ?? '')), '6: 5개 카테고리 모두 YYYY-MM-DD');
+  const keys = ['fomc', 'cpi', 'msci', 'earnings', 'holidays', 'bok'];
+  assert(keys.every(k => /^\d{4}-\d{2}-\d{2}$/.test(VERIFIED_AT[k] ?? '')), '6: 6개 카테고리 모두 YYYY-MM-DD');
+}
+
+// ── 8. 전수 감사 결과 고정 (2026-07-28) ────────────────────────
+// 공식 일정표와 기계 대조한 개수·값을 못박는다. 배열을 손댈 때 여기서 걸려야
+// "몇 건이어야 하는지"를 다시 찾아보지 않아도 된다.
+{
+  // MSCI는 연 4회(2·5·8·11월). 예전엔 3회(5·8·11)로 잡혀 2월이 통째로 빠져 있었다.
+  assert(MSCI_REVIEWS_2026.length === 4, `8: MSCI 2026 연 4회 (실제: ${MSCI_REVIEWS_2026.length})`);
+  assert(MSCI_REVIEWS_2027.length === 4, `8: MSCI 2027 연 4회 (실제: ${MSCI_REVIEWS_2027.length})`);
+  assert(MSCI_REVIEWS_2026.map(r => r.label).join(',') === '2월,5월,8월,11월', '8: MSCI 2026 월 구성');
+  assert(MSCI_REVIEWS_2027.map(r => r.label).join(',') === '2월,5월,8월,11월', '8: MSCI 2027 월 구성');
+  assert(MSCI_REVIEWS_2026[0].announce === '2026-02-10' && MSCI_REVIEWS_2026[0].effective === '2026-03-02',
+    '8: MSCI 2026-02 소급 추가분(발표 2/10, 시행 3/2)');
+
+  // 금통위 — 통방만 연 8회(금융안정회의 4회는 제외 대상)
+  assert(BOK_MEETINGS_2026.length === 8, `8: 금통위 2026 연 8회 (실제: ${BOK_MEETINGS_2026.length})`);
+  assert(BOK_MEETINGS_2026.every(m => /^2026-\d{2}-\d{2}$/.test(m.date)), '8: 금통위 날짜 형식');
+  // 통방은 3·6·9·12월에 열리지 않는다(그 달은 금융안정회의) — 잘못 섞이면 여기서 걸린다
+  assert(!BOK_MEETINGS_2026.some(m => ['03', '06', '09', '12'].includes(m.date.slice(5, 7))),
+    '8: 금통위에 금융안정회의 달(3·6·9·12월)이 섞이지 않음');
+
+  // FOMC/CPI는 전건 일치 판정 — 개수만 회귀로 고정
+  assert(FOMC_MEETINGS.length === 16, `8: FOMC 2026+2027 16건 (실제: ${FOMC_MEETINGS.length})`);
+  assert(CPI_RELEASES.length === 12, `8: CPI 2026 12건 + 2027 미확인 0건 (실제: ${CPI_RELEASES.length})`);
+
+  // FOMC time — ET 셀 날짜 + KST 환산 시각. 없으면 "익일 새벽 결과"를 알 수 없다.
+  const jan = getEventsForMonth(2026, 1).find(e => e.category === 'fomc');
+  const jul = getEventsForMonth(2026, 7).find(e => e.category === 'fomc');
+  assert(jan?.time === '결과 발표 익일 04:00 KST', `8: FOMC 겨울(EST) time (실제: "${jan?.time}")`);
+  assert(jul?.time === '결과 발표 익일 03:00 KST', `8: FOMC 여름(EDT) time (실제: "${jul?.time}")`);
+  assert(jan?.date === '2026-01-27' && jan?.endDate === '2026-01-28', '8: FOMC 셀 날짜는 ET 기준 유지');
+
+  // 금통위 이벤트 형태 — time 없음(발표가 KST 오전이라 환산 불필요)
+  const bok = getEventsForMonth(2026, 8).find(e => e.category === 'bok');
+  assert(bok?.date === '2026-08-27' && bok?.region === 'KR', '8: 금통위 이벤트 생성');
+  assert(bok?.time === undefined, '8: 금통위는 time 없음');
+  assert(getUpcomingEvents(400).some(e => e.category === 'bok'), '8: 금통위가 upcoming에 포함');
+
+  // depletion 편입 — 2027 미공표라 2026-11-26이 수평선
+  const far = withToday('2026-11-20', () => getScheduleDepletion());
+  assert(far.some(d => d.category === 'bok'), '8: 금통위 소진 임박 시 경고');
 }
 
 // ── 7. 만기일 휴장일 보정 ──────────────────────────────────────

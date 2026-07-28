@@ -7,14 +7,14 @@ const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
 // 브리핑 탭의 "주요 이슈" 카테고리 아이콘과 별개(이벤트 카테고리 전용) —
 // AnalysisChart.jsx의 MA20/60/100/200·RSI 색상을 그대로 재사용해 앱 전체 색상 언어와 일관되게.
-const CATEGORY_ICON = { fomc: '🏦', cpi: '📊', expiry: '🎯', msci: '🌐', earnings: '📈' };
-const CATEGORY_COLOR = { fomc: '#22d3ee', cpi: '#f97316', expiry: '#a855f7', msci: '#10b981', earnings: '#fbbf24' };
+const CATEGORY_ICON = { fomc: '🏦', cpi: '📊', expiry: '🎯', msci: '🌐', earnings: '📈', bok: '🇰🇷' };
+const CATEGORY_COLOR = { fomc: '#22d3ee', cpi: '#f97316', expiry: '#a855f7', msci: '#10b981', earnings: '#fbbf24', bok: '#f43f5e' };
 
 // 사람이 읽는 카테고리명 — 소진 경고 스트립(getScheduleDepletion)과 확인일 표기(verifiedAt) 공용
-const CATEGORY_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적' };
+const CATEGORY_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적', bok: '금통위', holidays: '휴장일' };
 
 // 확인일 표기 순서 — 객체 키 순서에 의존하지 않게 고정한다.
-const VERIFIED_ORDER = ['fomc', 'cpi', 'earnings', 'msci'];
+const VERIFIED_ORDER = ['fomc', 'cpi', 'earnings', 'msci', 'bok'];
 
 // 'YYYY-MM-DD' → 'M/D' (경고 문구용 축약)
 function formatMonthDay(dateStr) {

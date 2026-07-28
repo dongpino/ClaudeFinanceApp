@@ -21,13 +21,21 @@
  *
  * 출처:
  *  - FOMC: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
- *          (2026-07-27 확인 — 2027년 8회 공표분 반영, 2026년분 원문 재대조 일치)
- *  - CPI:  https://www.bls.gov/schedule/news_release/cpi.htm
- *          교차 확인: https://www.usinflationcalculator.com/inflation/consumer-price-index-release-schedule/
- *          (2026-07-27 확인) — 발표 시각은 미 동부시각(ET) 08:30 고정.
- *  - MSCI: https://www.msci.com/indexes/index-resources/index-announcements
- *          https://www.msci.com/eqb/pressreleases/archive/ir_dates.pdf
- *          (2026-07-27 확인 — 8월/11월 예정일 원문 일치, 단 MSCI가 변경 가능성 공식 고지)
+ *          (2026-07-28 전수 대조 — 2026·2027 16건 전건 일치. 연준 페이지는 "each meeting
+ *           date is tentative until confirmed"라고 명시하나, 우리 배열은 tentative를
+ *           쓰지 않는다 — 연준 공표분은 사실상 확정으로 취급한다.)
+ *  - CPI:  https://www.bls.gov/schedule/news_release/cpi.htm  ⚠️ 봇 차단(403)으로 직접 대조 불가
+ *          교차 확인 ①: https://www.usinflationcalculator.com/inflation/consumer-price-index-release-schedule/
+ *          교차 확인 ②: FRED release dates API(release_id=10) — BLS 미러
+ *          (2026-07-28 전수 대조 — 2026년 12건이 refMonth까지 두 경로 모두 일치.)
+ *          발표 시각은 미 동부시각(ET) 08:30 고정.
+ *  - MSCI: https://www.msci.com/eqb/pressreleases/archive/ir_dates.pdf (Next Eight IR Dates)
+ *          개별 리뷰 보도자료(businesswire/MSCI media room)로 항목별 교차 확인
+ *          (2026-07-28 전수 대조 — **연 4회 체계로 정정**하며 2026-02 소급 추가,
+ *           2027 4건 신설. 상세는 MSCI_REVIEWS_2026 주석 참조.)
+ *  - 금통위: 한국은행 "2026년 금융통화위원회 정기회의 개최 및 의사록 공개 예정일정"
+ *          (2025-10-30 공표). 개별 일자는 통화정책방향 보도자료로 교차 확인.
+ *          (2026-07-28 확인 — 통방 8회. 2027분 미공표.)
  *  - 실적: 삼성전자 IR(news.samsung.com/global/ir), 애플 뉴스룸/8-K, NVIDIA 8-K/IR
  *          (2026-07-27 확인 — 3Q 일정은 각 사가 통상 3~4주 전에야 공표해 미확정,
  *           과거 패턴 기반 추정치를 tentative:true로 선반영)
@@ -52,9 +60,15 @@
  * (일정 변경 감지 수단이 없는 현 구조에서 사용자에게 줄 수 있는 최소한의 신빙성 근거)
  */
 export const VERIFIED_AT = {
-  fomc:     '2026-07-27',
-  cpi:      '2026-07-27',
-  msci:     '2026-07-27',
+  // 2026-07-28 전수 기계 대조: federalreserve.gov 공표 일정과 2026·2027 16건 전건 일치.
+  fomc:     '2026-07-28',
+  // 2026-07-28 전수 대조: 2026년 12건이 refMonth까지 전건 일치(usinflationcalculator
+  // + FRED release dates 두 경로 독립 확인). 2027분은 확인 실패 — 배열 주석 참조.
+  cpi:      '2026-07-28',
+  // 2026-07-28: 연 4회 체계로 정정하며 2026-02 소급 추가 + 2027 4건 신설.
+  msci:     '2026-07-28',
+  // 한국은행 2026년 정기회의 일정(2025-10-30 공표) 기준. 2027분 미공표.
+  bok:      '2026-07-28',
   // 2026-07-28: 네이버 IR / 삼성 global IR / Finnhub와 재대조해 오류 3건 정정(위 출처 주석).
   earnings: '2026-07-28',
   // 만기일 보정용 휴장일 표(MARKET_HOLIDAYS) — 다른 하드코딩 배열과 같은 규율을 적용한다.
@@ -104,24 +118,83 @@ export const CPI_RELEASES_2026 = [
   { date: '2026-12-10', refMonth: '2026-11' },
 ];
 
-// 2027년 CPI — ⚠️ 미공표(2026-07-27 확인). BLS는 통상 전년 가을에 다음 해 공표 일정을
-// 올리며(bls.gov/schedule/news_release/cpi.htm), 현재 마지막 공표분은 2026-12-10이다.
-// TODO(2026-10-01 재확인): 공표되면 아래 배열을 채우고 VERIFIED_AT.cpi를 함께 갱신할 것.
-//   미채움 상태에서도 병합 구조상 동작에 문제는 없고, 2026-11-10경 CPI 소진 경고가 뜬다.
+// 2027년 CPI — ⚠️ **확인 실패**(2026-07-28). "미공표"로 단정하지 않는다.
+//   · bls.gov가 봇 차단(Access Denied 403) — 원출처 직접 대조 불가
+//   · FRED release dates API(release_id=10, include_release_dates_with_no_data=true)로
+//     우회 조회 → 2026분 12건은 우리 배열과 전건 일치했으나 2027분은 **0건**
+//   · 교차확인 출처(usinflationcalculator)도 2026-12-10까지만 게재
+//   즉 "BLS가 아직 안 올렸다"와 "미러들이 아직 못 받아왔다"를 구분하지 못한 상태다.
+// TODO(2026-10-01 재시도): 위 세 경로를 다시 확인해 공표됐으면 채우고 VERIFIED_AT.cpi를
+//   함께 갱신할 것. 미채움 상태에서도 병합 구조상 동작에 문제는 없고, 2026-11-10경
+//   CPI 소진 경고가 뜬다.
 export const CPI_RELEASES_2027 = [];
 
 /** 소비부가 참조하는 병합 CPI 일정(날짜 오름차순) */
 export const CPI_RELEASES = [...CPI_RELEASES_2026, ...CPI_RELEASES_2027];
 
-// MSCI 정기 인덱스 리뷰(5·8·11월) — announce: 발표일, effective: 시행일(리밸런싱 반영일)
-const MSCI_REVIEWS_2026 = [
+/**
+ * MSCI 정기 인덱스 리뷰 — **연 4회(2·5·8·11월)**. announce: 발표일, effective: 시행일.
+ *
+ * ⚠️ 2026-07-28 정정: 예전 주석이 "(5·8·11월)"이라 2월 리뷰가 통째로 빠져 있었다.
+ *    2023-02부터 4회 전부 동일한 QCIR(분기 인덱스 리뷰) 체계이며, 과거의
+ *    Quarterly(2·8월)/Semi-Annual(5·11월) 구분은 폐지됐다 — 2월 누락 재발 방지용 기록.
+ *    MSCI가 "Next Eight Index Review Dates"(=2년치 8회)를 한 번에 공표하는 것도
+ *    연 4회 체계의 방증이다.
+ *
+ * ⚠️ effective 값의 규약이 배열 안에서 섞여 있다(2026-07-28 발견, 미정정).
+ *    MSCI는 "changes as of the close of X" 와 "Effective date Y"(=X의 다음 영업일)를
+ *    함께 공표하는데, 아래 2026-05는 close 날짜(5/29 금)를, 2026-08·11은 effective
+ *    날짜(9/1 화, 12/1 화)를 담고 있다. 어느 쪽으로 통일할지는 판단이 필요해 이번엔
+ *    건드리지 않았다 — 통일 시 2026-05는 2026-06-01로 바뀐다.
+ *
+ * TODO(규약): region:'KR'의 의미가 정의돼 있지 않다 — "발표 주체 국가"인지 "영향받는
+ *   시장"인지. MSCI는 글로벌 지수사업자(발표는 CET 23:00)라 두 해석이 갈린다.
+ *   FOMC/CPI의 'US'도 같은 모호성을 갖는다(그쪽은 둘이 일치해 드러나지 않을 뿐).
+ *   규약을 정한 뒤 일괄 정리할 것.
+ */
+export const MSCI_REVIEWS_2026 = [
+  // 2026-07-28 소급 추가: 발표 2/10 (businesswire/MSCI 보도자료), "all changes as of the
+  // close of February 27, 2026, Effective date March 02, 2026" → effective는 3/2 채택.
+  { announce: '2026-02-10', effective: '2026-03-02', label: '2월' },
   { announce: '2026-05-12', effective: '2026-05-29', label: '5월' },
   { announce: '2026-08-12', effective: '2026-09-01', label: '8월' },
   { announce: '2026-11-11', effective: '2026-12-01', label: '11월' },
 ];
 
-// TODO(2026-10-01 재확인): 2027년 리뷰 일정(MSCI ir_dates.pdf) 확정 시 MSCI_REVIEWS_2027 추가.
-const MSCI_REVIEWS = [...MSCI_REVIEWS_2026];
+// MSCI press release 2026-05-12 (ir_dates.pdf) 원문 확인, verifiedAt 2026-07-28
+export const MSCI_REVIEWS_2027 = [
+  { announce: '2027-02-09', effective: '2027-03-01', label: '2월' },
+  { announce: '2027-05-10', effective: '2027-05-28', label: '5월' },
+  { announce: '2027-08-12', effective: '2027-09-01', label: '8월' },
+  { announce: '2027-11-11', effective: '2027-12-01', label: '11월' },
+];
+
+const MSCI_REVIEWS = [...MSCI_REVIEWS_2026, ...MSCI_REVIEWS_2027];
+
+/**
+ * 한국은행 금융통화위원회 — 통화정책방향 결정회의(통방)만. **연 8회**.
+ * 금융안정회의(3·6·9·12월, 연 4회)는 금리 결정이 없어 제외한다.
+ *
+ * 발표 시각은 회의 당일 오전(통상 10:00 전후)이고 그 자체가 KST라 time 필드가 불필요하다
+ * — FOMC/CPI처럼 ET→KST 환산으로 날짜가 어긋나는 문제가 없다.
+ *
+ * 출처: 한국은행 "2026년 금융통화위원회 정기회의 개최 및 의사록 공개 예정일정"
+ *       (2025-10-30 공표). 개별 일자는 한국은행 통화정책방향 보도자료로 교차 확인
+ *       (예: "통화정책방향(2026.4.10)", "통화정책방향(2026.7.16)").
+ *       (2026-07-28 확인 — 4/10만 금요일이라 원출처로 따로 재확인했다. 나머지는 목요일.)
+ */
+export const BOK_MEETINGS_2026 = [
+  { date: '2026-01-15' }, { date: '2026-02-26' }, { date: '2026-04-10' }, { date: '2026-05-28' },
+  { date: '2026-07-16' }, { date: '2026-08-27' }, { date: '2026-10-22' }, { date: '2026-11-26' },
+];
+
+// 2027년 금통위 — ⚠️ 미공표(2026-07-28 확인). 한국은행은 통상 전년 10월경 다음 해
+// 일정을 공표한다(2026년분은 2025-10-30 공표).
+// TODO(2026-11-01 재확인): 공표되면 채우고 VERIFIED_AT.bok을 함께 갱신할 것.
+export const BOK_MEETINGS_2027 = [];
+
+/** 소비부가 참조하는 병합 금통위 일정(날짜 오름차순) */
+export const BOK_MEETINGS = [...BOK_MEETINGS_2026, ...BOK_MEETINGS_2027];
 
 /**
  * 실적 발표. tentative:true = 회사가 아직 공식 공표하지 않아 과거 패턴으로 추정한 날짜.
@@ -258,11 +331,15 @@ const QUARTER_MONTHS_0 = [2, 5, 8, 11]; // 0-indexed: 3·6·9·12월
  *  - 미국: NYSE Group 2025~2027 Holiday and Early Closings Calendar.
  *          2026-06-19 Juneteenth 전휴장은 Fidelity/Kiplinger로 교차 확인.
  *
- * TODO(미확정): 2026 추석 연휴가 토요일(9/26)과 겹쳐 대체공휴일(9/28 월)이 생기는지
- *   확정하지 못했다. 넣지 않았고, 넣지 않아도 만기일 판정에는 영향이 없다 —
- *   2026년 한국 만기일 12건(1/8, 2/12, 3/12, 4/9, 5/14, 6/11, 7/9, 8/13, 9/10,
- *   10/8, 11/12, 12/10) 중 9/28과 겹치는 날이 없기 때문. 표를 다른 용도로 확장할
- *   때 이 항목부터 확인할 것.
+ * 2026 추석 대체공휴일 — **해당 없음으로 확정**(2026-07-28). 설·추석 연휴 대체공휴일은
+ * 일요일 겹침 시에만 발생한다(관공서의 공휴일에 관한 규정). 2026년 추석 연휴는
+ * 9/24~9/26이고 겹치는 요일이 토요일(9/26)이라 대체가 발생하지 않는다
+ * (일요일 9/27은 연휴 밖). 따라서 9/28은 휴장일이 아니며 표에 넣지 않는다.
+ *
+ * 임시공휴일 — 2026-07-28 기준 신규 지정 없음. 현재 표의 유일한 임시공휴일성 항목은
+ * 2026-06-03 지방선거다. ⚠️ 임시공휴일은 수시 지정이라 depletion이 감지할 수 없다
+ * (표가 소진된 게 아니라 "채워야 할 항목이 새로 생긴" 것이므로 커버리지 수평선이
+ * 움직이지 않는다). 검증층(로드맵 ③) 시간 타당성에서 다룰 것.
  */
 export const MARKET_HOLIDAYS_KR_2026 = {
   '2026-01-01': '신정',        '2026-02-16': '설날 연휴',   '2026-02-17': '설날',
@@ -406,6 +483,7 @@ export function getScheduleDepletion(withinDays = 30) {
     { category: 'cpi',      dates: CPI_RELEASES.map(r => r.date) },
     { category: 'msci',     dates: MSCI_REVIEWS.map(r => r.effective) },
     { category: 'earnings', dates: EARNINGS_EVENTS.map(e => e.date) },
+    { category: 'bok',      dates: BOK_MEETINGS.map(m => m.date) },
     // 휴장일 표는 "이벤트 목록"이 아니라 "커버리지 범위"다 — 마지막 날짜가 곧 수평선.
     // 아래 reduce가 최댓값을 집으므로, KR/US 각각의 최대를 그대로 넣으면 늦게 끝나는
     // 쪽이 이겨 먼저 소진되는 쪽을 가린다. 실질 한계는 먼저 끝나는 쪽이라 min을 넣는다.
@@ -424,8 +502,29 @@ export function getScheduleDepletion(withinDays = 30) {
 }
 
 // FOMC 회의 하나를 통합 이벤트 형태로 (getUpcomingEvents/getEventsForMonth 공용)
+//
+// ── 날짜 규약(2026-07-28 명문화) ────────────────────────────────
+// 셀 날짜 = 현지(ET) 기준, time = KST 환산. 국제 언론 표기와의 일치를 위해 셀은 ET를
+// 유지한다("1월 27~28일 FOMC"로 보도되는데 캘린더만 28~29일로 뜨면 대조가 안 된다).
+// 대신 한국 사용자에게 실제로 중요한 "결과가 언제 나오나"는 time으로 명시한다 —
+// 성명 발표는 종료일 14:00 ET이고 그건 KST로 **다음 날 새벽**이다(EST 04:00 / EDT 03:00).
+// CPI(08:30 ET → KST 같은 날 21:30/22:30)와 달리 FOMC만 날짜가 하루 넘어가므로,
+// time이 없으면 "FOMC 1/27~1/28"만 보고 1/29 새벽 결과를 놓치게 된다.
+const FOMC_STATEMENT_HOUR_ET = 14;
+const FOMC_STATEMENT_MIN_ET  = 0;
+
 function fomcEvent(meeting) {
-  return { date: meeting.start, endDate: meeting.end, title: 'FOMC 회의', shortLabel: 'FOMC', category: 'fomc', region: 'US' };
+  const { utc, uncertain } = nyWallTimeToUTC(meeting.end, FOMC_STATEMENT_HOUR_ET, FOMC_STATEMENT_MIN_ET);
+  return {
+    date: meeting.start, endDate: meeting.end, title: 'FOMC 회의', shortLabel: 'FOMC',
+    category: 'fomc', region: 'US',
+    time: `결과 발표 익일 ${formatKSTHM(utc, uncertain)} KST`,
+  };
+}
+
+// 금통위 회의 하나를 통합 이벤트 형태로 — 발표가 KST 오전이라 time 없음(위 FOMC 주석 참조).
+function bokEvent(meeting) {
+  return { date: meeting.date, title: '한국은행 금통위(통화정책방향)', shortLabel: '금통위', category: 'bok', region: 'KR' };
 }
 
 // CPI 발표 하나를 통합 이벤트 형태로 (getUpcomingEvents/getEventsForMonth 공용)
@@ -516,6 +615,13 @@ export function getUpcomingEvents(days = 30) {
     events.push({ ...e, dDay });
   }
 
+  // 금통위
+  for (const m of BOK_MEETINGS) {
+    const dDay = daysBetween(today, m.date);
+    if (dDay < 0 || dDay > days) continue;
+    events.push({ ...bokEvent(m), dDay });
+  }
+
   return events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
@@ -546,6 +652,9 @@ export function getEventsForMonth(year, month) {
   }
   for (const e of EARNINGS_EVENTS) {
     if (e.date.startsWith(prefix)) events.push(e);
+  }
+  for (const m of BOK_MEETINGS) {
+    if (m.date.startsWith(prefix)) events.push(bokEvent(m));
   }
 
   return events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));

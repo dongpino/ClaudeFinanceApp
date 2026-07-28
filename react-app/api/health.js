@@ -35,7 +35,7 @@
 import { getHealthSnapshot, storeFingerprint, ENV_TAG } from './_lib/health.js';
 import { getScheduleDepletion, VERIFIED_AT } from './_lib/macro-calendar.js';
 
-const DEPLETION_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적', holidays: '휴장일' };
+const DEPLETION_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적', holidays: '휴장일', bok: '금통위' };
 
 // 'YYYY-MM-DD' → 'M/D'
 function monthDay(dateStr) {
