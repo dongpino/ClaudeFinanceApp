@@ -9,6 +9,10 @@
  *     각 항목의 HTTP 상태·기대 JSON 여부·핵심 필드 존재·소요(ms) + 소스별 판정.
  *   → [RSS 4종] 각 피드를 RSS_ATTEMPTS회 연속 호출해 성공률·평균 지연·에러 cause
  *     분포 + 회차별 개별 결과 반환.
+ *   → [실적일 감시기 후보] 네이버 IR 일정(KR) + Finnhub 실적 캘린더(US)를 1회씩 —
+ *     상태·소요·핵심 필드 존재 여부. 2026-07-28 소스 조사에서 두 후보를 로컬 실측으로
+ *     골랐는데, 로컬 200이 Vercel 200을 뜻하지 않으므로(한경/yna 전례) egress에서
+ *     같은 필드가 실제로 나오는지 확인하는 용도다.
  *
  * RSS 섹션 목적(2026-07-28): rss-yna가 7/24까지 100%였다가 7/25부터 ~20%로
  * 계단식 하락했는데 로컬에선 90%가 나온다. 이 격차가 Vercel egress IP축인지
@@ -227,6 +231,53 @@ export default async function handler(req, res) {
     const d = await probeYahoo('d. Yahoo 지수 KOSPI ^KS11', '%5EKS11');
     const e = await probeYahoo('e. Yahoo 지수 KOSDAQ ^KQ11', '%5EKQ11');
 
+    // ── 실적일 감시기 후보 (2026-07-28 소스 조사분) ──
+    // 로컬에선 둘 다 200이지만 그건 아무것도 보장하지 않는다(한경: 로컬 200/Vercel 403,
+    // yna: 로컬 90%/프로덕션 20%). Vercel egress에서 같은 필드가 나오는지 확인한다.
+    //
+    // 네이버: 이미 쓰는 호스트(kr.js·analysis-long.js가 m.stock.naver.com 사용)라 접근성
+    // 위험이 가장 낮은 후보. irScheduleInfo.irScheduleDate가 KR 실적일의 원천이다.
+    const f = await probe('f. 네이버 삼성전자 IR 일정 (005930 integration)',
+      'https://m.stock.naver.com/api/stock/005930/integration',
+      { headers: UA, extract: j => {
+        const ir = j?.irScheduleInfo ?? null;
+        return {
+          hasIrSchedule: !!ir,
+          irScheduleDate: ir?.irScheduleDate ?? null,   // 예: '2026-07-30'
+          title: ir?.title ?? null,                     // 예: '2026년 2분기 경영실적 발표'
+          dday: ir?.irScheduleDday ?? null,
+          // 날짜 형식이 YYYY-MM-DD 그대로여야 캘린더 상수와 문자열 비교가 된다.
+          dateParsable: /^\d{4}-\d{2}-\d{2}$/.test(ir?.irScheduleDate ?? ''),
+        };
+      } });
+
+    // Finnhub: 무료 티어에 calendar/earnings가 포함됨을 로컬 실측(200). 키가 프로덕션
+    // 환경변수에만 있어 로컬 .env.production.local에서는 빈 값으로 나온다 — 키 부재는
+    // 실패가 아니라 'SKIP'으로 구분해 표기한다(없는 걸 차단으로 오독하지 않게).
+    const finnhubKey = process.env.FINNHUB_API_KEY;
+    // ⚠️ probe()는 결과에 url을 그대로 담는다 — 토큰이 쿼리에 붙는 유일한 항목이라
+    // 응답으로 나가기 전에 반드시 가린다(엔드포인트가 키로 보호돼도 키를 또 흘릴 이유는 없다).
+    const maskKey = r => (finnhubKey && typeof r?.url === 'string')
+      ? { ...r, url: r.url.replace(finnhubKey, '***') } : r;
+    const g = finnhubKey
+      ? maskKey(await probe('g. Finnhub 실적 캘린더 (AAPL)',
+          'https://finnhub.io/api/v1/calendar/earnings'
+            + `?from=2026-07-01&to=2026-12-31&symbol=AAPL&token=${finnhubKey}`,
+          { extract: j => {
+            const rows = Array.isArray(j?.earningsCalendar) ? j.earningsCalendar : [];
+            const next = rows.slice().sort((x, y) => (x.date < y.date ? -1 : 1))[0] ?? null;
+            return {
+              rows: rows.length,
+              nextDate: next?.date ?? null,   // 예: '2026-10-28'
+              nextHour: next?.hour ?? null,   // 'amc'(장마감 후) | 'bmo'(개장 전)
+              dateParsable: /^\d{4}-\d{2}-\d{2}$/.test(next?.date ?? ''),
+              hasHour: !!next?.hour,
+              allDates: rows.map(r => r.date).sort(),
+            };
+          } }))
+      : { label: 'g. Finnhub 실적 캘린더 (AAPL)', status: null, skipped: true,
+          reason: 'FINNHUB_API_KEY 미설정 — 차단이 아니라 키 부재' };
+
     // ── 판정 요약 ──
     const daumOk  = a.status === 200 && a.isJson && a.fields?.hasTradePrice
                     && c.status === 200 && c.isJson && c.fields?.hasTradePrice;
@@ -238,6 +289,16 @@ export default async function handler(req, res) {
       daum_stock:  daumOk ? 'USABLE (종목 quote 200+필드)' : 'BLOCKED/실패',
       daum_chart:  daumChartOk ? 'USABLE (일봉 OHLCV 200)' : 'BLOCKED/실패',
       yahoo_index: (yahooKs || yahooKq) ? `USABLE (^KS11:${yahooKs?'ok':'x'} / ^KQ11:${yahooKq?'ok':'x'})` : 'BLOCKED/미도달',
+      // 실적일 감시기 후보 — "200이 왔나"가 아니라 "쓸 필드가 실제로 있나"로 판정한다.
+      earnings_kr_naver: f.status === 200 && f.isJson && f.fields?.hasIrSchedule && f.fields?.dateParsable
+        ? `USABLE (irScheduleDate=${f.fields.irScheduleDate})`
+        : f.status === 200 ? 'REACHABLE/필드없음 (irScheduleInfo 미노출 — 종목별 커버리지 편차 있음)'
+        : 'BLOCKED/실패',
+      earnings_us_finnhub: g.skipped ? `SKIP (${g.reason})`
+        : g.status === 200 && g.isJson && g.fields?.dateParsable
+        ? `USABLE (next=${g.fields.nextDate} ${g.fields.nextHour ?? ''}, ${g.fields.rows}건)`
+        : g.status === 403 || g.status === 402 ? `PLAN/권한 문제 (HTTP ${g.status})`
+        : 'BLOCKED/실패',
       note: '로컬 결과와 비교할 것 — 로컬✓/Vercel✗ 또는 그 반대 가능(한경 교훈).',
     };
 
@@ -270,7 +331,7 @@ export default async function handler(req, res) {
       checkedAt: new Date().toISOString(),
       region: process.env.VERCEL_REGION ?? '(unknown)',
       verdict,
-      results: [a, b, c, d, e],
+      results: [a, b, c, d, e, f, g],
       rss: {
         cold,
         attemptsPlanned: RSS_ATTEMPTS,

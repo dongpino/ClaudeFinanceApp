@@ -43,7 +43,7 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   // 반증 — 3Q 선반영 전이었다면 실적이 걸렸어야 한다(임계 30일, 구 마지막값 8/26).
   const before = withToday('2026-07-27', () => getScheduleDepletion(120));
   const earnings = before.find(d => d.category === 'earnings');
-  assert(earnings?.lastDate === '2026-11-18', `1: 실적 마지막 일정이 11/18이어야 함 (실제: ${earnings?.lastDate})`);
+  assert(earnings?.lastDate === '2026-11-17', `1: 실적 마지막 일정이 11/17이어야 함 (실제: ${earnings?.lastDate})`);
 }
 
 // ── 2. tentative 전파 ──────────────────────────────────────────
@@ -51,12 +51,25 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   const up = withToday('2026-07-27', () => getUpcomingEvents(120));
   // 날짜만으로 찾으면 안 된다 — 2026-10-08은 한국 옵션만기일(둘째 목요일)과 겹친다.
   const earningsOn = d => up.find(e => e.date === d && e.category === 'earnings');
-  const apple3Q = earningsOn('2026-07-30');
+  // 2026-07-28 정정으로 7/30에 실적이 2건(삼성 확정 + 애플)이 됐다 — 날짜만으로 find하면
+  // 앞선 삼성이 잡혀 "애플을 봤다"는 착각이 생긴다. 제목으로 특정한다.
+  const earningsBy = (d, kw) => up.find(e => e.date === d && e.category === 'earnings' && e.title.includes(kw));
+  const apple3Q = earningsBy('2026-07-30', '애플');
   const samsung3Q = earningsOn('2026-10-08');
-  const nvidia3Q = earningsOn('2026-11-18');
+  const nvidia3Q = earningsOn('2026-11-17');
   assert(!apple3Q?.tentative, '2: 확정 일정(7/30 애플)은 tentative 없음');
   assert(samsung3Q?.tentative === true, '2: 추정 일정(10/8 삼성 잠정)은 tentative:true');
-  assert(nvidia3Q?.tentative === true, '2: 추정 일정(11/18 엔비디아)은 tentative:true');
+  assert(nvidia3Q?.tentative === true, '2: 추정 일정(11/17 엔비디아)은 tentative:true');
+
+  // 2026-07-28 정정 3건을 회귀로 못박는다 — 셋 다 "확인일 도장이 찍혀 있는데도 틀렸던"
+  // 값이라, 다음에 누가 요일 규칙으로 되돌려 놓으면 여기서 걸려야 한다.
+  const samsung2Q = earningsBy('2026-07-30', '삼성전자 2Q26 확정실적');
+  assert(samsung2Q, '2: 삼성 2Q26 확정실적은 7/30 (7/23 아님 — 네이버 IR/삼성 IR/웹 3중 일치)');
+  assert(!samsung2Q?.tentative, '2: 삼성 2Q26 확정실적은 확정 표기');
+  assert(!up.some(e => e.date === '2026-07-23' && e.category === 'earnings'), '2: 7/23에 실적 없음');
+  assert(earningsBy('2026-10-28', '애플')?.tentative === true, '2: 애플 4Q는 10/28이며 tentative 유지');
+  assert(!up.some(e => e.date === '2026-10-29' && e.title.includes('애플')), '2: 애플이 10/29에 남아있지 않음');
+  assert(earningsBy('2026-11-17', '엔비디아')?.tentative === true, '2: 엔비디아 3Q는 11/17이며 tentative 유지');
 
   const oct = getEventsForMonth(2026, 10);
   assert(oct.filter(e => e.tentative).length === 3, `2: 10월 그리드에 추정 3건 (실제: ${oct.filter(e => e.tentative).length})`);
@@ -105,7 +118,7 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   const dep = withToday('2026-11-15', () => getScheduleDepletion());
   assert(dep.some(d => d.category === 'cpi'), '4: 11/15엔 CPI 소진 경고가 떠 있어야 함');
   assert(dep.every((d, i) => i === 0 || dep[i - 1].daysLeft <= d.daysLeft), '4: depletion은 급한 순 정렬');
-  assert(dep[0].category === 'earnings', `4: 가장 급한 건 실적(11/18) (실제: ${dep[0].category})`);
+  assert(dep[0].category === 'earnings', `4: 가장 급한 건 실적(11/17) (실제: ${dep[0].category})`);
   // 2027 병합의 효과 — 예전 구조라면 FOMC(2026-12-09)도 함께 소진 경고에 올랐다.
   assert(!dep.some(d => d.category === 'fomc'), '4: FOMC는 2027 병합으로 소진 대상 아님');
   assert(dep.length === 3, `4: 실적·MSCI·CPI 3건 (실제: ${dep.map(d => d.category).join(',')})`);
@@ -121,7 +134,7 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
 
   const warnRow = withToday('2026-11-15', () => buildCalendarSource());
   assert(warnRow.status === 'warn', `5: 소진 임박이면 warn (실제: ${warnRow.status})`);
-  assert(warnRow.note.startsWith('실적 11/18 이후 없음'), `5: note에 가장 급한 소진 (실제: "${warnRow.note}")`);
+  assert(warnRow.note.startsWith('실적 11/17 이후 없음'), `5: note에 가장 급한 소진 (실제: "${warnRow.note}")`);
   assert(warnRow.note.includes('외 2'), `5: 나머지는 "외 N"으로 축약 (실제: "${warnRow.note}")`);
   assert(warnRow.depletion.length === 3, `5: depletion 원본 동봉 (실제: ${warnRow.depletion.length})`);
 }

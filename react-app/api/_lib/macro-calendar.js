@@ -31,6 +31,16 @@
  *  - 실적: 삼성전자 IR(news.samsung.com/global/ir), 애플 뉴스룸/8-K, NVIDIA 8-K/IR
  *          (2026-07-27 확인 — 3Q 일정은 각 사가 통상 3~4주 전에야 공표해 미확정,
  *           과거 패턴 기반 추정치를 tentative:true로 선반영)
+ *          (2026-07-28 재대조 — 오류 3건 정정. 실측 출처를 명기한다:
+ *            · 삼성 2Q26 확정실적 7/23 → 7/30
+ *              네이버 IR https://m.stock.naver.com/api/stock/005930/integration
+ *                        irScheduleInfo.irScheduleDate = "2026-07-30" (D-2 실측)
+ *              + 삼성 global IR https://www.samsung.com/global/ir/ "2Q26 Earnings
+ *                Conference Call" + 웹 검색 "7월 30일 10:00" — 3중 일치
+ *            · 애플 FY26 4Q  10/29 → 10/28   Finnhub /calendar/earnings (hour=amc)
+ *            · 엔비디아 FY27 3Q 11/18 → 11/17 Finnhub /calendar/earnings (hour=amc)
+ *           같은 대조에서 확정 항목(애플 7/30·엔비디아 8/26)은 Finnhub와 정확히
+ *           일치 → 기준(ET 표기)은 맞고 추정 규칙만 하루 밀려 있었음이 확인됐다.)
  *
  * ET→KST 변환은 해당 날짜의 실제 서머타임(DST) 여부를 Intl 타임존 데이터로 판정하므로
  * DST 규칙을 직접 하드코딩하지 않고, 매년 값만 넣으면 계속 정확하게 동작한다.
@@ -45,7 +55,8 @@ export const VERIFIED_AT = {
   fomc:     '2026-07-27',
   cpi:      '2026-07-27',
   msci:     '2026-07-27',
-  earnings: '2026-07-27',
+  // 2026-07-28: 네이버 IR / 삼성 global IR / Finnhub와 재대조해 오류 3건 정정(위 출처 주석).
+  earnings: '2026-07-28',
 };
 
 export const FOMC_MEETINGS_2026 = [
@@ -114,21 +125,39 @@ const MSCI_REVIEWS = [...MSCI_REVIEWS_2026];
  * 실적 발표. tentative:true = 회사가 아직 공식 공표하지 않아 과거 패턴으로 추정한 날짜.
  *   · 삼성 잠정실적: 분기 종료 다음 달 초순(10/8은 목요일, 2024·2025년 패턴)
  *   · 삼성 확정실적: 같은 달 말 컨퍼런스콜(10/29 목)
- *   · 애플 FY 4분기: 10월 마지막 주 목요일(10/29)
- *   · 엔비디아 FY 3분기: 11월 셋째 주 수요일(11/18)
+ *   · 애플 FY 4분기: 10월 마지막 주 목요일
+ *   · 엔비디아 FY 3분기: 11월 셋째 주 수요일
  * 각 사는 통상 3~4주 전에 날짜를 공표하므로, 확정되는 대로 date를 갱신하고 tentative를
  * 제거한다(UI의 "(예정)" 배지가 자동으로 사라진다).
  * shortLabel: 캘린더 그리드 셀 칩용 5자 내외 축약(item 1 규칙)
+ *
+ * ⚠️ 추정 규칙의 +1일 오차 전례(2026-07-28 발견) — "마지막 주 목요일"/"셋째 주 수요일"
+ *    같은 요일 규칙은 실제와 하루씩 어긋난 적이 있다. 소스 조사 중 Finnhub와 대조하니
+ *    애플 3Q26을 10/29로, 엔비디아를 11/18로 잡아 뒀는데 실제는 각각 10/28·11/17이었다
+ *    (둘 다 수요일 — 규칙이 통째로 하루씩 밀려 있었다). 같은 대조에서 확정 항목 2건
+ *    (애플 7/30, 엔비디아 8/26)은 정확히 일치해, 기준(ET 표기)이 맞고 추정치만 틀렸음이
+ *    확인됐다. 요일 규칙으로 새 tentative를 채울 때는 반드시 외부 소스와 한 번 대조할 것.
+ *
+ * ⚠️ 확정 표기(tentative 없음)라고 안전한 게 아니다 — 삼성 2Q26 확정실적을 7/23으로
+ *    적어 뒀으나 실제는 7/30이었다(2026-07-28 발견). VERIFIED_AT.earnings가 7/27로
+ *    갱신된 뒤에도 틀린 값이 남아 있었다. 확인일 도장은 "그날 대조했다"는 뜻일 뿐
+ *    정확성을 보증하지 못한다 — 실적일 감시기(읽기 전용 불일치 알림) 도입 예정.
  */
 export const EARNINGS_EVENTS_2026 = [
   { date: '2026-07-07', title: '삼성전자 2Q26 잠정실적(가이던스) 발표', shortLabel: '삼성 잠정실적', category: 'earnings', region: 'KR' },
-  { date: '2026-07-23', title: '삼성전자 2Q26 확정실적(컨퍼런스콜)',   shortLabel: '삼성 확정실적', category: 'earnings', region: 'KR' },
+  // 2026-07-28 정정: 7/23 → 7/30. 3중 일치(네이버 IR irScheduleDate=2026-07-30 /
+  // 삼성 global IR "2Q26 Earnings Conference Call" / 웹 검색 "7월 30일 10시").
+  { date: '2026-07-30', title: '삼성전자 2Q26 확정실적(컨퍼런스콜)',   shortLabel: '삼성 확정실적', category: 'earnings', region: 'KR' },
   { date: '2026-07-30', title: '애플 FY26 3분기 실적 발표',            shortLabel: '애플 실적',   category: 'earnings', region: 'US' },
   { date: '2026-08-26', title: '엔비디아 FY27 2분기 실적 발표',        shortLabel: '엔비디아 실적', category: 'earnings', region: 'US' },
   { date: '2026-10-08', title: '삼성전자 3Q26 잠정실적(가이던스) 발표', shortLabel: '삼성 잠정실적', category: 'earnings', region: 'KR', tentative: true },
+  // 2026-07-28 정정: 10/29 → 10/28 (Finnhub calendar/earnings, hour=amc).
+  // tentative 유지 — 애플 공식 IR 공지 전까지는 여전히 추정이다.
+  // ⚠️ 정정으로 삼성(10/29)보다 앞서게 돼 배열 순서도 함께 바꿨다(오름차순 불변조건).
+  { date: '2026-10-28', title: '애플 FY26 4분기 실적 발표',            shortLabel: '애플 실적',   category: 'earnings', region: 'US', tentative: true },
   { date: '2026-10-29', title: '삼성전자 3Q26 확정실적(컨퍼런스콜)',   shortLabel: '삼성 확정실적', category: 'earnings', region: 'KR', tentative: true },
-  { date: '2026-10-29', title: '애플 FY26 4분기 실적 발표',            shortLabel: '애플 실적',   category: 'earnings', region: 'US', tentative: true },
-  { date: '2026-11-18', title: '엔비디아 FY27 3분기 실적 발표',        shortLabel: '엔비디아 실적', category: 'earnings', region: 'US', tentative: true },
+  // 2026-07-28 정정: 11/18 → 11/17 (Finnhub calendar/earnings, hour=amc). tentative 유지.
+  { date: '2026-11-17', title: '엔비디아 FY27 3분기 실적 발표',        shortLabel: '엔비디아 실적', category: 'earnings', region: 'US', tentative: true },
 ];
 
 /** 소비부가 참조하는 병합 실적 일정(날짜 오름차순) */
