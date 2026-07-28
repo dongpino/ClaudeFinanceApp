@@ -1,18 +1,31 @@
 /**
- * api/probe-backup.js — [임시] 네이버 백업 소스 Vercel 접근성 프로브
+ * api/probe-backup.js — [임시] 외부 소스 Vercel 접근성 프로브
  *
- * ⚠ 임시 조사용 엔드포인트. 백업 소스(Daum/Yahoo)가 Vercel 데이터센터 IP에서
- * 실제로 열리는지 확인하기 위한 1회성 프로브다(한경 교훈: 로컬 200 ≠ Vercel 200).
- * 조사 종료 후 삭제 예정.
+ * ⚠ 임시 조사용 엔드포인트. 외부 소스가 Vercel 데이터센터 IP에서 실제로 열리는지
+ * 확인하기 위한 프로브다(한경 교훈: 로컬 200 ≠ Vercel 200). 조사 종료 후 삭제 예정.
  *
  * GET /api/probe-backup?key=<DEBUG_SIGNALS_KEY>
- *   → Daum quote/chart/코스닥 + Yahoo 지수(^KS11/^KQ11)를 서버에서 순차 fetch,
- *     각 항목의 HTTP 상태·기대 JSON 여부·핵심 필드 존재·소요(ms) + 소스별 판정 반환.
+ *   → [백업 소스] Daum quote/chart/코스닥 + Yahoo 지수(^KS11/^KQ11) 순차 fetch,
+ *     각 항목의 HTTP 상태·기대 JSON 여부·핵심 필드 존재·소요(ms) + 소스별 판정.
+ *   → [RSS 4종] 각 피드를 RSS_ATTEMPTS회 연속 호출해 성공률·평균 지연·에러 cause
+ *     분포 + 회차별 개별 결과 반환.
+ *
+ * RSS 섹션 목적(2026-07-28): rss-yna가 7/24까지 100%였다가 7/25부터 ~20%로
+ * 계단식 하락했는데 로컬에선 90%가 나온다. 이 격차가 Vercel egress IP축인지
+ * 확인하려면 "프로덕션이 실제로 보내는 그 요청"을 Vercel에서 쏴 봐야 한다.
+ * 그래서 URL/헤더/타임아웃을 rss.js에서 import해 쓴다(복제하면 드리프트 발생).
+ *
+ * 회차별 결과를 남기는 이유: 1회차만 실패하고 2~5회차가 성공하면 커넥션 수립
+ * 단계(TLS/handshake/최초 소켓) 문제고, 산발적이면 다른 축(레이트리밋·LB 특정
+ * 노드·패킷 유실)이다. 총계만 보면 이 둘이 구분되지 않는다.
  *
  * DEBUG_SIGNALS_KEY 환경변수로만 보호(debug-signals.js와 동일 패턴) — 무키 접근 403.
- * health 오염 방지 위해 trackedFetch가 아닌 순수 fetch 사용(프로브 트래픽은 상태판에
- * 집계되면 안 됨).
+ * health 오염 방지 위해 trackedFetch/fetchFeed가 아닌 순수 fetch 사용(프로브
+ * 트래픽은 상태판에 집계되면 안 됨).
  */
+
+import { classifyError, classifySource } from './_lib/health.js';
+import { RSS_FEEDS, COINDESK_FEED, RSS_HEADERS, FETCH_TIMEOUT_MS } from './_collectors/rss.js';
 
 const UA = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120',
@@ -42,6 +55,71 @@ async function probe(label, url, { headers = {}, timeout = 9000, extract } = {})
   } catch (e) {
     return { label, url, status: 0, ms: Date.now() - t0, error: `${e.name}: ${e.message}` };
   }
+}
+
+// ── RSS 반복 프로브 ─────────────────────────────────────────────────
+const RSS_ATTEMPTS   = 5;
+const RSS_GAP_MS     = 200;   // 회차 간 간격 — 상대 서버 부담/버스트 오탐 방지
+const rssSleep = ms => new Promise(r => setTimeout(r, ms));
+
+// 회차 시퀀스에서 실패 패턴을 읽는다. 총계만으론 구분 안 되는 축을 가른다.
+function detectPattern(attempts) {
+  const fails = attempts.filter(a => !a.ok);
+  if (fails.length === 0) return 'all-ok';
+  if (fails.length === attempts.length) return 'all-fail';
+  if (fails.length === 1 && fails[0].i === 1) return 'first-only(커넥션 수립 단계 의심)';
+  if (fails.every(a => a.i === 1 || a.i === 2)) return 'early-only(웜업 구간 의심)';
+  return 'sporadic(레이트리밋/LB노드/패킷유실 등 다른 축)';
+}
+
+// 피드 1개를 N회 연속 호출. rss.js의 fetchFeedOnce와 동일 조건(헤더/타임아웃)을 쓰되
+// health는 절대 건드리지 않는다.
+async function probeFeedRepeated({ url, source }, sourceKey) {
+  const attempts = [];
+  for (let i = 1; i <= RSS_ATTEMPTS; i++) {
+    const t0 = Date.now();
+    try {
+      const res  = await fetch(url, { headers: RSS_HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      const buf  = await res.arrayBuffer();
+      const ms   = Date.now() - t0;
+      const ct   = (res.headers.get('content-type') || '').split(';')[0];
+      const server = res.headers.get('cf-ray') ? 'cloudflare' : (res.headers.get('server') || '(none)');
+      attempts.push({
+        i, ok: res.ok, status: res.status, ms, bytes: buf.byteLength, contentType: ct, server,
+        ...(res.ok ? {} : { code: `http-${res.status}` }),
+      });
+    } catch (e) {
+      // undici는 원인을 cause에 숨긴다 — health 히스토그램과 같은 어휘로 정규화한다.
+      attempts.push({
+        i, ok: false, status: 0, ms: Date.now() - t0,
+        error: `${e.name}: ${e.message}`,
+        causeCode: e.cause?.code ?? null,
+        code: classifyError(e),
+      });
+    }
+    if (i < RSS_ATTEMPTS) await rssSleep(RSS_GAP_MS);
+  }
+
+  const okAttempts = attempts.filter(a => a.ok);
+  const errors = {};
+  for (const a of attempts) if (!a.ok) errors[a.code] = (errors[a.code] ?? 0) + 1;
+
+  return {
+    source: sourceKey,
+    label: source,
+    url,
+    attempts: RSS_ATTEMPTS,
+    okCount: okAttempts.length,
+    rate: Math.round((okAttempts.length / RSS_ATTEMPTS) * 100) / 100,
+    avgMs: okAttempts.length ? Math.round(okAttempts.reduce((s, a) => s + a.ms, 0) / okAttempts.length) : null,
+    bytes: okAttempts[0]?.bytes ?? null,
+    server: okAttempts[0]?.server ?? null,
+    errors,
+    // 'O'=성공 'X'=실패, 1회차부터 순서대로 — 눈으로 패턴이 바로 보이게.
+    sequence: attempts.map(a => (a.ok ? 'O' : 'X')).join(''),
+    pattern: detectPattern(attempts),
+    attemptDetail: attempts,
+  };
 }
 
 // Yahoo: query1 실패(에러/비200) 시 query2로 재시도.
@@ -124,11 +202,39 @@ export default async function handler(req, res) {
       note: '로컬 결과와 비교할 것 — 로컬✓/Vercel✗ 또는 그 반대 가능(한경 교훈).',
     };
 
+    // ── RSS 4종 반복 프로브 ──
+    // 순차 실행: 동시에 쏘면 우리 쪽 커넥션 경합이 변수로 섞여 IP축 판정이 흐려진다.
+    const rssResults = [];
+    for (const feed of [...RSS_FEEDS, COINDESK_FEED]) {
+      rssResults.push(await probeFeedRepeated(feed, classifySource(feed.url) ?? feed.url));
+    }
+
+    const worst = rssResults.reduce((w, r) => (r.rate < w.rate ? r : w), rssResults[0]);
+    const others = rssResults.filter(r => r !== worst);
+    const othersAllOk = others.every(r => r.rate === 1);
+
+    const rssVerdict = {
+      summary: rssResults.map(r => `${r.source} ${r.sequence} ${Math.round(r.rate * 100)}%`).join(' | '),
+      worst: `${worst.source} ${Math.round(worst.rate * 100)}% (${worst.pattern})`,
+      // 한 피드만 저하 + 나머지 전부 정상이면 우리 쪽 egress 공통 문제가 아니다.
+      axis: worst.rate === 1 ? '전 피드 정상 — 이 시점엔 재현 안 됨'
+        : othersAllOk ? `${worst.source}만 저하 — 공통 egress 문제가 아니라 해당 호스트 축(IP 평판/레이트리밋/상대 인프라)`
+        : '복수 피드 저하 — Vercel egress 공통 축 의심',
+      note: `로컬 대비 성공률 격차를 볼 것. rss.js와 동일 조건(헤더/타임아웃 ${FETCH_TIMEOUT_MS}ms).`,
+    };
+
     return res.status(200).json({
       checkedAt: new Date().toISOString(),
       region: process.env.VERCEL_REGION ?? '(unknown)',
       verdict,
       results: [a, b, c, d, e],
+      rss: {
+        attemptsPerFeed: RSS_ATTEMPTS,
+        gapMs: RSS_GAP_MS,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        verdict: rssVerdict,
+        results: rssResults,
+      },
     });
   } catch (err) {
     console.error('[probe-backup] 실패:', err.message);

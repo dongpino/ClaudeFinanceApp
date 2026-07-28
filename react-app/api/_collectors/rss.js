@@ -20,7 +20,10 @@
 
 import { recordSuccess, recordFailure, classifySource } from '../_lib/health.js';
 
-const RSS_FEEDS = [
+// export 이유: api/probe-backup.js가 "프로덕션이 실제로 보내는 그 요청"을 그대로
+// 재현해야 IP축 검증이 의미를 갖는다. URL/헤더/타임아웃을 복제하면 드리프트가 생기므로
+// 상수를 공유한다(프로브는 fetchFeed를 호출하지 않는다 — health가 오염되면 안 되므로).
+export const RSS_FEEDS = [
   { url: 'https://www.yna.co.kr/rss/market.xml',       source: '연합뉴스 마켓' },  // 마켓+ 전용
   { url: 'https://www.asiae.co.kr/rss/stock.htm',      source: '아시아경제 증권' }, // 증권 섹션 전용(비-CF)
   // 이데일리는 https 인증서가 깨져 있어(rss.edaily.co.kr TLS 실패) http로 받는다.
@@ -32,7 +35,7 @@ const RSS_FEEDS = [
 // 예전 UA 'MarketBriefBot/1.0'의 "Bot" 토큰이 Cloudflare Bot Fight Mode를 자극한 전례가
 // 있어 "Bot" 제거 + 일반 헤더 보강 유지. (한국경제는 UA와 무관한 IP축 하드 403이라 이
 // 헤더로도 못 뚫려 제거됐지만, 남은 비-CF 피드에도 정직한 UA 원칙은 그대로 적용한다.)
-const RSS_HEADERS = {
+export const RSS_HEADERS = {
   'User-Agent':      'MarketBrief/1.0',
   'Accept':          'application/rss+xml, application/xml, text/xml, */*',
   'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
@@ -66,9 +69,9 @@ function isChallengeHtml(contentType, body) {
 
 // 코인 뉴스 — 돌발 이슈 감지(api/issues.js)용. 리다이렉트(308) 있지만 fetch가 기본으로 따라감.
 // 실측(2026-07-06): 200 OK, 최신 항목 정상 수집 확인.
-const COINDESK_FEED = { url: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk' };
+export const COINDESK_FEED = { url: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk' };
 
-const FETCH_TIMEOUT_MS  = 6_000;
+export const FETCH_TIMEOUT_MS = 6_000;
 const MAX_ITEMS_PER_FEED = 12;  // 피드당 최대 12개 → 폴백 채움용 구기사 확보
 const MIN_AFTER_FILTER  = 8;    // 필터 후 이 수 미만이면 원본 기사로 보충
 
