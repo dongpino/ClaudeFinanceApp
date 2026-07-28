@@ -5,6 +5,8 @@
     { "source": "/detail/:id", "destination": "/index.html" }
   ],
   "crons": [
-    { "path": "/api/briefing-cron", "schedule": "30 23 * * *" }
+    { "path": "/api/briefing-cron", "schedule": "30 23 * * *" },
+    { "path": "/api/probe-daum-status", "schedule": "40 23 * * 0-5" },
+    { "path": "/api/probe-cnbc-format", "schedule": "0 14 * * 1-5" }
   ]
 }

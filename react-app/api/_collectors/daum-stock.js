@@ -43,6 +43,8 @@ function direction(pct) { return pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat'; }
 const DAUM_STATUS_MAP = {
   REGULAR_HOURS: 'REGULAR_HOURS', // 장중 (실측 확인)
   // TODO(프로브 08:30~09:00 KST 실측): Daum 장전 토큰 → 'PREOPEN', 장마감 토큰 → 확정 후 추가
+  //   실측 수단은 api/probe-daum-status.js(08:40 KST 크론)가 Redis probe:daum-status에
+  //   날짜별로 쌓는 원문 토큰이다. 값이 확정되면 여기 채우고 그 크론은 은퇴시킨다.
 };
 function normalizeStatus(s) { return DAUM_STATUS_MAP[s] ?? null; }
 
