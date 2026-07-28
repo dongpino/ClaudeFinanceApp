@@ -159,8 +159,35 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   assert(MSCI_REVIEWS_2027.length === 4, `8: MSCI 2027 연 4회 (실제: ${MSCI_REVIEWS_2027.length})`);
   assert(MSCI_REVIEWS_2026.map(r => r.label).join(',') === '2월,5월,8월,11월', '8: MSCI 2026 월 구성');
   assert(MSCI_REVIEWS_2027.map(r => r.label).join(',') === '2월,5월,8월,11월', '8: MSCI 2027 월 구성');
-  assert(MSCI_REVIEWS_2026[0].announce === '2026-02-10' && MSCI_REVIEWS_2026[0].effective === '2026-03-02',
-    '8: MSCI 2026-02 소급 추가분(발표 2/10, 시행 3/2)');
+  assert(MSCI_REVIEWS_2026[0].announce === '2026-02-10' && MSCI_REVIEWS_2026[0].close === '2026-02-27',
+    '8: MSCI 2026-02 소급 추가분(발표 2/10, close 2/27)');
+
+  // ── 시행 규약: close 날짜만 저장, effective는 저장하지 않는다(2026-07-28 통일) ──
+  // 역산 금지 규칙 — close는 결과 보도자료 원문에서만 온다. 미래 리뷰는 값이 없어야
+  // 정상이고, 누가 effective를 끼워 넣으면 여기서 걸린다.
+  const allRev = [...MSCI_REVIEWS_2026, ...MSCI_REVIEWS_2027];
+  assert(allRev.every(r => !('effective' in r)), '8: effective 필드는 저장하지 않음');
+  assert(MSCI_REVIEWS_2026.filter(r => r.close).length === 2, '8: 2026 close 확인분은 2건(2월·5월)');
+  assert(MSCI_REVIEWS_2027.every(r => !r.close), '8: 2027은 close 전부 미확인(미래 리뷰)');
+  // close가 들어간 값이 effective(=익영업일)가 아닌지 — 알려진 effective 값 방어
+  assert(!allRev.some(r => ['2026-03-02', '2026-06-01', '2026-09-01', '2026-12-01',
+    '2027-03-01', '2027-05-28', '2027-09-01', '2027-12-01'].includes(r.close ?? '')),
+    '8: effective 값이 close 자리에 끼어들지 않음');
+
+  // 시행 이벤트는 close 있는 리뷰에만 생성되고, 항상 announce보다 뒤에 온다
+  for (const rev of allRev) {
+    const evs = getEventsForMonth(Number(rev.announce.slice(0, 4)), Number(rev.announce.slice(5, 7)))
+      .filter(e => e.category === 'msci');
+    assert(evs.some(e => e.date === rev.announce), `8: ${rev.announce} 발표 이벤트 생성`);
+  }
+  const msciAll = [2026, 2027].flatMap(y => [...Array(12)].flatMap((_, i) =>
+    getEventsForMonth(y, i + 1).filter(e => e.category === 'msci')));
+  assert(msciAll.filter(e => e.title.includes('리밸런싱 반영(종가)')).length === 2,
+    `8: 시행 이벤트는 close 확인분 2건만 (실제: ${msciAll.filter(e => e.title.includes('리밸런싱')).length})`);
+  assert(!msciAll.some(e => e.title.includes('리뷰 시행')), '8: 옛 "리뷰 시행" 라벨 잔존 없음');
+  for (const rev of allRev.filter(r => r.close)) {
+    assert(rev.close > rev.announce, `8: ${rev.label} close(${rev.close})가 announce(${rev.announce})보다 뒤`);
+  }
 
   // 금통위 — 통방만 연 8회(금융안정회의 4회는 제외 대상)
   assert(BOK_MEETINGS_2026.length === 8, `8: 금통위 2026 연 8회 (실제: ${BOK_MEETINGS_2026.length})`);
