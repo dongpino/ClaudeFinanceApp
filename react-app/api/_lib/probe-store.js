@@ -48,15 +48,32 @@ export function kstDate(d = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d);
 }
 
-/** 'YYYY-MM-DD HH:mm KST' — 캡처 시각을 사람이 바로 읽을 수 있게 함께 남긴다. */
-export function kstStamp(d = new Date()) {
+// 'YYYY-MM-DD HH:mm ZZZ' 한 줄. zone=null이면 Intl이 주는 약어를 붙이고, 문자열이면 그 값을 쓴다.
+// ⚠️ Asia/Seoul은 Intl(en-CA)이 'KST'가 아니라 'GMT+9'를 준다 — 한국은 서머타임이 없어
+//    'KST' 고정 표기가 어느 계절에도 거짓이 되지 않으므로 그쪽만 리터럴로 붙인다.
+//    반대로 미 동부는 EDT/EST가 실제로 바뀌므로 절대 하드코딩하지 않고 Intl 값을 쓴다.
+function stamp(d, tz, zone) {
   const p = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Seoul', hourCycle: 'h23',
+    timeZone: tz, hourCycle: 'h23', ...(zone ? {} : { timeZoneName: 'short' }),
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   }).formatToParts(d);
   const g = t => p.find(x => x.type === t)?.value ?? '00';
-  return `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')} KST`;
+  return `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')} ${zone ?? g('timeZoneName')}`;
 }
+
+/** 'YYYY-MM-DD HH:mm KST' — 캡처 시각을 사람이 바로 읽을 수 있게 함께 남긴다. */
+export function kstStamp(d = new Date()) { return stamp(d, 'Asia/Seoul', 'KST'); }
+
+/**
+ * 'YYYY-MM-DD HH:mm EDT|EST' — 같은 순간을 미 동부 시각으로도 남긴다.
+ *
+ * 왜 양쪽을 다 적는가: 크론은 UTC 고정이라 KST는 늘 같은 시각이지만 **ET는 서머타임에
+ * 따라 한 시간 움직인다**(14:00 UTC = EDT 10:00 / EST 09:00). KST만 남기면 "23:00 KST
+ * 표본"이 몇 월에 찍혔느냐에 따라 미 장중인지 개장 전인지가 달라지는데, 나중에 그걸
+ * 되짚을 근거가 기록에 없다. 꼬리표(EDT/EST)까지 남으면 사후 해석이 가능해진다.
+ * ⚠️ 여기서 장중/장전을 판정하지는 않는다 — 사실만 적고 해석은 사람이 한다.
+ */
+export function etStamp(d = new Date()) { return stamp(d, 'America/New_York', null); }
 
 /**
  * 하루치 캡처 1건 적재. 같은 날 다시 호출하면 덮어쓴다(재시도/수동 호출 대비).

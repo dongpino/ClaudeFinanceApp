@@ -25,7 +25,7 @@
  * 빈칸으로 두면 사후에 구분할 수 없다.
  */
 
-import { saveProbe, readProbe, kstDate, kstStamp, isAuthorized } from './_lib/probe-store.js';
+import { saveProbe, readProbe, kstDate, kstStamp, etStamp, isAuthorized } from './_lib/probe-store.js';
 
 const KEY = 'probe:daum-status';
 
@@ -44,7 +44,9 @@ const TIMEOUT_MS = 8000;
 // 캡처 1회 — 절대 throw하지 않고 결과 객체로 회수한다(에러도 그날의 데이터).
 async function capture() {
   const at = new Date();
-  const base = { at: at.toISOString(), kst: kstStamp(at), symbol: SYMBOL };
+  // 시각은 UTC(at) + KST + ET 세 벌로 남긴다 — ET는 이 프로브의 관심사가 아니지만,
+  // 두 프로브의 기록 형식을 같게 두면 나중에 한 눈으로 대조된다(probe-store.etStamp 주석 참조).
+  const base = { at: at.toISOString(), kst: kstStamp(at), et: etStamp(at), symbol: SYMBOL };
   try {
     const res = await fetch(URL, { headers: HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (!res.ok) return { ...base, ok: false, httpStatus: res.status, token: null };

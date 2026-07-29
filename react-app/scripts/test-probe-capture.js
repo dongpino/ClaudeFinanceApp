@@ -11,7 +11,7 @@
  * 실행: node scripts/test-probe-capture.js
  */
 import { readFileSync } from 'node:fs';
-import { kstDate, kstStamp, isAuthorized, PROBE_TTL_SEC } from '../api/_lib/probe-store.js';
+import { kstDate, kstStamp, etStamp, isAuthorized, PROBE_TTL_SEC } from '../api/_lib/probe-store.js';
 
 let pass = 0, fail = 0;
 function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error('  ✗ FAIL:', msg); } }
@@ -32,6 +32,16 @@ const crons = vercelJson.crons ?? [];
   assert(kstStamp(noon) === '2026-07-28 23:00 KST', `1: kstStamp 23:00 (실제: ${kstStamp(noon)})`);
 
   assert(PROBE_TTL_SEC === 604800, `1: TTL 7일 (실제: ${PROBE_TTL_SEC})`);
+
+  // ET 병기 — 같은 UTC 순간이 계절에 따라 다른 ET 시각/꼬리표로 찍혀야 한다.
+  // 이게 기록에 없으면 "23:00 KST 표본"이 장중인지 개장 전인지 사후에 알 수 없다.
+  assert(etStamp(noon) === '2026-07-28 10:00 EDT', `1: 여름 ET 꼬리표 (실제: ${etStamp(noon)})`);
+  const winter = new Date('2026-12-08T14:00:00Z');
+  assert(etStamp(winter) === '2026-12-08 09:00 EST', `1: 겨울 ET 꼬리표 (실제: ${etStamp(winter)})`);
+  assert(kstStamp(winter) === '2026-12-08 23:00 KST',
+    `1: 같은 순간의 KST는 계절 무관 23:00 (실제: ${kstStamp(winter)})`);
+  // 꼬리표를 하드코딩하지 않았는지 — 두 계절의 약어가 실제로 달라야 한다.
+  assert(etStamp(noon).slice(-3) !== etStamp(winter).slice(-3), '1: EDT/EST가 구분돼야 함');
 }
 
 // ── 2. 크론 스케줄 → KST 환산 ──────────────────────────────────

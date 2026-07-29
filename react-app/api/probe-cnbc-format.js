@@ -38,7 +38,7 @@
  * 조사 장치라 드리프트 수명이 짧다(항구 코드였다면 export해서 공유하는 쪽이 맞다).
  */
 
-import { saveProbe, readProbe, kstDate, kstStamp, isAuthorized } from './_lib/probe-store.js';
+import { saveProbe, readProbe, kstDate, kstStamp, etStamp, isAuthorized } from './_lib/probe-store.js';
 
 const KEY = 'probe:cnbc-format';
 
@@ -61,7 +61,10 @@ const TIMEOUT_MS = 9000;
 // 캡처 1회 — 절대 throw하지 않고 결과 객체로 회수한다(에러도 그날의 데이터).
 async function capture() {
   const at = new Date();
-  const base = { at: at.toISOString(), kst: kstStamp(at) };
+  // ⚠️ 여기가 ET 기록이 특히 필요한 자리다. 크론은 UTC 고정이라 KST는 늘 23:00이지만
+  // ET는 서머타임에 따라 10:00(EDT)/09:00(EST)로 움직인다 — 나중에 "이 표본이 장중이었나"를
+  // 되짚으려면 꼬리표가 남아 있어야 한다. 판정은 하지 않고 사실만 적는다.
+  const base = { at: at.toISOString(), kst: kstStamp(at), et: etStamp(at) };
   try {
     const res = await fetch(URL, { headers: HEADERS, signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (!res.ok) return { ...base, ok: false, httpStatus: res.status, quotes: [] };
