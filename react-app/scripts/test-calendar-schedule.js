@@ -308,15 +308,18 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
 //    누락 4건 중 이 방식이 잡은 건 2026-07-17 1건이고 2027 3건은 조문이 잡았다.
 {
   const PAST_ONLY = '⚠️ 이 검사는 과거만 본다. 미래 항목 오류는 잡지 못한다(원문 등급이 유일한 방어선).';
-  const snap = JSON.parse(readFileSync(new URL('./fixtures/kr-trading-days-2026.json', import.meta.url), 'utf8'));
+  const snap = JSON.parse(readFileSync(new URL('./fixtures/kr-trading-days.json', import.meta.url), 'utf8'));
   const trading = new Set(snap.tradingDays);
   const isWeekend = d => [0, 6].includes(new Date(`${d}T00:00:00Z`).getUTCDay());
+  // 대조는 표 커버리지(2026~)와 겹치는 구간만. 스냅샷은 그보다 앞선 2025년분도 담고 있는데
+  // 거기까지 훑으면 표에 없는 2025 공휴일이 전부 거짓 누락으로 잡힌다.
+  const auditStart = snap.auditFrom > snap.coverageStart ? snap.auditFrom : snap.coverageStart;
 
   assert(snap.sources.length >= 2, `8: 스냅샷은 소스 2종 이상이어야 함(단일 소스 결측을 휴장으로 오인) — ${PAST_ONLY}`);
   assert(trading.size > 100, `8: 스냅샷 거래일 수가 비정상적으로 적음(${trading.size}일) — ${PAST_ONLY}`);
 
   const missing = [], extra = [];
-  for (let t = Date.parse(`${snap.coverageStart}T00:00:00Z`); t <= Date.parse(`${snap.coverageEnd}T00:00:00Z`); t += 86400000) {
+  for (let t = Date.parse(`${auditStart}T00:00:00Z`); t <= Date.parse(`${snap.coverageEnd}T00:00:00Z`); t += 86400000) {
     const d = new Date(t).toISOString().slice(0, 10);
     if (isWeekend(d)) continue;
     const holiday = MARKET_HOLIDAYS.KR[d];
@@ -331,6 +334,15 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   // 제헌절 누락을 실제로 잡아낸 검사인지 — 반증(표에서 빼면 이 검사가 실패해야 한다)
   assert(!trading.has('2026-07-17') && MARKET_HOLIDAYS.KR['2026-07-17'],
     '8: 2026-07-17은 스냅샷에 거래일이 없고 표에는 있어야 함(이 검사의 발견 사례)');
+
+  // ── 연말 폐장일 관행 사례(대조 구간 밖, 2025년분) ────────────────
+  // 12/31 폐장은 공휴일이 아니라 거래소 개별 공고라 조문·월력요항에 없다([관행추정] 등급).
+  // 그 관행이 실재한다는 **유일한 실측 근거**가 이 구간이다 — 스냅샷을 2025년까지 늘린 이유.
+  assert(snap.coverageStart < '2026-01-01',
+    `8: 스냅샷이 2025년분을 포함해야 함(폐장일 관행 근거 소실, start=${snap.coverageStart})`);
+  assert(trading.has('2025-12-30'), '8: 2025-12-30(화)은 거래일 — 연말 마지막 매매거래일');
+  assert(!trading.has('2025-12-31'), '8: 2025-12-31(수)은 평일인데 휴장 — 폐장일 관행 실측');
+  assert(trading.has('2026-01-02'), '8: 2026-01-02(금) 거래 재개');
 
   // 커버리지 끝 = 이 감사가 도달한 지점. 스냅샷이 낡으면 새로 생긴 달을 아무도 안 본다 —
   // 표 소진(depletion)과 같은 성격의 "커버리지가 마른다" 문제라 같은 규율로 감시한다.
