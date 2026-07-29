@@ -80,9 +80,26 @@ export function normalizeKasiItems(body) {
   return out;
 }
 
-/** 우리 표가 덮는 연도 목록(문자열, 오름차순) — 대조 대상 연도는 표를 따라간다. */
+/** 우리 표가 덮는 연도 전체(문자열, 오름차순). 커버리지 보고용. */
 export function tableYears(table = MARKET_HOLIDAYS.KR) {
   return [...new Set(Object.keys(table).map(d => d.slice(0, 4)))].sort();
+}
+
+/**
+ * **실제로 대조를 요청할 연도** — 표에 있는 연도 중 **당해연도 이상**만.
+ *
+ * ⚠️ 표 전체를 대조하면 안 되는 이유(2026-07-29 지적): 표를 갱신하지 않은 채 해가 바뀌면
+ *    지난 연도만 대조하면서 "일치, 이상 없음"을 계속 보고하게 된다. 예컨대 2028년에
+ *    표가 아직 2026·2027뿐이면 KASI에도 그 두 해 데이터는 남아 있어 대조는 깨끗하게
+ *    통과한다 — 정작 **당해연도가 표에 없다는 사실**은 아무도 말해 주지 않는다.
+ *    소진 3축의 ②는 "KASI가 어디까지 덮나"를 보지 성 "우리가 무엇을 요청했나"를 보지 않는다.
+ * ⚠️ 과거 연도를 빼는 것도 의도적이다 — 지난 구간은 거래일 스냅샷(자체실측)이 이미
+ *    담당한다. 같은 구간을 두 번 검증하느라 호출을 늘릴 이유가 없다.
+ * 결과가 **빈 배열이면 그 자체가 경보**다(auditCoverage가 경고로 올린다).
+ */
+export function auditYears(table = MARKET_HOLIDAYS.KR, today = todayKST()) {
+  const thisYear = today.slice(0, 4);
+  return tableYears(table).filter(y => y >= thisYear);
 }
 
 /**
@@ -133,21 +150,33 @@ export function compareHolidays(kasiItems, years, table = MARKET_HOLIDAYS.KR) {
  * @param {string[]} kasiYears  KASI가 실제로 데이터를 준 연도(0건 연도는 제외해서 넘길 것)
  */
 export function auditCoverage(kasiYears, table = MARKET_HOLIDAYS.KR, today = todayKST()) {
+  const thisYear = today.slice(0, 4);
   const ours = tableYears(table);
+  const requestedYears = auditYears(table, today);   // 실제로 물어본 연도
   const tableEnd = Object.keys(table).sort().at(-1) ?? null;
   const kasiEnd = kasiYears.length ? kasiYears.slice().sort().at(-1) : null;
-  // 우리 표에는 있는데 KASI가 못 덮는 연도 = 자동검증 불가
-  const unverifiableYears = ours.filter(y => !kasiYears.includes(y));
+  // 요청했는데 KASI가 못 준 연도 = 자동검증 불가(요청하지도 않은 과거 연도는 셈에서 뺀다)
+  const unverifiableYears = requestedYears.filter(y => !kasiYears.includes(y));
   const keyDaysLeft = daysBetween(today, KASI_KEY_EXPIRES);
 
   const warnings = [];
+  // ④ 요청 자체가 비었거나 당해연도가 빠진 경우 — 표가 낡았다는 뜻이고, 이걸 잡지 않으면
+  //   지난 연도만 대조하면서 계속 초록불이 뜬다(2026-07-29 지적).
+  if (requestedYears.length === 0) {
+    warnings.push(`표에 ${thisYear}년 이후 일정 없음 — 대조 구간이 비었다(표 갱신 필요)`);
+  } else if (!requestedYears.includes(thisYear)) {
+    warnings.push(`표에 당해연도(${thisYear}) 없음 — 대조는 ${requestedYears.join('·')}만 수행`);
+  }
   if (unverifiableYears.length) {
     warnings.push(`KASI 미커버 ${unverifiableYears.join('·')} — 자동검증 불가`);
   }
   if (keyDaysLeft <= KEY_EXPIRY_WARN_DAYS) {
     warnings.push(`KASI 키 만료 D-${keyDaysLeft}(${KASI_KEY_EXPIRES})`);
   }
-  return { tableEnd, kasiEnd, ourYears: ours, kasiYears, unverifiableYears, keyDaysLeft, warnings };
+  return {
+    tableEnd, kasiEnd, ourYears: ours, requestedYears, kasiYears,
+    unverifiableYears, keyDaysLeft, warnings,
+  };
 }
 
 /** 적재 — 절대 throw하지 않는다. @returns {Promise<boolean>} 저장 성공 여부 */
@@ -186,10 +215,14 @@ export function buildKasiSource(audit) {
   if (missing.length) parts.push(`누락 ${missing.length}`);
   if (extra.length)   parts.push(`오탑재 ${extra.length}`);
   const status = (missing.length || extra.length) ? 'warn' : (warn.length ? 'warn' : 'ok');
+  // 요청 연도를 항상 note에 싣는다 — "무엇을 대조했는지"가 안 보이면 지난 연도만 훑고
+  // 초록불을 띄우는 상황을 상태판에서 알아챌 수 없다(2026-07-29 지적).
+  const req = audit.coverage?.requestedYears;
+  const scope = req?.length ? ` · 대조 ${req.join('·')}` : ' · 대조 연도 없음';
   const note = parts.length
-    ? `${parts.join('·')} (${[...missing, ...extra].slice(0, 2).map(x => x.date).join(', ')}…)`
-    : warn.length ? warn.join(' / ')
-    : `일치 ${audit.result?.matched ?? 0}건 · KRX고유 ${krxOnly.length}건`;
+    ? `${parts.join('·')} (${[...missing, ...extra].slice(0, 2).map(x => x.date).join(', ')}…)${scope}`
+    : warn.length ? `${warn.join(' / ')}${scope}`
+    : `일치 ${audit.result?.matched ?? 0}건 · KRX고유 ${krxOnly.length}건${scope}`;
   return kasiRow(status, note, audit);
 }
 

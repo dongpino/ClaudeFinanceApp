@@ -16,7 +16,7 @@
 import { readFileSync } from 'node:fs';
 import {
   normalizeKasiItems, compareHolidays, auditCoverage, buildKasiSource,
-  tableYears, KRX_ONLY_MMDD, KASI_KEY_EXPIRES,
+  tableYears, auditYears, KRX_ONLY_MMDD, KASI_KEY_EXPIRES,
 } from '../api/_lib/holiday-audit.js';
 import { MARKET_HOLIDAYS } from '../api/_lib/macro-calendar.js';
 
@@ -92,10 +92,33 @@ const allItems  = [...items2026, ...items2027];
   assert(compareHolidays(withN, years).missing.length === 0, '2: isHoliday=N은 누락으로 세지 않음');
 }
 
-// ── 3. 소진 3축 ────────────────────────────────────────────────
+// ── 3. 소진 3축 + 요청 연도 동적 산출 ──────────────────────────
 {
   const ours = tableYears();
-  assert(ours.join(',') === '2026,2027', `3: 대조 연도는 표를 따라감 (실제: ${ours})`);
+  assert(ours.join(',') === '2026,2027', `3: 표 커버리지 연도 (실제: ${ours})`);
+
+  // ⚠️ 요청 연도는 **당해연도 이상**만이어야 한다. 표 전체를 돌면 해가 바뀐 뒤 지난
+  //    연도만 대조하면서 "이상 없음"이 계속 뜬다(2026-07-29 지적).
+  assert(auditYears(MARKET_HOLIDAYS.KR, '2026-07-29').join(',') === '2026,2027',
+    `3: 2026년엔 2026·2027 요청 (실제: ${auditYears(MARKET_HOLIDAYS.KR, '2026-07-29')})`);
+  assert(auditYears(MARKET_HOLIDAYS.KR, '2027-03-01').join(',') === '2027',
+    `3: 2027년엔 2027만 요청(과거는 스냅샷 담당) (실제: ${auditYears(MARKET_HOLIDAYS.KR, '2027-03-01')})`);
+  // 당해연도가 요청 목록에 반드시 들어가야 한다(표가 당해연도를 덮는 한).
+  for (const day of ['2026-01-01', '2026-07-29', '2026-12-31', '2027-01-01', '2027-12-31']) {
+    const req = auditYears(MARKET_HOLIDAYS.KR, day);
+    assert(req.includes(day.slice(0, 4)), `3: ${day} 요청 목록에 당해연도 포함 (실제: ${req})`);
+  }
+  // 표가 낡아 당해연도가 없으면 요청이 비고, 그 자체가 경고여야 한다.
+  const stale = auditYears(MARKET_HOLIDAYS.KR, '2028-05-01');
+  assert(stale.length === 0, `3: 2028년엔 요청할 연도가 없음 (실제: ${stale})`);
+  const staleCov = auditCoverage([], MARKET_HOLIDAYS.KR, '2028-05-01');
+  assert(staleCov.requestedYears.length === 0, '3: coverage에 빈 요청 목록');
+  assert(staleCov.warnings.some(w => w.includes('대조 구간이 비었다')),
+    `3: 빈 요청은 경고 (실제: ${staleCov.warnings})`);
+  // 그리고 그 상태가 초록으로 새면 안 된다 — 상태판까지 확인.
+  const staleRow = buildKasiSource({ checkedAt: 'T', ok: true, result: null, coverage: staleCov });
+  assert(staleRow.status === 'warn', '3: 대조 구간이 비면 상태판 warn(조용한 초록 금지)');
+  assert(staleRow.note.includes('대조 연도 없음'), `3: note에 요청 연도 부재 표기 (실제: ${staleRow.note})`);
 
   // ① 정상 — KASI가 두 해 모두 덮으면 자동검증 불가 연도 없음
   const okCov = auditCoverage(['2026', '2027'], MARKET_HOLIDAYS.KR, '2026-07-29');
@@ -129,9 +152,9 @@ const allItems  = [...items2026, ...items2027];
   const clean = buildKasiSource({
     checkedAt: 'T', ok: true,
     result: { matched: 46, missing: [], extra: [], krxOnly: [{ date: '2026-12-31' }, { date: '2027-12-31' }] },
-    coverage: { warnings: [] },
+    coverage: { warnings: [], requestedYears: ['2026','2027'] },
   });
-  assert(clean.status === 'ok' && clean.note.includes('일치 46건'), `4: 정상은 ok + 요약 (실제: ${clean.note})`);
+  assert(clean.status === 'ok' && clean.note.includes('일치 46건') && clean.note.includes('대조 2026·2027'), `4: 정상은 ok + 요약 (실제: ${clean.note})`);
 
   const warned = buildKasiSource({
     checkedAt: 'T', ok: true,

@@ -26,7 +26,7 @@
 import { fetchKasiYear } from './_collectors/kasi-holidays.js';
 import {
   normalizeKasiItems, compareHolidays, auditCoverage,
-  saveAudit, readAudit, tableYears,
+  saveAudit, readAudit, auditYears,
 } from './_lib/holiday-audit.js';
 import { isAuthorized } from './_lib/probe-store.js';
 
@@ -40,9 +40,23 @@ export default async function handler(req, res) {
   }
 
   const checkedAt = new Date().toISOString();
-  const years = tableYears();                    // 대조 연도는 우리 표를 따라간다
+  // 대조 연도는 **표에 있는 연도 중 당해연도 이상**만(auditYears). 표 전체를 돌면 해가
+  // 바뀐 뒤 지난 연도만 훑으면서 계속 "이상 없음"이 뜬다 — 과거 구간은 거래일 스냅샷이
+  // 이미 담당하므로 재대조할 이유도 없다.
+  const years = auditYears();
   const fetched = [];
   for (const y of years) fetched.push(await fetchKasiYear(y));  // 순차 — 30tps 제한 여유
+
+  // 요청할 연도가 없다 = 표가 낡았다. 호출이 0건이라 아래 "전 연도 실패" 분기(0===0)에
+  // 걸리면 원인이 "KASI 장애"로 잘못 기록되므로 여기서 먼저 끊고 coverage 경고로 낸다.
+  if (years.length === 0) {
+    const coverage = auditCoverage([]);
+    const payload = { checkedAt, ok: true, source: 'KASI SpcdeInfoService/getRestDeInfo',
+      calls: [], partialFailure: null, result: null, coverage };
+    const saved = await saveAudit(payload);
+    console.warn(`[holiday-audit] 대조 구간 없음 — ${coverage.warnings.join(' / ')}`);
+    return res.status(200).json({ saved, ...payload });
+  }
 
   const failures = fetched.filter(f => !f.ok);
   // 전 연도 실패면 대조 자체가 성립하지 않는다. "일치 0건"으로 기록하면 401이 정상처럼
