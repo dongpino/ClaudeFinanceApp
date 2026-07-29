@@ -47,6 +47,8 @@ const SOURCE_LABELS = {
   'rss-coindesk':   'CoinDesk RSS',
   // 수집기가 없는 유사 행(api/health.js buildCalendarSource) — 하드코딩 일정 소진 감시용
   'calendar':       '시장 캘린더 · 일정',
+  // KASI 특일정보 자동대조 유사 행(api/_lib/holiday-audit.js) — 휴장일 표의 미래 구간 감시
+  'kasi-audit':     'KASI · 휴장일 자동대조',
 };
 
 const STATUS_META = {

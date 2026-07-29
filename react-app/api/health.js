@@ -34,6 +34,7 @@
 
 import { getHealthSnapshot, storeFingerprint, ENV_TAG } from './_lib/health.js';
 import { getScheduleDepletion, VERIFIED_AT } from './_lib/macro-calendar.js';
+import { readAudit, buildKasiSource } from './_lib/holiday-audit.js';
 
 const DEPLETION_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적', holidays: '휴장일', bok: '금통위' };
 
@@ -80,6 +81,9 @@ export default async function handler(req, res) {
   try {
     const sources = await getHealthSnapshot();
     sources.push(buildCalendarSource()); // 목록 끝에 유사 행 1개
+    // KASI 휴장일 자동대조 유사 행 — Redis에 적재된 마지막 대조 결과만 읽는다(외부 호출 없음).
+    // 기록이 없으면 buildKasiSource가 'unknown' 행을 만든다(빈칸으로 사라지지 않게).
+    sources.push(buildKasiSource(await readAudit()));
     // 상태가 있으므로 캐시는 짧게만 — 관측 목적상 최신값이 중요.
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({

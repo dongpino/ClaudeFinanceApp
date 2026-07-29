@@ -103,7 +103,16 @@ function cronToKST(schedule) {
   const briefing = crons.find(c => c.path === '/api/briefing-cron');
   assert(!!briefing && briefing.schedule === '30 23 * * *',
     `3: briefing-cron "30 23 * * *" 그대로여야 함 (실제: ${JSON.stringify(briefing)})`);
-  assert(crons.length === 3, `3: 크론 총 3개(기존 1 + 신규 2) (실제: ${crons.length})`);
+  // 총 개수를 고정하는 이유: 크론 추가가 기존 항목 삭제로 새는 사고를 막는다. 늘릴 때는
+  // 이 목록을 함께 갱신할 것 — 숫자만 올리면 가드가 무의미해지므로 경로까지 열거한다.
+  const expected = ['/api/briefing-cron', '/api/probe-daum-status', '/api/probe-cnbc-format',
+    '/api/holiday-audit-cron'];
+  assert(crons.map(c => c.path).sort().join(',') === expected.slice().sort().join(','),
+    `3: 크론 4개 구성 (실제: ${crons.map(c => c.path).join(',')})`);
+  // KASI 자동대조는 일 1회(06:20 KST = 21:20 UTC) — 요일 제한 없음.
+  const audit = crons.find(c => c.path === '/api/holiday-audit-cron');
+  assert(audit?.schedule === '20 21 * * *', `3: holiday-audit 일 1회 (실제: ${audit?.schedule})`);
+  assert(cronToKST(audit.schedule).time === '06:20', `3: 06:20 KST (실제: ${cronToKST(audit.schedule).time})`);
 }
 
 // ── 4. 인증 규약 ───────────────────────────────────────────────
