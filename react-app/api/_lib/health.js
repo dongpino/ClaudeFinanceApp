@@ -247,9 +247,9 @@ export function recordRetry(source, { recovered } = {}) {
  * @param {string} scope   'market' | 'macro' | 'macro-history' 등 검사 지점
  * @param {{checked:number, blocked?:number, reason?:string, detail?:string}} p
  */
-export function recordValidation(scope, { checked = 0, blocked = 0, reason, detail, fields } = {}) {
+export function recordValidation(scope, { checked = 0, blocked = 0, skipped = 0, skipReasons, reason, detail, fields } = {}) {
   if (!scope) return;
-  void persistValidation(scope, checked, blocked, reason, detail, fields);
+  void persistValidation(scope, checked, blocked, reason, detail, fields, skipped, skipReasons);
 }
 
 // ── 게이트 자체의 실패 감시 ──────────────────────────────────────────
@@ -263,13 +263,18 @@ export const CONSEC_BLOCK_THRESHOLD = 3;               // 이 횟수 이상 연�
 export const FIELD_STALE_MS = 24 * 60 * 60 * 1000;     // 마지막 성공 갱신이 이보다 오래면 승격
 const FIELD_STATE_KEY = scope => `health:validate:fields:${scope}`;
 
-async function persistValidation(scope, checked, blocked, reason, detail, fields) {
+async function persistValidation(scope, checked, blocked, reason, detail, fields, skipped = 0, skipReasons) {
   const r = getRedis();
   if (!r) return;
   try {
     const key = `health:validate:${kstToday()}`;
     const p = r.pipeline();
     if (checked) p.hincrby(key, `${scope}:checked`, checked);
+    // 스킵은 checked와 **절대 합치지 않는다** — 'checked>0 = 검사 유효'를 보장하려는 것이
+    // 이 분리의 목적이다(낡은 기준선 대비 비교는 검사가 아니다).
+    if (skipped) p.hincrby(key, `${scope}:skipped`, skipped);
+    // ⚠️ 변수명 주의 — 바깥의 r은 Redis 클라이언트다. 여기서 r로 받으면 가려진다.
+    for (const [sr, n] of Object.entries(skipReasons ?? {})) p.hincrby(key, `${scope}:skip:${sanitizeCode(sr)}`, n);
     if (blocked) {
       p.hincrby(key, `${scope}:blocked`, blocked);
       // 사유별 히스토그램 — "차단 3건"이 한 원인인지 여러 원인인지 총합만으론 모른다.
@@ -315,7 +320,7 @@ async function persistValidation(scope, checked, blocked, reason, detail, fields
  *   scopes: { [scope]: { checked, blocked, reasons, lastBlock, allBlockedAt } }
  *   fields: { [scope]: { [field]: { consec, lastOkAt, lastBlockAt, reason, detail } } }
  */
-export async function getValidationCounters(scopeNames = ['market', 'macro', 'macro-history']) {
+export async function getValidationCounters(scopeNames = ['market', 'macro', 'macro-history', 'relative']) {
   const r = getRedis();
   if (!r) return { scopes: {}, fields: {} };
   try {
@@ -328,12 +333,14 @@ export async function getValidationCounters(scopeNames = ['market', 'macro', 'ma
     for (const [k, v] of Object.entries(dayHash ?? {})) {
       const [scope, ...rest] = k.split(':');
       const field = rest.join(':');
-      scopes[scope] ??= { checked: 0, blocked: 0, reasons: {}, lastBlock: null, allBlockedAt: null };
+      scopes[scope] ??= { checked: 0, blocked: 0, skipped: 0, reasons: {}, skips: {}, lastBlock: null, allBlockedAt: null };
       if (field === 'checked') scopes[scope].checked = Number(v) || 0;
       else if (field === 'blocked') scopes[scope].blocked = Number(v) || 0;
       else if (field === 'lastBlock') scopes[scope].lastBlock = String(v);
       else if (field === 'allBlockedAt') scopes[scope].allBlockedAt = String(v);
+      else if (field === 'skipped') scopes[scope].skipped = Number(v) || 0;
       else if (field.startsWith('blk:')) scopes[scope].reasons[field.slice(4)] = Number(v) || 0;
+      else if (field.startsWith('skip:')) scopes[scope].skips[field.slice(5)] = Number(v) || 0;
     }
 
     const fields = {};

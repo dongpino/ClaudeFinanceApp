@@ -34,30 +34,57 @@
  * @property {boolean} fallback        last-good commit/폴백 대상인가
  */
 
+// ── 검사 2(상대 타당성)용 메타 ────────────────────────────────────────
+// cross : price와 history가 **서로 다른 소스**다. history[-1] 대조가 진짜 교차검산이 된다.
+//         예) CNBC 7종 — price=CNBC quote, history=Naver sise/Naver world/FRED/CBOE
+// semi  : 같은 소스의 **다른 엔드포인트**다. 소스 전체가 죽으면 둘 다 죽으므로 장애는
+//         못 잡지만, **한쪽 파서만 깨진 편측 실패**는 잡을 수 있다(그게 이 등급의 전부다).
+// tauto : 같은 소스의 같은 계열이라 대조가 동어반복이다 → C 검사 **제외**.
+//         btc/eth/dominance가 여기 속한다(현재가·history 모두 CoinGecko).
+// 시장(market)은 "폐장일 때만 검사한다"는 실행 조건에 쓴다. crypto는 24시간이라 폐장이
+// 없고 어차피 tauto다.
+const CROSS = 'cross', SEMI = 'semi', TAUTO = 'tauto';
+
 /** 가격류 공통 — 0 초과 무제한. 0은 "파서가 실패했다"의 가장 흔한 표현이라 배제한다. */
 const PRICE = { kind: 'price', unit: null, min: 0, max: null, allowNegative: false, fallback: true, exclusiveMin: true };
 
 export const ASSET_META = {
   // ── 지수·가격 ────────────────────────────────────────────────
-  nasdaq: PRICE, dow: PRICE, sp500: PRICE, sox: PRICE,
-  kospi: PRICE, kosdaq: PRICE,
-  btc: PRICE, eth: PRICE,
-  vix: PRICE,                       // 변동성지수. 이론상 0 초과이며 상한은 두지 않는다.
-  dxy: PRICE,                       // 달러인덱스 — 지수라 레벨이 양수. 상한 없음.
-  usdkrw: PRICE, jpykrw: PRICE,
-  HYPR: PRICE, 419530: PRICE, '028300': PRICE, '080220': PRICE,  // '우미 투자' 워치리스트
+  // CNBC quote ↔ Naver sise/world·FRED·CBOE history — 소스가 완전히 다르다(cross).
+  nasdaq: { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },
+  dow:    { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },
+  sp500:  { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },
+  sox:    { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },
+  // 현재가·history 모두 Naver지만 엔드포인트가 다르다(semi) — 편측 파서 실패만 감지 가능.
+  kospi:  { ...PRICE, cross: SEMI, market: 'KR', quantum: 0.01 },
+  kosdaq: { ...PRICE, cross: SEMI, market: 'KR', quantum: 0.01 },
+  // 현재가·history 모두 CoinGecko 계열 → 대조가 동어반복(tauto). C 검사에서 제외한다.
+  btc: { ...PRICE, cross: TAUTO, market: 'CRYPTO' },
+  eth: { ...PRICE, cross: TAUTO, market: 'CRYPTO' },
+  vix: { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },  // 변동성지수. history는 Naver world→CBOE.
+  dxy: { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },  // history는 Naver marketIndex.
+  usdkrw: { ...PRICE, cross: SEMI, market: 'KR', quantum: 0.01 },
+  jpykrw: { ...PRICE, cross: SEMI, market: 'KR', quantum: 0.01 },
+  // 개별 종목은 평탄성 검사에서 제외한다(저유동성·거래정지를 판정할 수단이 없어서).
+  // C도 semi 이하라 진단력이 낮다 — 등급만 적어 두고 실행 대상에서는 빠진다.
+  HYPR:     { ...PRICE, cross: SEMI, market: 'US', quantum: 0.01, singleName: true },
+  419530:   { ...PRICE, cross: SEMI, market: 'KR', quantum: 1, singleName: true },
+  '028300': { ...PRICE, cross: SEMI, market: 'KR', quantum: 1, singleName: true },
+  '080220': { ...PRICE, cross: SEMI, market: 'KR', quantum: 1, singleName: true },
 
   // ── 금리(음수 실재) ──────────────────────────────────────────
   // ⚠️ 마이너스 금리는 일본·유럽에서 실제로 있었다. "양수여야 함"을 적용할 수 없는 항목.
   //    상·하한은 상식 밖 값(파싱 사고)만 걸리게 넓게 잡는다.
-  us10y:        { kind: 'rate', unit: 'percent', min: -10, max: 30, allowNegative: true, fallback: true },
-  kr_base_rate: { kind: 'rate', unit: 'pct_pt',  min: -10, max: 30, allowNegative: true, fallback: true },
+  // ⚠️ price는 r4, history는 r2 — **거친 쪽(0.01)이 양자화 스텝**이다. 실측 잔차 0.217%가
+  //    정확히 0.01/4.61이라 이 산정의 근거가 된다.
+  us10y:        { kind: 'rate', unit: 'percent', min: -10, max: 30, allowNegative: true, fallback: true, cross: CROSS, market: 'US', quantum: 0.01 },
+  kr_base_rate: { kind: 'rate', unit: 'pct_pt',  min: -10, max: 30, allowNegative: true, fallback: true, cross: TAUTO, market: 'KR' },
 
   // ── 정의역이 명확한 비율·점수 ────────────────────────────────
   // ⚠️ **하한 0을 포함한다**(종전 공통 규칙 price>0과 충돌했던 지점). 공포탐욕 0과
   //    도미넌스 0은 이론상 정상값이며, 0을 이상값으로 막으면 정상 데이터가 폴백으로 밀린다.
-  dominance: { kind: 'ratio', unit: 'pct_pt', min: 0, max: 100, allowNegative: false, fallback: true },
-  feargreed: { kind: 'score', unit: 'score',  min: 0, max: 100, allowNegative: false, fallback: true },
+  dominance: { kind: 'ratio', unit: 'pct_pt', min: 0, max: 100, allowNegative: false, fallback: true, cross: TAUTO, market: 'CRYPTO' },
+  feargreed: { kind: 'score', unit: 'score',  min: 0, max: 100, allowNegative: false, fallback: true, cross: TAUTO, market: 'CRYPTO' },
 };
 
 /** 가격이 아닌 지표의 단위 집합 — MarketCard가 쓰던 하드코딩의 원본. */

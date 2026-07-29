@@ -51,6 +51,8 @@ const SOURCE_LABELS = {
   'kasi-audit':     'KASI · 휴장일 자동대조',
   // 검사 1(절대 타당성) 실행 계측 유사 행(api/health.js buildValueGuardSource)
   'value-guard':    '값 검사 · 절대 타당성',
+  // 검사 2(상대 타당성) 유사 행(api/health.js buildRelativeGuardSource)
+  'relative-guard': '값 검사 · 상대 타당성',
 };
 
 const STATUS_META = {

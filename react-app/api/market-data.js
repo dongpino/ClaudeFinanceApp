@@ -23,6 +23,7 @@ import { collectBokRate }    from './_collectors/bok-rate.js';
 import { fetchSimplePrices } from './_collectors/crypto-simple-price.js';
 import { applyLastGoodFallback } from './_lib/last-good.js';
 import { validateLevel, FALLBACK_IDS } from './_lib/asset-meta.js';
+import { runRelativeChecks } from './_lib/relative-guard.js';
 import { recordValidation } from './_lib/health.js';
 import { Redis } from '@upstash/redis';
 
@@ -75,6 +76,20 @@ function countValidation(collected) {
     if (!r.ok) { blocked++; lastReason = r.reason; lastDetail = `${it.id} price=${JSON.stringify(it.price)}`; }
   }
   recordValidation('market', { checked, blocked, reason: lastReason, detail: lastDetail, fields });
+}
+
+// 검사 2(상대 타당성) 실행 + 계측 — 순수 판정은 _lib/relative-guard.js가 하고 여기선
+// 기록만 한다. **차단하지 않는다**(이미 서빙된 값의 사후 검증이라 막을 대상이 없다).
+// 스킵은 checked와 분리해 넘긴다 — "장중이라 못 했다"가 "검사해서 통과"로 보이면 안 된다.
+function recordRelative(items) {
+  const r = runRelativeChecks(items);
+  const head = r.findings[0];
+  recordValidation('relative', {
+    checked: r.checked, blocked: r.blocked, skipped: r.skipped, skipReasons: r.skipReasons,
+    reason: head?.kind,
+    detail: head ? `${head.id} ${head.detail}` : undefined,
+    fields: r.fields.filter(f => f.ok !== null),
+  });
 }
 
 // ── 캐시 (2계층) ──────────────────────────────────────────
@@ -224,6 +239,8 @@ async function handleHome(req, res) {
     servable: servableMarketItem,
     errorSummary: FALLBACK_ERR,
   });
+  // 검사 2(상대 타당성) — 최종 서빙본 대상 사후 검증(차단 없음, 경보만).
+  recordRelative(merged);
   const finalById = {};
   for (const it of merged) if (it?.id) finalById[it.id] = it;
 
