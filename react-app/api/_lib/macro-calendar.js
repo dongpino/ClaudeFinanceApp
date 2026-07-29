@@ -19,36 +19,108 @@
  *  · tentative   — 원출처가 아직 확정 공표하지 않아 과거 패턴으로 추정한 날짜. UI에
  *                  "(예정)"으로 구분 표시하고, 확정되면 날짜 갱신 + 플래그 제거한다.
  *
+ * ── 출처 기록 규약(2026-07-29 도입, 필수) ─────────────────────────────
+ * 근거 기록 오류가 MSCI·금통위 두 번 재발해(요약본을 "원문 확인"으로 표기) 형식을 고정한다.
+ * 모든 항목은 아래 세 가지를 갖춰 적는다. 셋을 못 채우면 그건 확인이 아니다.
+ *   [등급]  원문확인 / 교차확인(독립 2경로 이상) / 미확인(후보값)
+ *   요청    실제로 던진 URL과 응답 상태 — **실패도 그대로 남긴다**(403/504/파싱실패 포함)
+ *   발췌    원문에서 뽑은 문자열. 사람이 같은 URL을 열어 눈으로 대조할 수 있는 최소 단위
+ *
+ * ⚠️ 모델이 이미 알고 있던 값을 조회 결과가 반증하지 않는 것은 확인이 아니다.
+ *    확인은 원문에서 그 값을 추출했을 때만 성립한다. (CLAUDE.md에도 명시)
+ * ⚠️ 열람하지 못한 문서는 출처로 적지 않는다. 접근을 시도했다 실패한 사실은 "요청" 줄에
+ *    상태코드로 남기되, 그 문서를 근거인 것처럼 나열하지 않는다.
+ * 아래 기록은 2026-07-28~29 실제 세션 로그를 되짚어 재작성한 것이며, 값 자체는 재대조하지
+ * 않았다(등급만 사실에 맞게 조정). 등급이 낮은 항목은 값이 틀렸다는 뜻이 아니라 **근거가
+ * 그 값을 지지할 만큼 강하지 않다**는 뜻이다.
+ *
  * 출처:
- *  - FOMC: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
- *          (2026-07-28 전수 대조 — 2026·2027 16건 전건 일치. 연준 페이지는 "each meeting
- *           date is tentative until confirmed"라고 명시하나, 우리 배열은 tentative를
- *           쓰지 않는다 — 연준 공표분은 사실상 확정으로 취급한다.)
- *  - CPI:  https://www.bls.gov/schedule/news_release/cpi.htm  ⚠️ 봇 차단(403)으로 직접 대조 불가
- *          교차 확인 ①: https://www.usinflationcalculator.com/inflation/consumer-price-index-release-schedule/
- *          교차 확인 ②: FRED release dates API(release_id=10) — BLS 미러
- *          (2026-07-28 전수 대조 — 2026년 12건이 refMonth까지 두 경로 모두 일치.)
- *          발표 시각은 미 동부시각(ET) 08:30 고정.
- *  - MSCI: https://www.msci.com/eqb/pressreleases/archive/ir_dates.pdf (Next Eight IR Dates)
- *          개별 리뷰 보도자료(businesswire/MSCI media room)로 항목별 교차 확인
- *          (2026-07-28 전수 대조 — **연 4회 체계로 정정**하며 2026-02 소급 추가,
- *           2027 4건 신설. 상세는 MSCI_REVIEWS_2026 주석 참조.)
- *  - 금통위: 한국은행 "2026년 금융통화위원회 정기회의 개최 및 의사록 공개 예정일정"
- *          (2025-10-30 공표). 개별 일자는 통화정책방향 보도자료로 교차 확인.
- *          (2026-07-28 확인 — 통방 8회. 2027분 미공표.)
- *  - 실적: 삼성전자 IR(news.samsung.com/global/ir), 애플 뉴스룸/8-K, NVIDIA 8-K/IR
- *          (2026-07-27 확인 — 3Q 일정은 각 사가 통상 3~4주 전에야 공표해 미확정,
- *           과거 패턴 기반 추정치를 tentative:true로 선반영)
- *          (2026-07-28 재대조 — 오류 3건 정정. 실측 출처를 명기한다:
- *            · 삼성 2Q26 확정실적 7/23 → 7/30
- *              네이버 IR https://m.stock.naver.com/api/stock/005930/integration
- *                        irScheduleInfo.irScheduleDate = "2026-07-30" (D-2 실측)
- *              + 삼성 global IR https://www.samsung.com/global/ir/ "2Q26 Earnings
- *                Conference Call" + 웹 검색 "7월 30일 10:00" — 3중 일치
- *            · 애플 FY26 4Q  10/29 → 10/28   Finnhub /calendar/earnings (hour=amc)
- *            · 엔비디아 FY27 3Q 11/18 → 11/17 Finnhub /calendar/earnings (hour=amc)
- *           같은 대조에서 확정 항목(애플 7/30·엔비디아 8/26)은 Finnhub와 정확히
- *           일치 → 기준(ET 표기)은 맞고 추정 규칙만 하루 밀려 있었음이 확인됐다.)
+ *  - FOMC  [원문확인]
+ *      요청 https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+ *           (2026-07-28, HTTP 200)
+ *      발췌 2026 "January 27-28 (no SEP)" … "December 8-9* (SEP)"
+ *           2027 "January 26-27 (no SEP)" … "December 7-8* (SEP)"  → 16건 전건 일치
+ *           "each meeting date is tentative until confirmed"
+ *      비고 연준 문구는 tentative지만 우리 배열은 tentative 플래그를 쓰지 않는다
+ *           (연준 공표분은 사실상 확정으로 취급).
+ *
+ *  - CPI 2026  [교차확인 — 원문은 차단, 독립 2경로가 12건 전건 일치]
+ *      요청 ① https://www.bls.gov/schedule/news_release/cpi.htm
+ *              (2026-07-28, **HTTP 403 Access Denied** — 봇 차단, 원문 대조 불가)
+ *           ② https://www.usinflationcalculator.com/inflation/consumer-price-index-release-schedule/
+ *              (2026-07-28, HTTP 200)
+ *           ③ https://api.stlouisfed.org/fred/release/dates?release_id=10
+ *              &include_release_dates_with_no_data=true&realtime_start=2026-01-01
+ *              &realtime_end=2027-12-31  (2026-07-28, HTTP 200 — BLS 미러)
+ *      발췌 ② "December 2025 | January 13, 2026 | 8:30 AM"(refMonth·시각 포함 표)
+ *           ③ "2026: 12건 → 2026-01-13, 2026-02-13, … 2026-12-10"
+ *      비고 발표 시각 08:30 ET는 ②의 Time 컬럼에서 온 값이다.
+ *
+ *  - CPI 2027  [미확인 — 확인 실패이지 "미공표" 단정 아님]  상세는 CPI_RELEASES_2027 주석.
+ *      요청 위 ①403 / ②2026-12-10까지만 게재 / ③ HTTP 200이나 "2027: 0건"
+ *
+ *  - MSCI 2026-08·11 + 2027 4건  [원문확인]
+ *      요청 https://app2.msci.com/eqb/pressreleases/archive/ir_dates.csv
+ *           (2026-07-28, HTTP 200, 12508 bytes. www.msci.com 동일 경로도 같은 응답)
+ *           ※ 같은 문서의 .pdf 판(www.msci.com/…/ir_dates.pdf)은 WebFetch가 스트림을
+ *             파싱하지 못해 실패 → csv 경로로 우회한 것이다.
+ *      발췌 "Quarter|Event|Announcement Date|Effective Date"
+ *           "Aug, 2026|""Index Review""|08-12-2026|09-01-2026"
+ *           "Nov, 2026|""Index Review""|11-11-2026|12-01-2026"
+ *           "Feb, 2027|…|02-09-2027|03-01-2027"  "May, 2027|…|05-10-2027|05-28-2027"
+ *           "Aug, 2027|…|08-12-2027|09-01-2027"  "Nov, 2027|…|11-11-2027|12-01-2027"
+ *      비고 CSV 수록 범위는 Aug 2026 ~ Feb 2028 — **2026-02·2026-05는 이 문서에 없다**.
+ *
+ *  - MSCI 2026-05 announce/close  [원문확인]
+ *      요청 https://app2.msci.com/webapp/index_ann/DocGet?pub_key=bN889ud22q4%3D&lang=en&format=html
+ *           (2026-07-28, HTTP 200)
+ *      발췌 "Announcement Date: May 12, 2026 (after 11:00 p.m. CEST)"
+ *           "Effective Date: Close of May 29, 2026"
+ *
+ *  - MSCI 2026-05 effective(2026-06-01)  [미확인 — 도출값]
+ *      위 원문은 "Close of May 29"까지만 적는다. 06-01은 ir_dates.csv의 Effective 규약
+ *      (close 익영업일)에서 **도출**한 값이며 원문 발췌가 아니다. 값은 그대로 두되 등급만 낮춘다.
+ *
+ *  - MSCI 2026-02 전체(announce 2/10, close 2/27, effective 3/2)  [미확인 — 제3자 요약]
+ *      요청 https://www.businesswire.com/news/home/20260203687223/en/… (2026-07-28, **read ECONNRESET**)
+ *      근거 웹 검색 결과 요약 + 제3자 기사(venturasecurities / marketscreener / intellectia).
+ *      ⚠️ 종전 주석은 "businesswire 20260210452023"을 인용 출처로 달아 뒀으나 그 문서는
+ *         열람하지 못했다 — 출처에서 내리고 등급을 낮춘다(값은 미수정).
+ *
+ *  - 금통위 2026  [원문확인]
+ *      요청 https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSe=A&menuNo=200755
+ *           (2026-07-29, HTTP 200 — 서버 렌더링 HTML의 "회의일자" 컬럼 직접 추출)
+ *      발췌 "01월 15일(목)" "02월 26일(목)" "04월 10일(금)" "05월 28일(목)"
+ *           "07월 16일(목)" "08월 27일(목)" "10월 22일(목)" "11월 26일(목)"  → 8건
+ *      비고 2026-07-28 시도는 같은 URL이 **HTTP 504**로 실패했고, 그날 배열은 검색 요약본
+ *           근거였다(보도자료 본문은 일정을 담지 않고 HWP/PDF 첨부에만 있어 미열람).
+ *           2026-07-29에 원문으로 다시 대조해 8건 전건 일치를 확인했다.
+ *
+ *  - 금통위 2027  [원문확인 — 미공표]  상세는 BOK_MEETINGS_2027 주석.
+ *
+ *  - 실적 삼성 2Q26 확정(2026-07-30)  [원문확인 — 2경로]
+ *      요청 https://m.stock.naver.com/api/stock/005930/integration (2026-07-28, HTTP 200)
+ *           https://www.samsung.com/global/ir/ (2026-07-28, HTTP 200)
+ *      발췌 irScheduleInfo = {"title":"2026년 2분기 경영실적 발표","irScheduleDate":"2026-07-30"}
+ *           samsung.com 페이지 내 "2Q26 Earnings Conference Call"
+ *      비고 종전 값 7/23이 확정 표기(tentative 없음)로 틀려 있던 항목이다.
+ *
+ *  - 실적 애플 10/28 · 엔비디아 11/17  [원문확인 — API 원문]
+ *      요청 https://finnhub.io/api/v1/calendar/earnings?from=2026-07-01&to=2026-12-31&symbol=…
+ *           (2026-07-28, HTTP 200)
+ *      발췌 {"symbol":"AAPL","date":"2026-10-28","hour":"amc","quarter":4,"year":2026}
+ *      비고 같은 대조에서 확정 항목(애플 7/30·엔비디아 8/26)은 정확히 일치 → 기준(ET 표기)은
+ *           맞고 요일 규칙 추정치만 하루씩 밀려 있었음이 확인됐다.
+ *
+ *  - 실적 애플/엔비디아 IR 원문  [미확인 — 접근 실패]
+ *      요청 https://investor.apple.com/investor-relations/default.aspx (2026-07-28, HTTP 403, Cloudflare)
+ *           https://investor.nvidia.com/events-and-presentations/events/default.aspx (동일 403)
+ *      ⚠️ 종전 주석의 출처 표기 "애플 뉴스룸/8-K, NVIDIA 8-K/IR"은 열람하지 못한 문서다 —
+ *         출처에서 내린다. 현재 US 실적일의 실제 근거는 위 Finnhub 한 경로뿐이다.
+ *
+ *  - 실적 tentative 잔여분(삼성 3Q26 10/08·10/29)  [미확인 — 후보값]
+ *      근거 과거 패턴/요일 규칙 추정. Finnhub는 KR 종목을 커버하지 않고, 네이버 IR은
+ *      "다음 1건"만 노출해 미래 분기를 확인할 수 없다. 회사 공표 시 갱신 대상.
  *
  * ET→KST 변환은 해당 날짜의 실제 서머타임(DST) 여부를 Intl 타임존 데이터로 판정하므로
  * DST 규칙을 직접 하드코딩하지 않고, 매년 값만 넣으면 계속 정확하게 동작한다.
@@ -59,19 +131,28 @@
  * 때 함께 올린다 — 이 값이 오래됐다는 것 자체가 "일정이 바뀌었어도 모른다"는 신호다.
  * (일정 변경 감지 수단이 없는 현 구조에서 사용자에게 줄 수 있는 최소한의 신빙성 근거)
  */
+// ⚠️ 이 날짜는 "그날 대조했다"는 뜻일 뿐 정확성을 보증하지 않는다(삼성 2Q26 전례: 확인일
+//    도장이 찍힌 뒤에도 틀린 값이 남아 있었다). 각 카테고리의 **확인 등급**은 위 출처 기록에
+//    있으며, 아래 주석에 요약만 병기한다 — 날짜만 보고 신뢰도를 읽지 말 것.
 export const VERIFIED_AT = {
-  // 2026-07-28 전수 기계 대조: federalreserve.gov 공표 일정과 2026·2027 16건 전건 일치.
+  // [원문확인] federalreserve.gov 원문과 2026·2027 16건 전건 일치.
   fomc:     '2026-07-28',
-  // 2026-07-28 전수 대조: 2026년 12건이 refMonth까지 전건 일치(usinflationcalculator
-  // + FRED release dates 두 경로 독립 확인). 2027분은 확인 실패 — 배열 주석 참조.
+  // [교차확인] 2026년 12건이 refMonth까지 독립 2경로 일치(BLS 원문은 403 차단).
+  // 2027분은 [미확인](확인 실패) — 배열 주석 참조.
   cpi:      '2026-07-28',
-  // 2026-07-28: 연 4회 체계로 정정하며 2026-02 소급 추가 + 2027 4건 신설.
+  // [혼합] 2026-08·11 + 2027 4건은 ir_dates.csv [원문확인], 2026-05 announce/close도
+  // MSCI DocGet [원문확인]. 단 2026-05 effective는 도출값, 2026-02 3필드는 제3자 요약
+  // [미확인] — 항목별 등급이 다르므로 이 한 날짜로 뭉뚱그려 읽지 말 것.
   msci:     '2026-07-28',
-  // 한국은행 2026년 정기회의 일정(2025-10-30 공표) 기준. 2027분 미공표.
-  bok:      '2026-07-28',
-  // 2026-07-28: 네이버 IR / 삼성 global IR / Finnhub와 재대조해 오류 3건 정정(위 출처 주석).
+  // [원문확인] 2026-07-29 한국은행 회의 목록 원문에서 8건 직접 추출(2026-07-28분은
+  // 504 실패 후 검색 요약본 근거였음 — 정정 이력은 출처 기록 참조). 2027분 미공표 확인.
+  bok:      '2026-07-29',
+  // [혼합] 삼성 2Q26·애플·엔비디아 확정분은 [원문확인](네이버 IR / 삼성 IR / Finnhub),
+  // 삼성 3Q26 tentative 2건은 [미확인](요일 규칙 후보값).
   earnings: '2026-07-28',
-  // 만기일 보정용 휴장일 표(MARKET_HOLIDAYS) — 다른 하드코딩 배열과 같은 규율을 적용한다.
+  // [미확인] 만기일 보정용 휴장일 표(MARKET_HOLIDAYS) — KRX·NYSE 원문을 조회한 기록이
+  // 없다(규칙 도출 + 제3자 교차). 다른 하드코딩 배열과 같은 관리 규율은 적용하되,
+  // 등급이 가장 낮은 카테고리라는 점을 표 주석에 명시했다.
   holidays: '2026-07-28',
 };
 
@@ -118,7 +199,7 @@ export const CPI_RELEASES_2026 = [
   { date: '2026-12-10', refMonth: '2026-11' },
 ];
 
-// 2027년 CPI — ⚠️ **확인 실패**(2026-07-28). "미공표"로 단정하지 않는다.
+// 2027년 CPI — ⚠️ [미확인 — **확인 실패**](2026-07-28). "미공표"로 단정하지 않는다.
 //   · bls.gov가 봇 차단(Access Denied 403) — 원출처 직접 대조 불가
 //   · FRED release dates API(release_id=10, include_release_dates_with_no_data=true)로
 //     우회 조회 → 2026분 12건은 우리 배열과 전건 일치했으나 2027분은 **0건**
@@ -167,29 +248,40 @@ export const CPI_RELEASES = [...CPI_RELEASES_2026, ...CPI_RELEASES_2027];
  *   FOMC/CPI의 'US'도 같은 모호성을 갖는다(그쪽은 둘이 일치해 드러나지 않을 뿐).
  *   규약을 정한 뒤 일괄 정리할 것.
  */
-// 필드 3종 — 전부 공표 원문 값이며 어느 것도 계산·역산하지 않는다.
-//   announce  : ir_dates.csv 원문(2026-05-12 공표분) 및 개별 사전공지 보도자료
-//   close     : 각 리뷰 **결과** 보도자료의 "as of the close of X" 문구에서 직접 읽은 값
+// 필드 3종의 의미(어느 것도 close↔effective 사이를 역산해 채우지 않는다):
+//   announce  : ir_dates.csv 원문(2026-05-12 공표분) 및 개별 사전공지
+//   close     : 각 리뷰 **결과** 보도자료의 "as of the close of X" 문구
 //   effective : ir_dates.csv의 Effective Date 컬럼(또는 결과 보도자료의 "Effective date")
+// ⚠️ 2026-07-29 정정: 종전 이 자리에 "전부 공표 원문 값"이라고 적혀 있었으나 사실이 아니다.
+//    항목별 확인 등급이 갈린다 — 아래 각 항목 주석과 파일 상단 출처 기록 참조.
+//    (2026-02 3필드 = 제3자 요약, 2026-05 effective = 도출값)
 export const MSCI_REVIEWS_2026 = [
-  // close: "All changes will be implemented as of the close of February 27, 2026"
-  // effective: 같은 보도자료의 "Effective date March 02, 2026"
-  //   — MSCI Equity Indexes February 2026 Index Review (businesswire 20260210452023)
+  // ⚠️ [미확인 — 제3자 요약] 3필드 전부. businesswire 원문은 read ECONNRESET으로 못 읽었고,
+  //   근거는 검색 요약 + 제3자 기사(venturasecurities/marketscreener/intellectia)다.
+  //   종전 주석이 인용 출처로 달아 뒀던 "businesswire 20260210452023"은 열람하지 못한
+  //   문서라 내렸다(2026-07-29 정정). 값은 건드리지 않았다 — 재확인 대상.
+  //   ir_dates.csv는 Aug 2026부터 실려 있어 이 리뷰를 담지 않는다.
   { announce: '2026-02-10', close: '2026-02-27', effective: '2026-03-02', label: '2월' },
-  // close: "all changes implemented as of the close of May 29, 2026"
-  //   — MSCI Equity Indexes May 2026 Index Review (businesswire 20260512311750)
-  // effective: 같은 리뷰의 사전공지 "Effective date: June 01, 2026"
+  // announce/close [원문확인] MSCI DocGet(app2.msci.com, HTTP 200):
+  //   "Announcement Date: May 12, 2026 (after 11:00 p.m. CEST)"
+  //   "Effective Date: Close of May 29, 2026"
+  // ⚠️ effective(06-01)는 [미확인 — 도출값]: 위 원문은 "Close of May 29"까지만 적는다.
+  //   06-01은 ir_dates.csv의 Effective 규약(close 익영업일)에서 도출했다. 값은 유지.
   { announce: '2026-05-12', close: '2026-05-29', effective: '2026-06-01', label: '5월' },
+  // announce/effective [원문확인] ir_dates.csv: "Aug, 2026|""Index Review""|08-12-2026|09-01-2026"
   // TODO(close 날짜 원문 미확인): 미래 리뷰라 결과 보도자료가 아직 없다. 발표일(8/12)
   //   이후 "as of the close of X"를 확인해 close로 승격할 것. effective는 ir_dates.csv
   //   원문값이며 close 자리에 옮겨 적지 말 것(그건 역산이다).
   { announce: '2026-08-12', effective: '2026-09-01', label: '8월' },
+  // announce/effective [원문확인] ir_dates.csv: "Nov, 2026|""Index Review""|11-11-2026|12-01-2026"
   // TODO(close 날짜 원문 미확인): 위와 동일.
   { announce: '2026-11-11', effective: '2026-12-01', label: '11월' },
 ];
 
-// MSCI press release 2026-05-12 (ir_dates.csv) 원문 확인 — announce/effective 모두
-// 그 CSV의 컬럼값 그대로다. close는 4건 모두 미래 리뷰라 원문이 존재하지 않는다(TODO).
+// [원문확인] announce/effective 4건 모두 ir_dates.csv(2026-05-12 공표분, HTTP 200)의
+// 컬럼값 그대로다 — 발췌: "Feb, 2027|…|02-09-2027|03-01-2027" "May, 2027|…|05-10-2027|05-28-2027"
+// "Aug, 2027|…|08-12-2027|09-01-2027" "Nov, 2027|…|11-11-2027|12-01-2027".
+// close는 4건 모두 미래 리뷰라 원문이 존재하지 않는다(TODO).
 // ⚠️ 2027-05만 effective가 월초가 아니라 05-28이다 — MSCI 원문이 그러하므로 그대로 둔다
 //    (다른 분기는 03-01 / 09-01 / 12-01). 오탈자로 보고 "고치지" 말 것.
 export const MSCI_REVIEWS_2027 = [
@@ -208,18 +300,35 @@ const MSCI_REVIEWS = [...MSCI_REVIEWS_2026, ...MSCI_REVIEWS_2027];
  * 발표 시각은 회의 당일 오전(통상 10:00 전후)이고 그 자체가 KST라 time 필드가 불필요하다
  * — FOMC/CPI처럼 ET→KST 환산으로 날짜가 어긋나는 문제가 없다.
  *
- * 출처: 한국은행 "2026년 금융통화위원회 정기회의 개최 및 의사록 공개 예정일정"
- *       (2025-10-30 공표). 개별 일자는 한국은행 통화정책방향 보도자료로 교차 확인
- *       (예: "통화정책방향(2026.4.10)", "통화정책방향(2026.7.16)").
- *       (2026-07-28 확인 — 4/10만 금요일이라 원출처로 따로 재확인했다. 나머지는 목요일.)
+ * 출처 [원문확인]
+ *   요청 https://www.bok.or.kr/portal/singl/crncyPolicyDrcMtg/listYear.do?mtgSe=A&menuNo=200755
+ *        (2026-07-29 원문 목록 전건 대조, HTTP 200, "회의일자" 컬럼 직접 추출)
+ *   발췌 "01월 15일(목)" "02월 26일(목)" "04월 10일(금)" "05월 28일(목)"
+ *        "07월 16일(목)" "08월 27일(목)" "10월 22일(목)" "11월 26일(목)"
+ *   비고 4/10만 금요일이고 나머지는 목요일 — 원문도 그렇게 적혀 있다(오탈자 아님).
+ *
+ * ⚠️ 정정 이력(2026-07-29): 종전 주석은 이 배열의 출처를 한국은행 보도자료
+ *    "2026년 금융통화위원회 정기회의 개최 및 의사록 공개 예정일정"(2025-10-30 공표)으로
+ *    적고 "4/10은 원출처로 따로 재확인했다"고 밝혔으나, 둘 다 사실과 달랐다.
+ *    · 그 보도자료 **본문에는 일정이 없다**(HWP/PDF 첨부에만 수록, 첨부는 미열람) —
+ *      열람하지 않은 문서라 출처에서 내렸다.
+ *    · 회의 목록 원문은 2026-07-28에 HTTP 504로 실패했고, 그날의 8건은 검색 결과
+ *      요약문과 언론 기사(월 단위 + 첫 회의일)에서 온 값이었다.
+ *    값 자체는 2026-07-29 원문 대조에서 8건 전건 일치했다 — 값이 아니라 근거 기록이 틀렸다.
  */
 export const BOK_MEETINGS_2026 = [
   { date: '2026-01-15' }, { date: '2026-02-26' }, { date: '2026-04-10' }, { date: '2026-05-28' },
   { date: '2026-07-16' }, { date: '2026-08-27' }, { date: '2026-10-22' }, { date: '2026-11-26' },
 ];
 
-// 2027년 금통위 — ⚠️ 미공표(2026-07-28 확인). 한국은행은 통상 전년 10월경 다음 해
-// 일정을 공표한다(2026년분은 2025-10-30 공표).
+// 2027년 금통위 — ⚠️ **미공표**. [원문확인]
+//   요청 위와 같은 URL + &pYear=2027 (2026-07-29, HTTP 200)
+//   발췌 <h3>2027년</h3> + selected="selected" 2027 — 그런데 **목록 0건**
+//   판독 2026 목록은 아직 열리지 않은 회의(10/22·11/26)도 그대로 표시한다. 즉 이 표는
+//        "개최분"이 아니라 "공표된 예정분"을 싣는다 → 빈 표 = 미개최가 아니라 **미공표**.
+//   비고 한국은행은 통상 전년 10월경 다음 해 일정을 공표한다(2026년분은 2025-10-30 공표).
+//   ⚠️ 2026-07-28판 주석은 같은 결론을 적으면서 근거가 "검색 결과에 2027 링크가 없었다"뿐이었다
+//      (확인 시도 0건). 결론은 같아도 그건 확인이 아니다 — 그래서 위 요청/발췌로 대체했다.
 // TODO(2026-11-01 재확인): 공표되면 채우고 VERIFIED_AT.bok을 함께 갱신할 것.
 export const BOK_MEETINGS_2027 = [];
 
@@ -353,13 +462,23 @@ const QUARTER_MONTHS_0 = [2, 5, 8, 11]; // 0-indexed: 3·6·9·12월
  *    'holidays' 카테고리로 편입해 표가 소진되기 전에 경고가 뜨게 했다. 다른 하드코딩
  *    배열과 같은 관리 규율(VERIFIED_AT + 출처 주석 + 소진 경고)을 그대로 적용한다.
  *
- * 출처(2026-07-28 확인):
- *  - 한국: 관공서의 공휴일에 관한 규정 + KRX 휴장(근로자의날·연말 폐장일 포함).
- *          요일/대체공휴일 규칙은 전 항목 프로그램으로 검산함(대체공휴일 적용 대상에
- *          현충일이 빠지는 것까지 확인). 2027 부처님오신날(음력 4/8)은 양력 환산이
- *          필요해 별도 교차 확인: time.is 2027 한국 달력 + 웹 검색 모두 5/13(목).
- *  - 미국: NYSE Group 2025~2027 Holiday and Early Closings Calendar.
- *          2026-06-19 Juneteenth 전휴장은 Fidelity/Kiplinger로 교차 확인.
+ * 출처 — ⚠️ **6개 카테고리 중 확인 등급이 가장 낮다**(2026-07-29 재작성).
+ *  - 한국  [미확인 — 규칙 도출 + 부분 교차확인]
+ *      요청 KRX 공식 휴장일 안내 원문을 조회한 기록이 **없다**(요청 자체가 없었음).
+ *           https://time.is/ko/calendar/2027/South_Korea (2026-07-28, HTTP 200)
+ *           https://superkts.com/day/holiday/2027 (HTTP 500) / publicholidays.co.kr (봇 검증 화면)
+ *      발췌 time.is "Lunar New Year: February 6-8", "Substitute Holiday: February 9 (Tuesday) - 대체공휴일"
+ *      근거 본체는 관공서의 공휴일에 관한 규정을 적용한 **프로그램 검산**이다(대체공휴일
+ *           적용 대상에서 현충일이 빠지는 것까지 확인). 규칙 적용은 추론이지 원문 추출이 아니다.
+ *      ⚠️ 2027 부처님오신날 5/13(음력 4/8 환산)은 위 두 경로로 판단했다고 기록돼 있으나,
+ *         그 값을 담은 발췌 문자열이 세션 로그에 남아 있지 않다 — 등급을 미확인으로 둔다.
+ *  - 미국  [미확인 — 제3자 요약]
+ *      요청 NYSE 원문(nyse.com Holiday and Early Closings Calendar)을 조회한 기록이 **없다**.
+ *           근거는 웹 검색 결과(Fidelity·Kiplinger 등 제3자 요약)뿐이다.
+ *      ⚠️ 종전 주석은 "NYSE Group 2025~2027 Holiday and Early Closings Calendar"를 출처로
+ *         달아 뒀으나 열람하지 않은 문서다 — 출처에서 내렸다(2026-07-29). 값은 미수정.
+ *  TODO(원문 승격): KRX(open.krx.co.kr 휴장일)·NYSE 원문을 직접 받아 표 전체를 [원문확인]으로
+ *      올릴 것. 만기일 보정이 이 표에 걸려 있어 등급이 낮은 채로 두면 조용히 틀린 날짜가 나온다.
  *
  * 2026 추석 대체공휴일 — **해당 없음으로 확정**(2026-07-28). 설·추석 연휴 대체공휴일은
  * 일요일 겹침 시에만 발생한다(관공서의 공휴일에 관한 규정). 2026년 추석 연휴는
