@@ -18,6 +18,7 @@ import {
   MSCI_REVIEWS_2026, MSCI_REVIEWS_2027, BOK_MEETINGS_2026,
 } from '../api/_lib/macro-calendar.js';
 import { buildCalendarSource } from '../api/health.js';
+import { readFileSync } from 'node:fs';
 
 // ── "오늘" 목킹 ───────────────────────────────────────────────
 // macro-calendar의 todayKST()는 Intl.format(new Date())라, 인자 없는 new Date()와
@@ -295,6 +296,53 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   assert(far.some(d => d.category === 'holidays'), '7: 표 소진 임박 시 holidays 경고');
   const now = withToday('2026-07-28', () => getScheduleDepletion());
   assert(!now.some(d => d.category === 'holidays'), '7: 커버리지 충분하면 경고 없음');
+}
+
+// ── 8. 휴장일 표 vs 거래일 스냅샷(자체 데이터 오프라인 대조) ────────
+// scripts/audit-holidays.js가 만든 스냅샷을 오프라인으로 대조한다. 네트워크를 쓰지 않는
+// 이유: 회귀가 외부 서버 사정에 묶이면 안 된다. 최신화는 그 스크립트를 사람이 돌린다.
+//
+// ⚠️ **이 검사는 과거만 본다. 미래 항목 오류는 잡지 못한다.**
+//    아직 오지 않은 날은 캔들이 없는 게 정상이므로 원리적으로 침묵한다 —
+//    미래분의 방어선은 원문 등급(조문·월력요항·NYSE)뿐이다. 실제로 2026-07-29 감사에서
+//    누락 4건 중 이 방식이 잡은 건 2026-07-17 1건이고 2027 3건은 조문이 잡았다.
+{
+  const PAST_ONLY = '⚠️ 이 검사는 과거만 본다. 미래 항목 오류는 잡지 못한다(원문 등급이 유일한 방어선).';
+  const snap = JSON.parse(readFileSync(new URL('./fixtures/kr-trading-days-2026.json', import.meta.url), 'utf8'));
+  const trading = new Set(snap.tradingDays);
+  const isWeekend = d => [0, 6].includes(new Date(`${d}T00:00:00Z`).getUTCDay());
+
+  assert(snap.sources.length >= 2, `8: 스냅샷은 소스 2종 이상이어야 함(단일 소스 결측을 휴장으로 오인) — ${PAST_ONLY}`);
+  assert(trading.size > 100, `8: 스냅샷 거래일 수가 비정상적으로 적음(${trading.size}일) — ${PAST_ONLY}`);
+
+  const missing = [], extra = [];
+  for (let t = Date.parse(`${snap.coverageStart}T00:00:00Z`); t <= Date.parse(`${snap.coverageEnd}T00:00:00Z`); t += 86400000) {
+    const d = new Date(t).toISOString().slice(0, 10);
+    if (isWeekend(d)) continue;
+    const holiday = MARKET_HOLIDAYS.KR[d];
+    if (!trading.has(d) && !holiday) missing.push(d);          // 캔들 없음 + 표에 없음 = 누락
+    if (trading.has(d) && holiday) extra.push(`${d}(${holiday})`); // 거래됨 + 표에 있음 = 오탑재
+  }
+  assert(missing.length === 0,
+    `8: 실측 휴장인데 표에 없는 날 ${missing.length}건 — ${missing.join(', ')} / ${PAST_ONLY}`);
+  assert(extra.length === 0,
+    `8: 표에 있는데 실제로 거래된 날 ${extra.length}건 — ${extra.join(', ')} / ${PAST_ONLY}`);
+
+  // 제헌절 누락을 실제로 잡아낸 검사인지 — 반증(표에서 빼면 이 검사가 실패해야 한다)
+  assert(!trading.has('2026-07-17') && MARKET_HOLIDAYS.KR['2026-07-17'],
+    '8: 2026-07-17은 스냅샷에 거래일이 없고 표에는 있어야 함(이 검사의 발견 사례)');
+
+  // 커버리지 끝 = 이 감사가 도달한 지점. 스냅샷이 낡으면 새로 생긴 달을 아무도 안 본다 —
+  // 표 소진(depletion)과 같은 성격의 "커버리지가 마른다" 문제라 같은 규율로 감시한다.
+  assert(snap.coverageEnd >= '2026-07-29',
+    `8: 스냅샷 커버리지가 후퇴함(append-only 위반, ${snap.coverageEnd}) — ${PAST_ONLY}`);
+  const staleDays = Math.floor((Date.now() - Date.parse(`${snap.coverageEnd}T00:00:00Z`)) / 86400000);
+  if (staleDays > 60) {
+    console.warn(`  ⚠️ 스냅샷이 ${staleDays}일 낡았다(~${snap.coverageEnd}). `
+      + 'node scripts/audit-holidays.js --update 로 갱신할 것.');
+  }
+  assert(staleDays <= 180,
+    `8: 스냅샷 ${staleDays}일 경과 — 감사 커버리지 소진. audit-holidays.js --update 필요 / ${PAST_ONLY}`);
 }
 
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);
