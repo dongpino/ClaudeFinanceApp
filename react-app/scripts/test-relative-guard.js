@@ -18,7 +18,8 @@ import {
   isMarketClosed, crossTolerance, checkCross, checkFlatness, baselineTooOld,
   runRelativeChecks, FLAT_RUN_THRESHOLD, BASELINE_MAX_AGE_MS,
 } from '../api/_lib/relative-guard.js';
-import { ASSET_META } from '../api/_lib/asset-meta.js';
+import { ASSET_META, isFlatExempt } from '../api/_lib/asset-meta.js';
+import { readFileSync } from 'node:fs';
 import { buildRelativeGuardSource } from '../api/health.js';
 
 let pass = 0, fail = 0;
@@ -194,6 +195,51 @@ const NOW_KR_OPEN = new Date('2026-07-29T02:00:00Z'); // 11:00 KST 수요일 = K
   });
   assert(sust.status === 'down' && sust.verdict === 'sustained', '6: 3회 연속은 down/sustained');
   assert(sust.note.includes('한쪽 파서 이상 의심'), '6: 승격 문구도 중립(양측 중 한쪽)');
+}
+
+// ── 7. 평탄성 면제 파생(cadence/type) ──────────────────────────
+// ⚠️ 종전에는 정책금리가 stale-baseline이라는 **다른 이유로 우연히** 빠지고 있었다.
+//    history가 일별로 바뀌면 즉시 상시 오탐이 되는 상태였다 — 그 우연을 규칙으로 대체한다.
+{
+  // (a) 지시된 4건이 자동 면제되는가 — 항목별 boolean 플래그 없이 cadence/type만으로
+  for (const [id, why] of [
+    ['kr_base_rate', 'policy_rate'], ['fomc.rate', 'policy_rate'], ['bok', 'policy_rate'],
+    ['cpi', 'cadence-monthly'], ['unemployment', 'cadence-monthly'],
+  ]) {
+    const e = isFlatExempt(id);
+    assert(e.exempt === true && e.reason === why,
+      `7a: ${id} 자동 면제(사유=${why}) (실제: ${JSON.stringify(e)})`);
+  }
+
+  // (b) 대조군 — 일별 시세는 면제되면 안 된다(면제가 과하게 번지지 않는지)
+  for (const id of ['kospi', 'nasdaq', 'usdkrw', 'btc', 'dominance', 'feargreed', 'us10y']) {
+    assert(isFlatExempt(id).exempt === false, `7b: ${id}는 평탄성 검사 대상`);
+  }
+  assert(isFlatExempt('없는항목').exempt === false, '7b: 미지의 id는 면제하지 않음');
+
+  // (c) ⭐ baselineTooOld와 **무관하게** 면제되는가 — 기준선을 오늘로 둬 stale을 배제한다
+  const today = new Date().toISOString().slice(0, 10);
+  const fresh = Array.from({ length: 24 }, (_, i) => ({
+    date: i === 23 ? today : `2025-${String((i % 12) + 1).padStart(2, '0')}-01`, close: 2.75 }));
+  assert(baselineTooOld({ history: fresh }).stale === false, '7c: 이 데이터는 stale-baseline이 아니다');
+  const ex = checkFlatness({ id: 'kr_base_rate', history: fresh });
+  assert(ex.state === 'skipped' && ex.reason === 'flat-exempt:policy_rate',
+    `7c: 기준선이 신선해도 정책금리는 면제 (실제: ${JSON.stringify(ex)})`);
+  // 반증 — 같은 데이터를 kospi로 주면 24일 연속 동일값이라 위반이어야 한다
+  const kos = checkFlatness({ id: 'kospi', history: fresh });
+  assert(kos.state === 'checked' && kos.ok === false && kos.run === 24,
+    `7c: [반증] 면제 대상이 아니면 같은 데이터가 위반 (실제: ${JSON.stringify(kos)})`);
+
+  // (d) 항목별 수동 boolean 플래그가 다시 생기지 않았는지(단일 원본 파생 원칙)
+  //     ⚠️ 주석은 걷어내고 본다 — asset-meta.js의 설명문이 "flatExempt: true를 쓰지 않는다"
+  //     라고 그 이름을 언급하고 있어서, 원문 그대로 검사하면 설명이 위반으로 잡힌다
+  //     (test-probe-capture의 trackedFetch 검사와 같은 함정).
+  const metaSrc = readFileSync(new URL('../api/_lib/asset-meta.js', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert(!/flatExempt\s*:/.test(metaSrc), '7d: flatExempt 수동 플래그를 쓰지 않는다(파생만)');
+  // 파생 근거가 실제로 메타에 적혀 있는지(규칙이 읽을 재료가 있는가)
+  assert(/cadence:\s*MONTHLY/.test(metaSrc) && /type:\s*POLICY_RATE/.test(metaSrc),
+    '7d: cadence/type이 메타에 명시돼 있다');
 }
 
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);

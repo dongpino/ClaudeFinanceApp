@@ -13,7 +13,7 @@
  *    어느 쪽이 틀렸는지는 이 검사로 알 수 없으므로 문구를 "양측 불일치"로 중립하게 쓴다.
  */
 
-import { ASSET_META } from './asset-meta.js';
+import { ASSET_META, isFlatExempt } from './asset-meta.js';
 import { MARKET_HOLIDAYS } from './macro-calendar.js';
 
 // ── 실행 조건: 폐장 판정 ─────────────────────────────────────────────
@@ -129,6 +129,11 @@ export function checkFlatness(item) {
   const meta = ASSET_META[item?.id];
   if (!meta) return { state: 'skipped', reason: 'no-meta' };
   if (meta.singleName) return { state: 'skipped', reason: 'single-name' };
+  // 갱신 주기·성격에서 파생된 면제(월별 지표·정책금리) — asset-meta.isFlatExempt가 판단한다.
+  // ⚠️ baselineTooOld와 **무관하게** 여기서 먼저 빠져야 한다. 종전에는 정책금리가
+  //    기준선 나이 덕에 우연히 빠지고 있었고, 그건 규칙이 아니라 사고였다.
+  const ex = isFlatExempt(item.id);
+  if (ex.exempt) return { state: 'skipped', reason: `flat-exempt:${ex.reason}` };
   const hist = Array.isArray(item.history) ? item.history : [];
   if (hist.length < FLAT_RUN_THRESHOLD) return { state: 'skipped', reason: 'short-history' };
 

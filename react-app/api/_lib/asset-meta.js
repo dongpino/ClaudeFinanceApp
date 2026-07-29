@@ -45,6 +45,21 @@
 // 없고 어차피 tauto다.
 const CROSS = 'cross', SEMI = 'semi', TAUTO = 'tauto';
 
+// ── 갱신 주기와 성격 ─────────────────────────────────────────────────
+// 평탄성(파서 동결) 검사의 면제 여부를 **여기서 파생**한다. 항목마다 boolean 플래그를
+// 손으로 다는 대신 "이 값이 원래 어떤 리듬으로 움직이는가"를 적고 규칙이 읽게 한다
+// (단일 원본 파생 원칙 — FALLBACK_IDS·NON_PRICE_UNITS와 같은 방식).
+//   cadence : 값이 갱신되는 주기. monthly/quarterly는 일 단위로 보면 당연히 평탄하다.
+//   type    : 값의 성격. policy_rate는 **동결이 정상 상태**이고 그 길이 자체가 정보다
+//             (MarketCard의 FREEZE_AFTER_DAYS=49가 그 전제로 동작한다).
+const DAILY = 'daily', MONTHLY = 'monthly', QUARTERLY = 'quarterly';
+const POLICY_RATE = 'policy_rate';
+
+/** 평탄성 검사를 면제할 갱신 주기 — 일 단위로 보면 평탄한 게 정상인 것들. */
+const FLAT_EXEMPT_CADENCES = new Set([MONTHLY, QUARTERLY]);
+/** 평탄성 검사를 면제할 값 성격 — 평탄함 자체가 정상 신호인 것들. */
+const FLAT_EXEMPT_TYPES = new Set([POLICY_RATE]);
+
 /** 가격류 공통 — 0 초과 무제한. 0은 "파서가 실패했다"의 가장 흔한 표현이라 배제한다. */
 const PRICE = { kind: 'price', unit: null, min: 0, max: null, allowNegative: false, fallback: true, exclusiveMin: true };
 
@@ -78,7 +93,7 @@ export const ASSET_META = {
   // ⚠️ price는 r4, history는 r2 — **거친 쪽(0.01)이 양자화 스텝**이다. 실측 잔차 0.217%가
   //    정확히 0.01/4.61이라 이 산정의 근거가 된다.
   us10y:        { kind: 'rate', unit: 'percent', min: -10, max: 30, allowNegative: true, fallback: true, cross: CROSS, market: 'US', quantum: 0.01 },
-  kr_base_rate: { kind: 'rate', unit: 'pct_pt',  min: -10, max: 30, allowNegative: true, fallback: true, cross: TAUTO, market: 'KR' },
+  kr_base_rate: { kind: 'rate', unit: 'pct_pt',  min: -10, max: 30, allowNegative: true, fallback: true, cross: TAUTO, market: 'KR', cadence: MONTHLY, type: POLICY_RATE },
 
   // ── 정의역이 명확한 비율·점수 ────────────────────────────────
   // ⚠️ **하한 0을 포함한다**(종전 공통 규칙 price>0과 충돌했던 지점). 공포탐욕 0과
@@ -96,6 +111,33 @@ export const NON_PRICE_UNITS = new Set(
 export const FALLBACK_IDS = new Set(
   Object.entries(ASSET_META).filter(([, m]) => m.fallback).map(([id]) => id)
 );
+
+/**
+ * 평탄성(파서 동결) 검사 면제 여부 — **cadence/type에서 파생**한다.
+ *
+ * ⚠️ 항목별 boolean 플래그(flatExempt: true)를 손으로 달지 않는다. 그러면 "왜 면제인가"가
+ *    사라지고 새 항목이 들어올 때 판단 근거 없이 복사된다. 여기서는 **값의 성질**만 적고
+ *    (월별로 갱신된다 / 정책금리다) 면제는 규칙이 도출한다.
+ *
+ * 면제 사유 둘:
+ *   · cadence가 monthly·quarterly — 일 단위로 보면 평탄한 게 당연하다(월 1회 갱신되는
+ *     값의 일별 시계열은 정의상 같은 값이 반복된다).
+ *   · type이 policy_rate — **동결이 정상 상태**이고 그 길이 자체가 정보다. 실측으로
+ *     kr_base_rate는 24개월 연속 2.75%이며, 평탄성을 적용하면 정의상 상시 오탐이다.
+ *
+ * ⚠️ 종전에는 kr_base_rate가 stale-baseline(기준선이 3일보다 낡음)이라는 **다른 이유로
+ *    우연히** 빠지고 있었다. history가 일별로 바뀌거나 기준선 임계가 늘어나면 즉시
+ *    상시 오탐이 되는 상태였다 — 그 우연을 명시적 규칙으로 대체한 것이 이 함수다.
+ *
+ * @param {string} id  ASSET_META 키 또는 MACRO_FIELD_SPEC 키('cpi'·'fomc.rate' 등)
+ */
+export function isFlatExempt(id) {
+  const meta = ASSET_META[id] ?? MACRO_FIELD_SPEC[id];
+  if (!meta) return { exempt: false, reason: null };
+  if (FLAT_EXEMPT_TYPES.has(meta.type)) return { exempt: true, reason: meta.type };
+  if (FLAT_EXEMPT_CADENCES.has(meta.cadence)) return { exempt: true, reason: `cadence-${meta.cadence}` };
+  return { exempt: false, reason: null };
+}
 
 /**
  * 레벨값 1개의 절대 타당성 판정.
@@ -135,11 +177,11 @@ export function validateLevel(id, value) {
  */
 export const MACRO_FIELD_SPEC = {
   // 미국 기준금리 목표범위 — 음수 정책금리가 실재하므로 rate 규칙을 그대로 쓴다.
-  'fomc.rate':    { numeric: ['upper', 'lower'], metaId: 'us10y' },
+  'fomc.rate':    { numeric: ['upper', 'lower'], metaId: 'us10y', cadence: DAILY,   type: POLICY_RATE },
   // CPI YoY/MoM은 **변동률**이라 음수가 정상이다. 상식 밖(±100%p)만 거른다.
-  'cpi':          { numeric: ['yoy', 'mom'],     metaId: '__pct_change__' },
-  'unemployment': { numeric: ['rate'],           metaId: '__pct_level__' },
-  'bok':          { numeric: ['rate'],           metaId: 'kr_base_rate' },
+  'cpi':          { numeric: ['yoy', 'mom'],     metaId: '__pct_change__', cadence: MONTHLY },
+  'unemployment': { numeric: ['rate'],           metaId: '__pct_level__', cadence: MONTHLY },
+  'bok':          { numeric: ['rate'],           metaId: 'kr_base_rate', cadence: MONTHLY, type: POLICY_RATE },
 };
 
 // macro 전용 가상 메타 — 자산이 아니라 통계량이라 ASSET_META에 두지 않는다.
