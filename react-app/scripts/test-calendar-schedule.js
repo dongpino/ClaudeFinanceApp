@@ -389,6 +389,19 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   assert(/event\.tentative/.test(bannerFn), '9: [배너] EventBanner가 event.tentative를 참조');
   assert(/날짜 미확정/.test(bannerFn), '9: [배너] 배너 문구가 "날짜 미확정"');
 
+  // 분기 명칭 표기 — 회계연도 기업만 "(회계연도)"를 달고, 역년 기업(삼성)은 달지 않는다.
+  // 엔비디아는 2026년 발표가 FY27이라 "1년 틀린 것처럼" 보이는 자리다 — 누가 역년으로
+  // 고쳐 놓으면 각 사 공식 표기·Finnhub quarter/year와 어긋나므로 여기서 걸려야 한다.
+  for (const [kw, expectFY] of [['애플', true], ['엔비디아', true], ['삼성전자', false]]) {
+    const rows = EARNINGS_EVENTS.filter(e => e.title.includes(kw));
+    assert(rows.length > 0, `9: [표기] ${kw} 실적 항목 존재`);
+    assert(rows.every(e => e.title.includes('(회계연도)') === expectFY),
+      `9: [표기] ${kw} title은 (회계연도) ${expectFY ? '있어야' : '없어야'} 함 — ${rows.map(e => e.title).join(' / ')}`);
+  }
+  // shortLabel은 그대로여야 한다 — 프롬프트로 가는 유일한 필드라 여기 손대면 토큰·문장이 바뀐다.
+  assert(EARNINGS_EVENTS.every(e => !e.shortLabel.includes('회계연도')),
+    '9: [표기] shortLabel에는 (회계연도)를 붙이지 않음(프롬프트 영향 0 유지)');
+
   // 위칭 용어 한미 비대칭 — 미국은 개별주식선물 폐지(2020)로 3종, 한국은 4종 존속.
   // "통일"하고 싶은 유혹이 있는 자리라 양쪽을 함께 고정한다.
   const q = getExpiryEvents(2026);
