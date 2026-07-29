@@ -56,6 +56,12 @@ function splitNameSymbol(fullName) {
 // 직접 확인된 값은 'PREOPEN' 하나뿐이다(확인 시점이 장 시작 전이라 'OPEN'/'CLOSE' 등
 // 다른 상태에서 이 필드가 어떻게 나오는지는 못 봤다) — 다른 장전류 상태값이 발견되면
 // 이 Set에 추가할 것. marketStatus가 없는 종목(대부분)은 항상 false라 기존 동작 그대로.
+// ⚠️ TODO(2026-09-14 이전 필수 — 시한 있음): 애프터마켓(16~20시) 시행에 맞춰 재설계할 것.
+//    현재 구조는 "미지 토큰 → null → PREOPEN_STATUSES에 없음 → 0변동을 계산 실패로 판정"이라,
+//    애프터마켓에서 새 상태 토큰이 나오고 그 구간에 변동이 0이면 **"전일대비 계산 실패 의심"이
+//    오탐으로 뜬다**. daum-stock.js의 normalizeStatus는 미지 토큰을 예외 없이 null로 흘리며
+//    (2026-07-29 실측 확인) 미분류 경고만 로그에 남긴다 — 그 로그가 이 Set을 채울 재료다.
+//    KRX 조정안(2026-06-19): 애프터마켓 2026-09-14 시행, 프리마켓은 2027년말.
 const PREOPEN_STATUSES = new Set(['PREOPEN']);
 
 const fpUnit = (n, unit) => {

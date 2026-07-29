@@ -19,6 +19,7 @@ import {
 } from '../api/_lib/macro-calendar.js';
 import { buildCalendarSource } from '../api/health.js';
 import { readFileSync } from 'node:fs';
+import { calendarEventLabel } from '../api/_lib/briefing-core.js';
 
 // ── "오늘" 목킹 ───────────────────────────────────────────────
 // macro-calendar의 todayKST()는 Intl.format(new Date())라, 인자 없는 new Date()와
@@ -77,7 +78,7 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   assert(oct.filter(e => e.tentative).length === 3, `2: 10월 그리드에 추정 3건 (실제: ${oct.filter(e => e.tentative).length})`);
   assert(oct.every(e => e.category !== 'earnings' || e.tentative), '2: 10월 실적은 전부 추정');
 
-  // 확정 일정에는 플래그가 없어야 UI가 "(예정)"을 잘못 붙이지 않는다.
+  // 확정 일정에는 플래그가 없어야 UI가 "(날짜 미확정)"을 잘못 붙이지 않는다.
   const jul = getEventsForMonth(2026, 7);
   assert(jul.filter(e => e.category === 'earnings').every(e => !e.tentative), '2: 7월 실적은 전부 확정');
 }
@@ -355,6 +356,51 @@ function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error(
   }
   assert(staleDays <= 180,
     `8: 스냅샷 ${staleDays}일 경과 — 감사 커버리지 소진. audit-holidays.js --update 필요 / ${PAST_ONLY}`);
+}
+
+// ── 9. tentative(날짜 미확정) 3경로 전파 ────────────────────────
+// 2026-07-29 조사에서 tentative가 **캘린더 탭에만** 있고 홈 배너와 Haiku 프롬프트에서는
+// 소실돼 있었다. 우리가 [미확인] 등급으로 매긴 추정일이 두 경로에서 확정처럼 보였다는 뜻이다.
+// 한 경로라도 빠지면 실패하게 고정한다 — 셋 중 하나만 고치면 다시 조용히 어긋난다.
+{
+  const tentativeEvents = withToday('2026-09-01', () => getUpcomingEvents(120))
+    .filter(e => e.tentative);
+  assert(tentativeEvents.length > 0, '9: 테스트 전제 — tentative 이벤트가 존재해야 함');
+
+  // 경로 ① 캘린더 API: 이벤트 객체에 플래그가 살아 있다
+  assert(tentativeEvents.every(e => e.tentative === true), '9: [캘린더] tentative 플래그 전파');
+  const octGrid = withToday('2026-09-01', () => getEventsForMonth(2026, 10));
+  assert(octGrid.some(e => e.tentative), '9: [캘린더] 월 그리드에도 tentative 전파');
+
+  // 경로 ② Haiku 프롬프트: calendarEventLabel 출력에 표기가 붙는다
+  const labeled = calendarEventLabel(tentativeEvents[0]);
+  assert(labeled.includes('(날짜 미확정)'), `9: [프롬프트] 라벨에 날짜 미확정 표기 (실제: ${labeled})`);
+  const confirmed = withToday('2026-09-01', () => getUpcomingEvents(120)).find(e => !e.tentative);
+  assert(!calendarEventLabel(confirmed).includes('(날짜 미확정)'),
+    '9: [프롬프트] 확정 항목엔 표기가 붙지 않음(과잉 표기 금지)');
+  // 프롬프트 지시문도 함께 있어야 표기가 의미를 갖는다(표기만 있고 지시가 없으면 모델이 무시)
+  const core = readFileSync(new URL('../api/_lib/briefing-core.js', import.meta.url), 'utf8');
+  assert(/\(날짜 미확정\)"? 표기가 붙은 항목은 확정된 일정처럼 단정하지 마십시오/.test(core),
+    '9: [프롬프트] system 지시문에 날짜 미확정 취급 규칙');
+
+  // 경로 ③ 홈 배너(JSX): EventBanner가 tentative를 참조한다
+  const briefingSrc = readFileSync(new URL('../src/components/BriefingPage.jsx', import.meta.url), 'utf8');
+  const bannerFn = briefingSrc.match(/function EventBanner\([\s\S]*?\n}/)?.[0] ?? '';
+  assert(/event\.tentative/.test(bannerFn), '9: [배너] EventBanner가 event.tentative를 참조');
+  assert(/날짜 미확정/.test(bannerFn), '9: [배너] 배너 문구가 "날짜 미확정"');
+
+  // 위칭 용어 한미 비대칭 — 미국은 개별주식선물 폐지(2020)로 3종, 한국은 4종 존속.
+  // "통일"하고 싶은 유혹이 있는 자리라 양쪽을 함께 고정한다.
+  const q = getExpiryEvents(2026);
+  assert(q.some(e => e.region === 'US' && e.title === '미국 트리플 위칭데이'),
+    '9: [용어] 미국은 트리플 위칭(2020 개별주식선물 폐지)');
+  assert(!q.some(e => e.title.includes('쿼드러플')), '9: [용어] 미국에 쿼드러플 표기 없음');
+  assert(q.some(e => e.title.includes('네 마녀의 날')), '9: [용어] 한국은 4종 존속이라 네 마녀의 날 유지');
+
+  // 어휘 규약 — 날짜 불확실성 표기에 "(예정)"을 되돌려 쓰지 않는다("잠정/예정"은 이벤트 종류용)
+  const calSrc = readFileSync(new URL('../src/components/CalendarPage.jsx', import.meta.url), 'utf8');
+  const badge = calSrc.match(/function TentativeBadge\([\s\S]*?\n}/)?.[0] ?? '';
+  assert(/날짜 미확정/.test(badge) && !/>\(예정\)</.test(badge), '9: [캘린더] 배지 문구가 "날짜 미확정"');
 }
 
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);

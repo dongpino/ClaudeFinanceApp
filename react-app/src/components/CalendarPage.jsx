@@ -28,10 +28,20 @@ function formatMonthDay2(dateStr) {
   return `${m}/${d}`;
 }
 
-// 원출처가 아직 확정 공표하지 않은(추정) 일정임을 알리는 배지.
+// 원출처가 아직 확정 공표하지 않아 **날짜가 미확정**인 일정임을 알리는 배지.
 // macro-calendar.js가 tentative:true를 붙인 항목에만 렌더된다.
-function TentativeBadge() {
-  return <span className="cal-tentative" title="회사 공식 공표 전 — 과거 패턴 기반 추정일">(예정)</span>;
+//
+// ⚠️ 어휘 규약(2026-07-29): 종전 문구 "(예정)"을 "(날짜 미확정)"으로 바꿨다.
+//    "잠정"·"예정"은 이벤트 종류를 가리키는 말로 이미 쓰이고 있어서(삼성 "잠정실적"=가이던스
+//    발표, 캘린더의 "예정 이벤트"=앞으로 열릴 일정) 날짜 불확실성 표기로 재사용하면 뜻이
+//    겹친다. 실제로 "삼성 잠정실적 (예정)"은 무엇이 잠정인지 읽어낼 수 없었다.
+//    불확실한 것이 **날짜 하나뿐**임을 문구가 그대로 말하게 한다.
+export function TentativeBadge() {
+  return (
+    <span className="cal-tentative" title="회사 공식 공표 전 — 과거 패턴 기반 추정일(이벤트 자체는 열린다)">
+      (날짜 미확정)
+    </span>
+  );
 }
 
 function todayKST() {
@@ -221,11 +231,11 @@ export default function CalendarPage({ activePage, onPageChange }) {
                             {dayEvents.slice(0, 2).map((e, j) => (
                               <span
                                 key={j}
-                                /* 추정 일정은 칩 폭이 좁아 "(예정)" 글자를 넣을 수 없다 —
+                                /* 추정 일정은 칩 폭이 좁아 "(날짜 미확정)" 글자를 넣을 수 없다 —
                                    점선 테두리로 구분하고 문구는 title/상세 행에서 알린다. */
                                 className={`cal-chip cal-chip-${e.category}${e.tentative ? ' cal-chip-tentative' : ''}`}
                                 style={{ '--chip-color': CATEGORY_COLOR[e.category] ?? '#999' }}
-                                title={e.tentative ? `${e.title} (예정 — 공식 공표 전 추정일)` : e.title}
+                                title={e.tentative ? `${e.title} (날짜 미확정 — 공식 공표 전 추정일)` : e.title}
                               >
                                 {e.shortLabel || e.title.slice(0, 5)}
                               </span>

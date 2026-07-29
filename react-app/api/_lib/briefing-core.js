@@ -319,10 +319,21 @@ function formatDday(dDay) {
 
 // 캘린더 이벤트 라벨 — macro-calendar.js가 칩용으로 이미 만들어둔 shortLabel을 재사용하되
 // CPI/선물옵션만기처럼 지역 구분이 의미 있는 카테고리만 국가명을 붙인다.
-function calendarEventLabel(ev) {
-  if (ev.category === 'cpi')    return `미국 ${ev.shortLabel}`;
-  if (ev.category === 'expiry') return `${ev.region === 'KR' ? '한국' : '미국'} ${ev.shortLabel}`;
-  return ev.shortLabel;
+//
+// ⚠️ 어휘 규약(2026-07-29): **"잠정"은 이벤트 종류에만 쓴다**(잠정실적 = 가이던스 발표).
+//    **날짜 불확실성은 "날짜 미확정"으로 통일**한다. 둘을 섞으면 "삼성 잠정실적"이
+//    "날짜가 잠정"인지 "실적이 잠정"인지 구분되지 않는다 — 실제로 그 항목은 이벤트 종류가
+//    잠정실적이면서 날짜도 미확정이라 두 뜻이 한 문자열에 겹친다.
+//
+// tentative를 여기서 붙이는 이유: 이 함수의 출력이 그대로 Haiku 프롬프트에 들어간다.
+// 붙이지 않으면 우리가 [미확인] 등급으로 매긴 추정일이 확정 일정과 **구분 없이** 모델에
+// 전달돼 AI 문장에서 단정적으로 서술된다(2026-07-29 확산 경로 조사에서 발견).
+// 토큰 비용은 tentative 항목에만 6자 남짓 — 최대 8건 제한은 그대로다.
+export function calendarEventLabel(ev) {
+  const base = ev.category === 'cpi'    ? `미국 ${ev.shortLabel}`
+             : ev.category === 'expiry' ? `${ev.region === 'KR' ? '한국' : '미국'} ${ev.shortLabel}`
+             : ev.shortLabel;
+  return ev.tentative ? `${base}(날짜 미확정)` : base;
 }
 
 // 소진 임박 카테고리명(프롬프트 주입용) — 캘린더 탭 경고 스트립과 같은 라벨
@@ -454,6 +465,7 @@ function buildSystemPrompt() {
 [컨텍스트 활용 원칙]
 - 매크로/캘린더/이슈는 참고 배경일 뿐, 시장 움직임과 무관하면 언급하지 마십시오.
 - D-0(당일) 이벤트는 오늘의 핵심이나 지표 해석에, D-3 이내 이벤트는 관전 포인트에 반영하십시오.
+- "(날짜 미확정)" 표기가 붙은 항목은 확정된 일정처럼 단정하지 마십시오.
 - 이슈가 뉴스 헤드라인과 겹치면 한 번만 언급하십시오.
 
 [출력 형식 — 아래 마크다운 구조를 그대로 따르고, 전체 500자 내외로 간결하게 작성]

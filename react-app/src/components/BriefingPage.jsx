@@ -623,10 +623,23 @@ function formatDDay(n) {
   return `D-${n}`;
 }
 
+// ⚠️ tentative(날짜 미확정) 표기는 이 배너에도 반드시 붙인다 — 여기가 D-3 강조 UI라
+//    미확정 일정이 확정처럼 강조되면 캘린더 탭의 배지가 무의미해진다(2026-07-29 확산
+//    경로 조사에서 이 경로와 Haiku 프롬프트 두 곳에서 tentative가 소실돼 있었다).
+//    어휘 규약: "잠정"은 이벤트 종류(잠정실적=가이던스)에만, 날짜 불확실성은 "날짜 미확정".
 function EventBanner({ event }) {
   const weekday = koreanWeekday(event.date);
   const time = event.time ? ` ${event.time}` : '';
-  return <div className="brf-macro-banner-row">⚡ 이번 주 {weekday}{time} {event.title}</div>;
+  return (
+    <div className="brf-macro-banner-row">
+      ⚡ 이번 주 {weekday}{time} {event.title}
+      {event.tentative && (
+        <span className="cal-tentative" title="회사 공식 공표 전 — 과거 패턴 기반 추정일(이벤트 자체는 열린다)">
+          (날짜 미확정)
+        </span>
+      )}
+    </div>
+  );
 }
 
 // ── 이벤트 배너 인라인 브리핑(하이브리드: 고정 템플릿 + Haiku 맥락) ──────────
