@@ -296,7 +296,7 @@ export default async function handler(req, res) {
       res.setHeader('X-Cache', 'MISS-UNVERIFIED');
       return res.status(200).json(data);
     }
-    recordValidation('macro-history', { checked: 1 });
+    recordValidation('macro-history', { checked: 1, fields: [{ field: indicator, ok: true }] });
 
     memCache[indicator] = { data, ts: Date.now() };
     await setCached(indicator, data);

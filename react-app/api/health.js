@@ -32,7 +32,8 @@
  *     · 그 외                      → 'ok'
  */
 
-import { getHealthSnapshot, storeFingerprint, ENV_TAG, getValidationCounters } from './_lib/health.js';
+import { getHealthSnapshot, storeFingerprint, ENV_TAG, getValidationCounters,
+  CONSEC_BLOCK_THRESHOLD, FIELD_STALE_MS } from './_lib/health.js';
 import { getScheduleDepletion, VERIFIED_AT } from './_lib/macro-calendar.js';
 import { readAudit, buildKasiSource } from './_lib/holiday-audit.js';
 
@@ -81,24 +82,68 @@ export function buildCalendarSource() {
  * ⚠️ checked=0은 '문제 없음'이 아니라 '검사가 돌지 않았다'는 뜻이라 warn으로 낸다.
  * (scripts/test-value-guard.js에서 직접 검증하므로 export)
  */
-export function buildValueGuardSource(counters) {
-  const scopes = Object.entries(counters ?? {});
+export function buildValueGuardSource(counters, now = Date.now()) {
+  const scopes = Object.entries(counters?.scopes ?? {});
+  const fieldMap = counters?.fields ?? {};
   const checked = scopes.reduce((a, [, c]) => a + (c.checked ?? 0), 0);
   const blocked = scopes.reduce((a, [, c]) => a + (c.blocked ?? 0), 0);
   const reasons = scopes.flatMap(([s, c]) =>
     Object.entries(c.reasons ?? {}).map(([r, n]) => `${s}:${r}×${n}`));
   const lastBlock = scopes.map(([, c]) => c.lastBlock).filter(Boolean)[0] ?? null;
 
-  const status = checked === 0 ? 'warn' : (blocked > 0 ? 'warn' : 'ok');
-  const note = checked === 0
-    ? '오늘 검사 0건 — 수집이 없었거나 계측이 끊겼다(통과 아님)'
-    : blocked > 0
-      ? `차단 ${blocked}/${checked}건 · ${reasons.join(' ')}${lastBlock ? ` · 최근 ${lastBlock}` : ''}`
-      : `검사 ${checked}건 전건 통과 (${scopes.map(([s]) => s).join('·')})`;
+  // ── 필드별 상태 평탄화 — "마지막 실제 갱신"이 멈춘 채 보이는 것이 요점이다.
+  // ⚠️ :latest 계열 키는 TTL이 없어 스스로 만료되지 않는다. 차단이 계속되면 **오래된
+  //    값이 조용히 계속 서빙되는** 경로가 되므로, 그 사실을 lastOkAt으로 드러낸다.
+  const fields = [];
+  for (const [scope, byName] of Object.entries(fieldMap)) {
+    for (const [name, st] of Object.entries(byName)) {
+      const ageMs = st.lastOkAt ? now - Date.parse(st.lastOkAt) : null;
+      fields.push({
+        scope, field: name, consec: st.consec ?? 0,
+        lastOkAt: st.lastOkAt ?? null, lastBlockAt: st.lastBlockAt ?? null,
+        reason: st.reason ?? null, detail: st.detail ?? null,
+        staleMs: ageMs,
+        // 승격 조건 두 축: 연속 횟수(잦은 호출) 또는 마지막 갱신 경과(드문 호출).
+        // 호출 주기가 5분(시세)~24시간(macro-history)으로 달라 횟수만으론 "하루 안에
+        // 알아챈다"를 보장할 수 없어 시간 축을 함께 둔다.
+        sustained: (st.consec ?? 0) >= CONSEC_BLOCK_THRESHOLD ||
+                   ((st.consec ?? 0) >= 1 && ageMs != null && ageMs > FIELD_STALE_MS),
+      });
+    }
+  }
+  const sustainedFields = fields.filter(f => f.sustained);
+  // 전 필드 동시 차단 — 소스 동시 장애보다 **게이트 자체 결함** 가능성이 높다.
+  const gateSuspect = scopes.filter(([, c]) => c.allBlockedAt).map(([s]) => s);
+
+  let status, verdict, note;
+  if (gateSuspect.length) {
+    status = 'down'; verdict = 'gate-suspect';
+    note = `전 필드 동시 차단(${gateSuspect.join('·')}) — 게이트 자체 결함 의심`
+      + `${lastBlock ? ` · 최근 ${lastBlock}` : ''}`;
+  } else if (sustainedFields.length) {
+    status = 'down'; verdict = 'sustained';
+    const w = sustainedFields[0];
+    note = `${w.scope}/${w.field} ${w.consec}회 연속 차단 — 소스 지속 이상 또는 게이트 오류 의심`
+      + (sustainedFields.length > 1 ? ` 외 ${sustainedFields.length - 1}` : '')
+      + (w.lastOkAt ? ` · 마지막 갱신 ${w.lastOkAt.slice(0, 16)}` : ' · 갱신 이력 없음');
+  } else if (checked === 0) {
+    status = 'warn'; verdict = 'not-run';
+    note = '오늘 검사 0건 — 수집이 없었거나 계측이 끊겼다(통과 아님)';
+  } else if (blocked > 0) {
+    status = 'warn'; verdict = 'transient';
+    note = `일회성 차단 ${blocked}/${checked}건 · ${reasons.join(' ')}${lastBlock ? ` · 최근 ${lastBlock}` : ''}`;
+  } else {
+    status = 'ok'; verdict = 'clean';
+    note = `검사 ${checked}건 전건 통과 (${scopes.map(([s]) => s).join('·')})`;
+  }
 
   return {
-    source: 'value-guard', kind: 'derived', status, note,
-    checked, blocked, scopes: Object.fromEntries(scopes),
+    source: 'value-guard', kind: 'derived', status, verdict, note,
+    checked, blocked,
+    scopes: Object.fromEntries(scopes),
+    // 상태판이 "마지막 실제 갱신"을 필드별로 보여줄 재료. 오래된 순으로 정렬해 앞에 둔다.
+    fields: fields.sort((a, b) => (b.staleMs ?? -1) - (a.staleMs ?? -1)),
+    gateSuspect,
     lastSuccessAt: null, lastFailureAt: null, lastError: null,
     lastErrorCode: null, lastErrorResolved: false,
     consecutiveFailures: 0, todayRate: null, today: { success: 0, failure: 0 }, todayErrors: {},

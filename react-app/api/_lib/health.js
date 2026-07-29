@@ -247,12 +247,23 @@ export function recordRetry(source, { recovered } = {}) {
  * @param {string} scope   'market' | 'macro' | 'macro-history' 등 검사 지점
  * @param {{checked:number, blocked?:number, reason?:string, detail?:string}} p
  */
-export function recordValidation(scope, { checked = 0, blocked = 0, reason, detail } = {}) {
+export function recordValidation(scope, { checked = 0, blocked = 0, reason, detail, fields } = {}) {
   if (!scope) return;
-  void persistValidation(scope, checked, blocked, reason, detail);
+  void persistValidation(scope, checked, blocked, reason, detail, fields);
 }
 
-async function persistValidation(scope, checked, blocked, reason, detail) {
+// ── 게이트 자체의 실패 감시 ──────────────────────────────────────────
+// 차단은 보통 "소스가 잠깐 이상한 값을 줬다"이지만, **계속 차단되면 원인이 반대쪽일 수
+// 있다** — 게이트가 틀린 것이다. 그래서 필드별 연속 차단 횟수와 마지막 성공 갱신 시각을
+// 따로 들고 판정 등급을 나눈다.
+// ⚠️ 실제 사례(2026-07-29): macro-history 게이트를 넣으면서 series 구조를 series[]로
+//    잘못 짚어 **모든 값이 항상 차단**되는 코드를 한 번 넣었다. 그 형태는 "소스 동시
+//    장애"가 아니라 게이트 결함이었고, 전 필드 동시 차단을 최상위 경보로 두는 근거다.
+export const CONSEC_BLOCK_THRESHOLD = 3;               // 이 횟수 이상 연속이면 '지속 이상'
+export const FIELD_STALE_MS = 24 * 60 * 60 * 1000;     // 마지막 성공 갱신이 이보다 오래면 승격
+const FIELD_STATE_KEY = scope => `health:validate:fields:${scope}`;
+
+async function persistValidation(scope, checked, blocked, reason, detail, fields) {
   const r = getRedis();
   if (!r) return;
   try {
@@ -266,33 +277,83 @@ async function persistValidation(scope, checked, blocked, reason, detail) {
       // 마지막 차단의 구체 내용(어느 필드, 어떤 값) — 사람이 원인을 좇을 유일한 단서.
       if (detail) p.hset(key, { [`${scope}:lastBlock`]: String(detail).slice(0, 160) });
     }
+    // 전 필드 동시 차단 — 게이트 결함 의심 신호라 따로 도장을 찍는다(1건짜리는 제외).
+    if (checked > 1 && blocked === checked) {
+      p.hset(key, { [`${scope}:allBlockedAt`]: new Date().toISOString() });
+    }
     p.expire(key, DAILY_TTL_SEC);
+
+    // 필드별 상태 — TTL을 두지 않는다. "언제부터 갱신이 멈췄나"는 하루가 지나도 알아야
+    // 하는 정보이고, 필드 수가 유한해(시세 20 + macro 4 + hist 3) 무한정 커지지 않는다.
+    if (Array.isArray(fields) && fields.length) {
+      const fkey = FIELD_STATE_KEY(scope);
+      const now = new Date().toISOString();
+      for (const f of fields) {
+        const name = sanitizeCode(f.field);
+        if (f.ok) {
+          // 통과 = 실제 갱신. 연속 카운터를 0으로 되돌리고 마지막 갱신 시각을 남긴다.
+          p.hset(fkey, { [`${name}:consec`]: 0, [`${name}:lastOkAt`]: now });
+        } else {
+          p.hincrby(fkey, `${name}:consec`, 1);
+          p.hset(fkey, {
+            [`${name}:lastBlockAt`]: now,
+            [`${name}:reason`]: sanitizeCode(f.reason ?? 'unknown'),
+            [`${name}:detail`]: String(f.detail ?? '').slice(0, 120),
+          });
+        }
+      }
+    }
     await p.exec();
   } catch (e) {
     console.warn(`[health] 검사 계측 실패(${scope}) — 무시: ${e.message}`);
   }
 }
 
-/** 오늘의 검사 계측 조회 — { [scope]: { checked, blocked, reasons, lastBlock } } */
-export async function getValidationCounters() {
+/**
+ * 오늘의 검사 계측 + 필드별 상태 조회.
+ * @returns {Promise<{scopes: object, fields: object}>}
+ *   scopes: { [scope]: { checked, blocked, reasons, lastBlock, allBlockedAt } }
+ *   fields: { [scope]: { [field]: { consec, lastOkAt, lastBlockAt, reason, detail } } }
+ */
+export async function getValidationCounters(scopeNames = ['market', 'macro', 'macro-history']) {
   const r = getRedis();
-  if (!r) return {};
+  if (!r) return { scopes: {}, fields: {} };
   try {
-    const hash = await r.hgetall(`health:validate:${kstToday()}`);
-    const out = {};
-    for (const [k, v] of Object.entries(hash ?? {})) {
+    const pipe = r.pipeline();
+    pipe.hgetall(`health:validate:${kstToday()}`);
+    for (const s of scopeNames) pipe.hgetall(FIELD_STATE_KEY(s));
+    const [dayHash, ...fieldHashes] = await pipe.exec();
+
+    const scopes = {};
+    for (const [k, v] of Object.entries(dayHash ?? {})) {
       const [scope, ...rest] = k.split(':');
       const field = rest.join(':');
-      out[scope] ??= { checked: 0, blocked: 0, reasons: {}, lastBlock: null };
-      if (field === 'checked') out[scope].checked = Number(v) || 0;
-      else if (field === 'blocked') out[scope].blocked = Number(v) || 0;
-      else if (field === 'lastBlock') out[scope].lastBlock = String(v);
-      else if (field.startsWith('blk:')) out[scope].reasons[field.slice(4)] = Number(v) || 0;
+      scopes[scope] ??= { checked: 0, blocked: 0, reasons: {}, lastBlock: null, allBlockedAt: null };
+      if (field === 'checked') scopes[scope].checked = Number(v) || 0;
+      else if (field === 'blocked') scopes[scope].blocked = Number(v) || 0;
+      else if (field === 'lastBlock') scopes[scope].lastBlock = String(v);
+      else if (field === 'allBlockedAt') scopes[scope].allBlockedAt = String(v);
+      else if (field.startsWith('blk:')) scopes[scope].reasons[field.slice(4)] = Number(v) || 0;
     }
-    return out;
+
+    const fields = {};
+    scopeNames.forEach((scope, i) => {
+      const h = fieldHashes[i];
+      if (!h) return;
+      for (const [k, v] of Object.entries(h)) {
+        const idx = k.lastIndexOf(':');
+        if (idx < 0) continue;
+        const name = k.slice(0, idx), prop = k.slice(idx + 1);
+        fields[scope] ??= {};
+        fields[scope][name] ??= { consec: 0, lastOkAt: null, lastBlockAt: null, reason: null, detail: null };
+        if (prop === 'consec') fields[scope][name].consec = Number(v) || 0;
+        else fields[scope][name][prop] = v == null ? null : String(v);
+      }
+    });
+    return { scopes, fields };
   } catch (e) {
     console.warn(`[health] 검사 계측 조회 실패 — 무시: ${e.message}`);
-    return {};
+    return { scopes: {}, fields: {} };
   }
 }
 

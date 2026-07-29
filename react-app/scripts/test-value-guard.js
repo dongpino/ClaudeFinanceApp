@@ -113,28 +113,112 @@ const INJECT = {
 }
 
 // ── 5. 실행 가시성(0건 수행 ≠ 통과) ────────────────────────────
+const NOW = Date.parse('2026-07-29T12:00:00Z');
+const ago = ms => new Date(NOW - ms).toISOString();
+const HOUR = 3600_000, DAY = 24 * HOUR;
+
 {
-  const none = buildValueGuardSource({});
-  assert(none.status === 'warn', '5: checked=0은 warn(통과 아님)');
+  const none = buildValueGuardSource({ scopes: {}, fields: {} }, NOW);
+  assert(none.status === 'warn' && none.verdict === 'not-run', '5: checked=0은 warn/not-run(통과 아님)');
   assert(none.note.includes('검사 0건'), `5: 0건임을 문구로 (실제: ${none.note})`);
 
-  const clean = buildValueGuardSource({ market: { checked: 20, blocked: 0, reasons: {}, lastBlock: null } });
-  assert(clean.status === 'ok' && clean.checked === 20, '5: 전건 통과는 ok');
+  const clean = buildValueGuardSource({
+    scopes: { market: { checked: 20, blocked: 0, reasons: {}, lastBlock: null } },
+    fields: { market: { kospi: { consec: 0, lastOkAt: ago(HOUR) } } },
+  }, NOW);
+  assert(clean.status === 'ok' && clean.verdict === 'clean' && clean.checked === 20, '5: 전건 통과는 ok/clean');
 
   const blocked = buildValueGuardSource({
-    macro: { checked: 4, blocked: 1, reasons: { nan: 1 }, lastBlock: 'cpi yoy=null' },
-  });
-  assert(blocked.status === 'warn', '5: 차단이 있으면 warn');
-  assert(blocked.note.includes('차단 1/4') && blocked.note.includes('nan'),
-    `5: 차단 건수·사유·최근 내용 노출 (실제: ${blocked.note})`);
+    scopes: { macro: { checked: 4, blocked: 1, reasons: { nan: 1 }, lastBlock: 'cpi yoy=null' } },
+    fields: { macro: { cpi: { consec: 1, lastOkAt: ago(HOUR), reason: 'nan' } } },
+  }, NOW);
+  assert(blocked.status === 'warn' && blocked.verdict === 'transient', '5: 일회성 차단은 warn/transient');
+  assert(blocked.note.includes('일회성 차단 1/4') && blocked.note.includes('nan'),
+    `5: 차단 건수·사유 노출 (실제: ${blocked.note})`);
   assert(blocked.note.includes('cpi yoy=null'), '5: 어느 필드가 어떤 값이라 거부됐는지');
 
-  // 여러 지점 합산
   const both = buildValueGuardSource({
-    market: { checked: 20, blocked: 0, reasons: {}, lastBlock: null },
-    macro:  { checked: 4, blocked: 0, reasons: {}, lastBlock: null },
-  });
+    scopes: {
+      market: { checked: 20, blocked: 0, reasons: {}, lastBlock: null },
+      macro:  { checked: 4, blocked: 0, reasons: {}, lastBlock: null },
+    }, fields: {},
+  }, NOW);
   assert(both.checked === 24 && both.status === 'ok', '5: 지점별 합산');
+}
+
+// ── 6. 게이트 자체의 실패 감시(연속 차단·전 필드 동시) ─────────
+{
+  const scopes1 = { macro: { checked: 4, blocked: 1, reasons: { nan: 1 }, lastBlock: 'cpi yoy=null' } };
+
+  // (a) 임계 미만 = 일회성
+  const t2 = buildValueGuardSource({
+    scopes: scopes1, fields: { macro: { cpi: { consec: 2, lastOkAt: ago(2 * HOUR) } } },
+  }, NOW);
+  assert(t2.verdict === 'transient' && t2.status === 'warn',
+    `6a: 2회 연속은 아직 일회성 (실제: ${t2.verdict})`);
+
+  // (b) 임계 도달 = 지속 이상으로 **등급이 바뀐다**
+  const t3 = buildValueGuardSource({
+    scopes: scopes1, fields: { macro: { cpi: { consec: 3, lastOkAt: ago(2 * HOUR) } } },
+  }, NOW);
+  assert(t3.verdict === 'sustained' && t3.status === 'down',
+    `6b: 3회 연속은 지속 이상(down) (실제: ${t3.verdict}/${t3.status})`);
+  assert(t3.note.includes('3회 연속 차단') && t3.note.includes('게이트 오류 의심'),
+    `6b: 문구에 연속 횟수와 게이트 의심 (실제: ${t3.note})`);
+  assert(t3.note.includes('마지막 갱신'), '6b: 마지막 실제 갱신 시각 노출');
+
+  // (c) 호출이 드문 지점 — 횟수는 1회지만 마지막 갱신이 하루를 넘으면 승격
+  //     (macro-history는 24h 캐시라 횟수만으론 하루 안에 못 알아챈다)
+  const slow = buildValueGuardSource({
+    scopes: { 'macro-history': { checked: 1, blocked: 1, reasons: { 'not-number': 1 }, lastBlock: 'cpi/CPIAUCSL' } },
+    fields: { 'macro-history': { cpi: { consec: 1, lastOkAt: ago(30 * HOUR) } } },
+  }, NOW);
+  assert(slow.verdict === 'sustained',
+    `6c: 1회여도 마지막 갱신 30시간 경과면 승격 (실제: ${slow.verdict})`);
+  const slowOk = buildValueGuardSource({
+    scopes: { 'macro-history': { checked: 1, blocked: 1, reasons: {}, lastBlock: null } },
+    fields: { 'macro-history': { cpi: { consec: 1, lastOkAt: ago(20 * HOUR) } } },
+  }, NOW);
+  assert(slowOk.verdict === 'transient', '6c: 20시간이면 아직 일회성(하루 이내)');
+
+  // (d) 전 필드 동시 차단 = 최상위. **게이트 결함 의심이 소스 동시 장애보다 앞선다.**
+  //     series 구조 오인 사고(2026-07-29)가 실제로 이 형태였다.
+  const gate = buildValueGuardSource({
+    scopes: { 'macro-history': { checked: 3, blocked: 3, reasons: { 'not-number': 3 },
+      lastBlock: 'cpi/CPIAUCSL 2026-07=null', allBlockedAt: ago(HOUR) } },
+    fields: { 'macro-history': { cpi: { consec: 1, lastOkAt: ago(HOUR) } } },
+  }, NOW);
+  assert(gate.verdict === 'gate-suspect' && gate.status === 'down',
+    `6d: 전 필드 동시 차단은 최상위 (실제: ${gate.verdict})`);
+  assert(gate.note.includes('게이트 자체 결함 의심'), `6d: 게이트 결함 문구 (실제: ${gate.note})`);
+  assert(gate.gateSuspect.includes('macro-history'), '6d: 의심 지점 식별');
+  // 연속 차단보다 우선순위가 높아야 한다(둘 다 걸린 상황에서 게이트 의심이 이긴다)
+  const both = buildValueGuardSource({
+    scopes: { macro: { checked: 4, blocked: 4, reasons: {}, lastBlock: null, allBlockedAt: ago(HOUR) } },
+    fields: { macro: { cpi: { consec: 9, lastOkAt: ago(3 * DAY) } } },
+  }, NOW);
+  assert(both.verdict === 'gate-suspect', '6d: 게이트 의심이 연속 차단보다 우선');
+
+  // (e) 정상 갱신 시 카운터 리셋 — consec=0이면 다시 clean으로 돌아온다
+  const reset = buildValueGuardSource({
+    scopes: { macro: { checked: 4, blocked: 0, reasons: {}, lastBlock: 'cpi yoy=null' } },
+    fields: { macro: { cpi: { consec: 0, lastOkAt: ago(60_000) } } },
+  }, NOW);
+  assert(reset.verdict === 'clean' && reset.status === 'ok',
+    `6e: 통과가 들어오면 clean 복귀(카운터 리셋) (실제: ${reset.verdict})`);
+  assert(reset.fields[0].consec === 0 && reset.fields[0].sustained === false, '6e: 필드 상태도 리셋 반영');
+
+  // (f) 영구 stale 가시화 — 오래 멈춘 필드가 앞에 오고 lastOkAt이 그대로 보인다
+  const stale = buildValueGuardSource({
+    scopes: { macro: { checked: 4, blocked: 1, reasons: {}, lastBlock: null } },
+    fields: { macro: {
+      cpi: { consec: 5, lastOkAt: ago(5 * DAY) },
+      bok: { consec: 0, lastOkAt: ago(HOUR) },
+    } },
+  }, NOW);
+  assert(stale.fields[0].field === 'cpi', '6f: 가장 오래 멈춘 필드가 앞');
+  assert(stale.fields[0].lastOkAt === ago(5 * DAY), '6f: 마지막 실제 갱신 시각 그대로 노출');
+  assert(stale.fields[0].staleMs > 4 * DAY, '6f: 경과 시간 계산');
 }
 
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);

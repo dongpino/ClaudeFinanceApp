@@ -64,13 +64,17 @@ function servableMarketItem(item) {
 // fire-and-forget이라 실패해도 응답에 영향 없음.
 function countValidation(collected) {
   let checked = 0, blocked = 0, lastReason = null, lastDetail = null;
+  const fields = [];
   for (const it of collected) {
     if (!it?.id || !FALLBACK_IDS.has(it.id)) continue;
     checked++;
     const r = validateLevel(it.id, it.price);
+    // 종목별 상태를 함께 넘긴다 — 연속 차단 추적과 "마지막 실제 갱신" 표시의 재료.
+    // 통과가 곧 갱신이므로 여기서 카운터가 리셋된다.
+    fields.push({ field: it.id, ok: r.ok, reason: r.reason, detail: `price=${JSON.stringify(it.price)}` });
     if (!r.ok) { blocked++; lastReason = r.reason; lastDetail = `${it.id} price=${JSON.stringify(it.price)}`; }
   }
-  recordValidation('market', { checked, blocked, reason: lastReason, detail: lastDetail });
+  recordValidation('market', { checked, blocked, reason: lastReason, detail: lastDetail, fields });
 }
 
 // ── 캐시 (2계층) ──────────────────────────────────────────

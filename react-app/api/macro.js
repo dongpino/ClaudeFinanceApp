@@ -242,7 +242,8 @@ function mergeField(newValue, previousValue, label, key) {
     }
     // 차단 — 어느 필드가 어떤 값이라 거부됐는지 health에 남긴다(사후 추적의 유일한 단서).
     const bad = v.field ? `${v.field}=${JSON.stringify(newValue?.[v.field])}` : JSON.stringify(newValue).slice(0, 60);
-    recordValidation('macro', { checked: 1, blocked: 1, reason: v.reason, detail: `${key} ${bad}` });
+    recordValidation('macro', { checked: 1, blocked: 1, reason: v.reason, detail: `${key} ${bad}`,
+      fields: [{ field: key, ok: false, reason: v.reason, detail: bad }] });
     console.warn(`[macro] ${label} 값 거부(${v.reason}) ${bad} — 이전 값 유지`);
     if (previousValue) return previousValue;
     return null;
