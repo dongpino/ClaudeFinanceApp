@@ -40,13 +40,34 @@ function direction(pct) { return pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat'; }
 // Daum marketStatus → 네이버 토큰. 다운스트림(MarketCard.detectIssues)은 'PREOPEN'만
 // 의미있게 본다(장전 0변동 오탐 억제). 실측 확인된 값만 매핑하고, 미지 토큰은 null 취급
 // → PREOPEN 판정 미발동(오동작 방지). 장전 토큰은 프로브 실측 후 한 줄 추가.
+// ⚠️ **2026-09-14 애프터마켓(16~20시) 시행 예정** — 그 시점에 이 매핑은 불완전해진다.
+//    거래시간이 늘면 지금 못 본 상태 토큰이 새로 생긴다(장후 단일가/애프터마켓 구간 등).
+//    미지 토큰은 **실패가 아니라 '미분류'로 처리**한다 — null을 돌려 다운스트림 판정을
+//    발동시키지 않고, 대신 로그에 원문 토큰을 남겨 사후에 표를 채울 수 있게 한다.
+//    (프리마켓 07:00~07:50은 2027년말로 연기됐다. 2026-06-19 KRX 조정안.)
 const DAUM_STATUS_MAP = {
   REGULAR_HOURS: 'REGULAR_HOURS', // 장중 (실측 확인)
-  // TODO(프로브 08:30~09:00 KST 실측): Daum 장전 토큰 → 'PREOPEN', 장마감 토큰 → 확정 후 추가
+  // TODO(프로브 실측): 장전/장마감/애프터마켓 토큰 → 확정 후 추가.
   //   실측 수단은 api/probe-daum-status.js(08:40 KST 크론)가 Redis probe:daum-status에
-  //   날짜별로 쌓는 원문 토큰이다. 값이 확정되면 여기 채우고 그 크론은 은퇴시킨다.
+  //   날짜별로 쌓는 원문 토큰이다. 2026-07-29 08:39 KST 실측에서 'PRE_MARKET'을 받았으나
+  //   1회 표본이라 아직 넣지 않았다(평일 복수일 + 토요일 대조 후).
 };
-function normalizeStatus(s) { return DAUM_STATUS_MAP[s] ?? null; }
+
+// 이미 로그를 남긴 토큰은 다시 남기지 않는다 — 미지 토큰이 나오는 구간에서는 호출마다
+// 같은 값이 반복되므로, 없으면 함수 로그가 그 토큰 하나로 도배된다.
+const seenUnknownStatus = new Set();
+
+function normalizeStatus(s) {
+  if (s == null) return null;
+  const mapped = DAUM_STATUS_MAP[s];
+  if (mapped) return mapped;
+  // 미분류 — 값은 null로 흘려보내되(오동작 방지) 원문은 로그로 건져 둔다.
+  if (!seenUnknownStatus.has(s)) {
+    seenUnknownStatus.add(s);
+    console.warn(`[daum-stock] 미분류 marketStatus 토큰: "${s}" — DAUM_STATUS_MAP 보강 대상`);
+  }
+  return null;
+}
 
 // 종목별 Referer(무결 시 403). 차트는 X-Requested-With 추가.
 function daumHeaders(daumSymbol, { chart = false } = {}) {
