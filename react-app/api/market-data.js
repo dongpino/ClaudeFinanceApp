@@ -22,6 +22,8 @@ import { collectWatchlist, WATCHLIST_IDS } from './_collectors/watchlist.js';
 import { collectBokRate }    from './_collectors/bok-rate.js';
 import { fetchSimplePrices } from './_collectors/crypto-simple-price.js';
 import { applyLastGoodFallback } from './_lib/last-good.js';
+import { validateLevel, FALLBACK_IDS } from './_lib/asset-meta.js';
+import { recordValidation } from './_lib/health.js';
 import { Redis } from '@upstash/redis';
 
 // ── last-good 폴백 대상 ──────────────────────────────────────────
@@ -32,28 +34,43 @@ import { Redis } from '@upstash/redis';
 // /simple/price)에는 폴백이 전혀 없어, CoinGecko 장애 시 두 카드가 통째로 사라지던
 // 사각지대였다 — last-good으로 stale 서빙해 카드 실종을 막는다. (Binance 티커 라이브
 // 폴오버는 로드맵 '이중화' 단계 별건 — 이번엔 last-good만.)
-const FALLBACK_IDS = new Set([
-  'kospi', 'kosdaq', 'usdkrw', 'jpykrw', 'dominance', 'feargreed',
-  'nasdaq', 'dow', 'sp500', 'sox', 'vix', 'us10y', 'dxy',
-  'btc', 'eth',
-  ...WATCHLIST_IDS,
-]);
+// ⚠️ 2026-07-29: 하드코딩 목록을 걷어내고 asset-meta.js에서 파생한다(3중 관리 → 1중).
+//    같은 전환으로 **kr_base_rate가 처음 편입**됐다 — 종전엔 ITEM_ORDER 20종 중 유일하게
+//    commitSet 밖이라 형태가 깨진 값이 무검증으로 통과했다(1단계 주입 시험 실측).
+//    bok-rate.js의 자체 정의역 검증(0~10%)은 그대로 둔다 — 수집기와 초크포인트 양쪽에서
+//    막는 이중 방어이고, 그게 이 프로젝트의 모범 사례다.
 const FALLBACK_ERR = '실시간 수집 실패 — 마지막 성공본 서빙';
 
-// commit(오염 방지) 자격 — 가격이 유효(유한·양수)하고 미니차트가 실제로 채워진 스냅샷만
-// lastGood으로 승격한다. dominance는 history를 매일 자체 축적하는 중이라 짧은 history가
-// 정상 상태(history_bootstrapping)이므로 길이 검사에서 제외한다.
+// commit(오염 방지) 자격 — 레벨값이 **유형별 정의역**을 통과하고 미니차트가 실제로
+// 채워진 스냅샷만 lastGood으로 승격한다. dominance는 history를 매일 자체 축적하는 중이라
+// 짧은 history가 정상 상태(history_bootstrapping)이므로 길이 검사에서 제외한다.
+// ⚠️ 종전 공통 규칙 `price > 0`은 feargreed·dominance의 정의역 하한 0과 충돌했다
+//    (정상값 0이 폴백으로 밀려남). 이제 항목별 min/max를 asset-meta가 준다.
 function validateMarketItem(item) {
-  if (!item || !Number.isFinite(item.price) || item.price <= 0) return false;
+  if (!item?.id) return false;
+  if (!validateLevel(item.id, item.price).ok) return false;
   if (item.history_bootstrapping) return true;
   return Array.isArray(item.history) && item.history.length >= 5;
 }
 
-// 라이브 노출 자격 — 유효한 가격만 받았으면(history 서브페치가 실패해도) 그대로 보여준다.
+// 라이브 노출 자격 — 유효한 레벨값만 받았으면(history 서브페치가 실패해도) 그대로 보여준다.
 // CNBC quote는 성공했는데 Naver/FRED history만 실패한 미국 지수를 stale로 오강등하거나
 // 떨구지 않기 위한 완화 조건(부족한 차트는 detectIssues의 기존 "차트 데이터 부족" 경고가 담당).
 function servableMarketItem(item) {
-  return item && Number.isFinite(item.price) && item.price > 0;
+  return Boolean(item?.id) && validateLevel(item.id, item.price).ok;
+}
+
+// 검사 1 계측 — "0건 수행"과 "전건 통과"를 구분하려고 checked도 함께 센다(KASI 렌즈).
+// fire-and-forget이라 실패해도 응답에 영향 없음.
+function countValidation(collected) {
+  let checked = 0, blocked = 0, lastReason = null, lastDetail = null;
+  for (const it of collected) {
+    if (!it?.id || !FALLBACK_IDS.has(it.id)) continue;
+    checked++;
+    const r = validateLevel(it.id, it.price);
+    if (!r.ok) { blocked++; lastReason = r.reason; lastDetail = `${it.id} price=${JSON.stringify(it.price)}`; }
+  }
+  recordValidation('market', { checked, blocked, reason: lastReason, detail: lastDetail });
 }
 
 // ── 캐시 (2계층) ──────────────────────────────────────────
@@ -194,6 +211,7 @@ async function handleHome(req, res) {
 
   // last-good 폴백: 이번에 성공한 scope 종목은 성공본으로 승격, 실패한 scope 종목은
   // 마지막 성공본으로 대신 서빙(stale:true). 범위 밖(US 지수/btc/eth)은 그대로 통과.
+  countValidation(Object.values(itemsById));
   const { items: merged, stale } = await applyLastGoodFallback({
     ns: 'market',
     collected: Object.values(itemsById),

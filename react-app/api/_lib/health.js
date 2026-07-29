@@ -239,6 +239,63 @@ export function recordRetry(source, { recovered } = {}) {
   void persistRetry(source, Boolean(recovered));
 }
 
+/**
+ * 검사 1(절대 타당성) 실행 계측 — fire-and-forget.
+ *
+ * ⚠️ **"0건 수행"과 "전건 통과"를 구분하려고 checked를 함께 센다**(KASI 대조에서 얻은 렌즈).
+ *    blocked만 세면 검사가 아예 안 돈 상태가 "차단 0건 = 정상"과 똑같은 초록으로 보인다.
+ * @param {string} scope   'market' | 'macro' | 'macro-history' 등 검사 지점
+ * @param {{checked:number, blocked?:number, reason?:string, detail?:string}} p
+ */
+export function recordValidation(scope, { checked = 0, blocked = 0, reason, detail } = {}) {
+  if (!scope) return;
+  void persistValidation(scope, checked, blocked, reason, detail);
+}
+
+async function persistValidation(scope, checked, blocked, reason, detail) {
+  const r = getRedis();
+  if (!r) return;
+  try {
+    const key = `health:validate:${kstToday()}`;
+    const p = r.pipeline();
+    if (checked) p.hincrby(key, `${scope}:checked`, checked);
+    if (blocked) {
+      p.hincrby(key, `${scope}:blocked`, blocked);
+      // 사유별 히스토그램 — "차단 3건"이 한 원인인지 여러 원인인지 총합만으론 모른다.
+      if (reason) p.hincrby(key, `${scope}:blk:${sanitizeCode(reason)}`, blocked);
+      // 마지막 차단의 구체 내용(어느 필드, 어떤 값) — 사람이 원인을 좇을 유일한 단서.
+      if (detail) p.hset(key, { [`${scope}:lastBlock`]: String(detail).slice(0, 160) });
+    }
+    p.expire(key, DAILY_TTL_SEC);
+    await p.exec();
+  } catch (e) {
+    console.warn(`[health] 검사 계측 실패(${scope}) — 무시: ${e.message}`);
+  }
+}
+
+/** 오늘의 검사 계측 조회 — { [scope]: { checked, blocked, reasons, lastBlock } } */
+export async function getValidationCounters() {
+  const r = getRedis();
+  if (!r) return {};
+  try {
+    const hash = await r.hgetall(`health:validate:${kstToday()}`);
+    const out = {};
+    for (const [k, v] of Object.entries(hash ?? {})) {
+      const [scope, ...rest] = k.split(':');
+      const field = rest.join(':');
+      out[scope] ??= { checked: 0, blocked: 0, reasons: {}, lastBlock: null };
+      if (field === 'checked') out[scope].checked = Number(v) || 0;
+      else if (field === 'blocked') out[scope].blocked = Number(v) || 0;
+      else if (field === 'lastBlock') out[scope].lastBlock = String(v);
+      else if (field.startsWith('blk:')) out[scope].reasons[field.slice(4)] = Number(v) || 0;
+    }
+    return out;
+  } catch (e) {
+    console.warn(`[health] 검사 계측 조회 실패 — 무시: ${e.message}`);
+    return {};
+  }
+}
+
 async function persistRetry(source, recovered) {
   const r = getRedis();
   if (!r) return;

@@ -1,6 +1,9 @@
 import { useNavigate } from 'react-router-dom';
 import Sparkline from './Sparkline';
 import { getAvgPrice } from '../avgPriceStore';
+// NON_PRICE_UNITS는 api/_lib/asset-meta.js가 원본이다(아래 주석 참조) — 순수 데이터·함수라
+// 클라이언트 번들에 들어가도 안전하다.
+import { NON_PRICE_UNITS } from '../../api/_lib/asset-meta.js';
 
 const ARROW = { up: '▲', down: '▼', flat: '-' };
 
@@ -22,7 +25,9 @@ const CURRENCY_PREFIX = { usd: '$', krw: '₩' };
 //   - percent : 국채금리 등, 값 "4.25%" / 등락 bp(1bp=0.01%p) — us10y
 //   - pct_pt  : BTC 도미넌스 등, 값 "55.82%" / 등락 %p(퍼센트 포인트, bp 아님)
 //   - score   : 공포탐욕지수 등, 값 "72"(단위 없는 0~100 점수) / 등락 포인트 차
-const NON_PRICE_UNITS = new Set(['percent', 'pct_pt', 'score']);
+// ⚠️ 2026-07-29: 하드코딩을 걷어내고 api/_lib/asset-meta.js에서 파생한다(3중 관리 → 1중).
+// asset-meta.js는 의존성 없는 순수 데이터/함수라 클라이언트 번들에 들어가도 안전하다.
+// 값이 종전과 같은지는 scripts/test-value-guard.js가 고정한다.
 
 // ── 정책금리 카드(한국 기준금리 등, item.rate_step) 전용 — 인상/인하/동결 3-스탠스 ──
 // 서버가 주는 direction/change는 "직전 정책 변경"의 방향·폭이라, 변경 후 시간이 충분히

@@ -29,6 +29,8 @@
 
 import { Redis } from '@upstash/redis';
 import { getNextFomcMeeting, getNextCpiRelease, getUpcomingEvents } from './_lib/macro-calendar.js';
+import { validateMacroField } from './_lib/asset-meta.js';
+import { recordValidation } from './_lib/health.js';
 import { trackedFetch } from './_lib/health.js';
 import { getBokRateData } from './_collectors/bok-rate.js';
 
@@ -224,9 +226,26 @@ let memCache = null;
 // 이번 fetch 결과(성공 시 값, 실패 시 undefined)를 이전 값(previous)과 병합한다.
 // 성공하면 새 값 + 지금 시각을 fetchedAt으로 기록, 실패하면 previous의 값+fetchedAt을
 // 그대로 승계(있으면), 승계할 것도 없으면 null.
-function mergeField(newValue, previousValue, label) {
+// ⚠️ 2026-07-29 검사 1 적용: 종전에는 `newValue != null`이면 **무조건** 채택했다.
+//    그래서 소스가 200으로 성공하면서 NaN/Infinity/""/"N/A"를 반환하면 그 값이 그대로
+//    macro:v1:latest(무기한 승계 키)로 승격됐다 — 한 번 오염되면 이후 정상 폴백이
+//    불가능해지는 경로다. 시세류(last-good.js)는 이미 validate 게이트로 막고 있었고,
+//    macro만 뚫려 있었다(1단계 주입 시험에서 실측 확인).
+//    이제 asset-meta.js의 정의역 검사를 통과해야 채택하고, 실패하면 **기존 값을 유지**한다
+//    (stale 우선 규율 그대로 — 새 이상값보다 낡은 정상값이 낫다).
+function mergeField(newValue, previousValue, label, key) {
   if (newValue != null) {
-    return { ...newValue, fetchedAt: new Date().toISOString() };
+    const v = validateMacroField(key, newValue);
+    if (v.ok) {
+      recordValidation('macro', { checked: 1 });
+      return { ...newValue, fetchedAt: new Date().toISOString() };
+    }
+    // 차단 — 어느 필드가 어떤 값이라 거부됐는지 health에 남긴다(사후 추적의 유일한 단서).
+    const bad = v.field ? `${v.field}=${JSON.stringify(newValue?.[v.field])}` : JSON.stringify(newValue).slice(0, 60);
+    recordValidation('macro', { checked: 1, blocked: 1, reason: v.reason, detail: `${key} ${bad}` });
+    console.warn(`[macro] ${label} 값 거부(${v.reason}) ${bad} — 이전 값 유지`);
+    if (previousValue) return previousValue;
+    return null;
   }
   if (previousValue) {
     console.warn(`[macro] ${label} 승계(마지막 성공: ${previousValue.fetchedAt})`);
@@ -265,17 +284,17 @@ export default async function handler(req, res) {
     const fomcRate = mergeField(
       rateResult.status === 'fulfilled' ? rateResult.value : null,
       previous?.fomc?.rate ?? null,
-      '기준금리',
+      '기준금리', 'fomc.rate',
     );
     const cpi = mergeField(
       cpiResult.status === 'fulfilled' ? cpiResult.value : null,
       previous?.cpi ?? null,
-      'CPI',
+      'CPI', 'cpi',
     );
     const unemployment = mergeField(
       unemploymentResult.status === 'fulfilled' ? unemploymentResult.value : null,
       previous?.unemployment ?? null,
-      '실업률',
+      '실업률', 'unemployment',
     );
     // bok(한국 기준금리)은 부가 지표라 all-null 치명 판정(아래)에는 넣지 않는다 —
     // 미국 3지표가 다 실패했는데 bok만 있다고 페이로드를 살려두면 브리핑 본 섹션이
@@ -283,7 +302,7 @@ export default async function handler(req, res) {
     const bok = mergeField(
       bokResult.status === 'fulfilled' ? bokResult.value : null,
       previous?.bok ?? null,
-      '한국 기준금리',
+      '한국 기준금리', 'bok',
     );
 
     // 이번 fetch·승계를 다 합쳐도 전 필드가 null인 최악의 경우(첫 실행이자 전부 실패

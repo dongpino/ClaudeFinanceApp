@@ -26,7 +26,7 @@
  */
 
 import { Redis } from '@upstash/redis';
-import { trackedFetch } from './_lib/health.js';
+import { trackedFetch, recordValidation } from './_lib/health.js';
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations';
 const ALLOWED_INDICATORS = ['fomc', 'cpi', 'unemployment'];
@@ -275,9 +275,29 @@ export default async function handler(req, res) {
       ...built, // series + (fomc만) changes
     };
 
-    // FRED 조회가 성공했을 때만 캐시에 쓴다 — 비었거나 실패한 응답은 절대 캐시하지
-    // 않는다(요구사항: null 캐시 오염 금지). 이 지점에 도달했다는 것 자체가 이미
-    // INDICATOR_BUILDERS[indicator]()가 예외 없이 끝났다는 뜻이라 항상 성공 데이터다.
+    // FRED 조회가 성공했을 때만 캐시에 쓴다 — 비었거나 실패한 응답은 절대 캐시하지 않는다.
+    // ⚠️ 2026-07-29 검사 1 적용: 종전 근거는 "예외 없이 끝났다 = 항상 성공 데이터"였는데,
+    //    **예외를 던지지 않으면서 형태가 깨지는 경우**(200 + NaN/null 값)를 이 전제가 통과시킨다.
+    //    series 값이 실제로 유한한 수인지 여기서 한 번 더 본다. macro:hist:last:*는 TTL이
+    //    없어(무기한) 한 번 오염되면 스스로 회복되지 않는 키라 게이트가 특히 중요하다.
+    // 구조는 series: [{ id, label, points: [{date, value}] }] — 시리즈가 아니라 **포인트**를 본다.
+    let bad = null;
+    for (const s of data.series ?? []) {
+      const p = (s?.points ?? []).find(pt => !Number.isFinite(pt?.value));
+      if (p) { bad = { ...p, series: s.id }; break; }
+    }
+    if (bad) {
+      recordValidation('macro-history', {
+        checked: 1, blocked: 1, reason: 'not-number',
+        detail: `${indicator}/${bad.series} ${bad.date ?? '?'}=${JSON.stringify(bad.value)}`,
+      });
+      console.warn(`[macro-history] ${indicator} 값 거부 — ${bad.series} ${bad.date}=${JSON.stringify(bad.value)}, latest 유지`);
+      // 기존 latest를 덮지 않고 이번 응답만 그대로 돌려준다(stale 우선 규율).
+      res.setHeader('X-Cache', 'MISS-UNVERIFIED');
+      return res.status(200).json(data);
+    }
+    recordValidation('macro-history', { checked: 1 });
+
     memCache[indicator] = { data, ts: Date.now() };
     await setCached(indicator, data);
     await setLatestGood(indicator, data);

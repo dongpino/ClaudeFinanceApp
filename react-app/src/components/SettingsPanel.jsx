@@ -49,6 +49,8 @@ const SOURCE_LABELS = {
   'calendar':       '시장 캘린더 · 일정',
   // KASI 특일정보 자동대조 유사 행(api/_lib/holiday-audit.js) — 휴장일 표의 미래 구간 감시
   'kasi-audit':     'KASI · 휴장일 자동대조',
+  // 검사 1(절대 타당성) 실행 계측 유사 행(api/health.js buildValueGuardSource)
+  'value-guard':    '값 검사 · 절대 타당성',
 };
 
 const STATUS_META = {

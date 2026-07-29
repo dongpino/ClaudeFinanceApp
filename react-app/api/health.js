@@ -32,9 +32,10 @@
  *     · 그 외                      → 'ok'
  */
 
-import { getHealthSnapshot, storeFingerprint, ENV_TAG } from './_lib/health.js';
+import { getHealthSnapshot, storeFingerprint, ENV_TAG, getValidationCounters } from './_lib/health.js';
 import { getScheduleDepletion, VERIFIED_AT } from './_lib/macro-calendar.js';
 import { readAudit, buildKasiSource } from './_lib/holiday-audit.js';
+
 
 const DEPLETION_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적', holidays: '휴장일', bok: '금통위' };
 
@@ -75,6 +76,35 @@ export function buildCalendarSource() {
   };
 }
 
+/**
+ * 검사 1 실행 계측 유사 행 — 오늘 몇 건을 검사했고 몇 건을 막았는지.
+ * ⚠️ checked=0은 '문제 없음'이 아니라 '검사가 돌지 않았다'는 뜻이라 warn으로 낸다.
+ * (scripts/test-value-guard.js에서 직접 검증하므로 export)
+ */
+export function buildValueGuardSource(counters) {
+  const scopes = Object.entries(counters ?? {});
+  const checked = scopes.reduce((a, [, c]) => a + (c.checked ?? 0), 0);
+  const blocked = scopes.reduce((a, [, c]) => a + (c.blocked ?? 0), 0);
+  const reasons = scopes.flatMap(([s, c]) =>
+    Object.entries(c.reasons ?? {}).map(([r, n]) => `${s}:${r}×${n}`));
+  const lastBlock = scopes.map(([, c]) => c.lastBlock).filter(Boolean)[0] ?? null;
+
+  const status = checked === 0 ? 'warn' : (blocked > 0 ? 'warn' : 'ok');
+  const note = checked === 0
+    ? '오늘 검사 0건 — 수집이 없었거나 계측이 끊겼다(통과 아님)'
+    : blocked > 0
+      ? `차단 ${blocked}/${checked}건 · ${reasons.join(' ')}${lastBlock ? ` · 최근 ${lastBlock}` : ''}`
+      : `검사 ${checked}건 전건 통과 (${scopes.map(([s]) => s).join('·')})`;
+
+  return {
+    source: 'value-guard', kind: 'derived', status, note,
+    checked, blocked, scopes: Object.fromEntries(scopes),
+    lastSuccessAt: null, lastFailureAt: null, lastError: null,
+    lastErrorCode: null, lastErrorResolved: false,
+    consecutiveFailures: 0, todayRate: null, today: { success: 0, failure: 0 }, todayErrors: {},
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method Not Allowed' });
 
@@ -84,6 +114,9 @@ export default async function handler(req, res) {
     // KASI 휴장일 자동대조 유사 행 — Redis에 적재된 마지막 대조 결과만 읽는다(외부 호출 없음).
     // 기록이 없으면 buildKasiSource가 'unknown' 행을 만든다(빈칸으로 사라지지 않게).
     sources.push(buildKasiSource(await readAudit()));
+    // 검사 1(절대 타당성) 실행 계측 유사 행 — 차단 건수만 보면 '검사가 아예 안 돈 상태'가
+    // '전건 통과'와 같은 초록으로 보인다. checked=0이면 warn으로 드러낸다(KASI 렌즈).
+    sources.push(buildValueGuardSource(await getValidationCounters()));
     // 상태가 있으므로 캐시는 짧게만 — 관측 목적상 최신값이 중요.
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({
