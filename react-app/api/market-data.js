@@ -78,7 +78,7 @@ function countValidation(collected) {
   recordValidation('market', { checked, blocked, reason: lastReason, detail: lastDetail, fields });
 }
 
-// 검사 2(상대 타당성) 실행 + 계측 — 순수 판정은 _lib/relative-guard.js가 하고 여기선
+// 검사 2a(상대 타당성 — 가격 축) 실행 + 계측 — 순수 판정은 _lib/relative-guard.js가 하고 여기선
 // 기록만 한다. **차단하지 않는다**(이미 서빙된 값의 사후 검증이라 막을 대상이 없다).
 // 스킵은 checked와 분리해 넘긴다 — "장중이라 못 했다"가 "검사해서 통과"로 보이면 안 된다.
 function recordRelative(items) {
@@ -239,7 +239,7 @@ async function handleHome(req, res) {
     servable: servableMarketItem,
     errorSummary: FALLBACK_ERR,
   });
-  // 검사 2(상대 타당성) — 최종 서빙본 대상 사후 검증(차단 없음, 경보만).
+  // 검사 2a(상대 타당성 — 가격 축) — 최종 서빙본 대상 사후 검증(차단 없음, 경보만).
   recordRelative(merged);
   const finalById = {};
   for (const it of merged) if (it?.id) finalById[it.id] = it;

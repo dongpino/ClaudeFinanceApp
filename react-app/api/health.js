@@ -151,9 +151,9 @@ export function buildValueGuardSource(counters, now = Date.now()) {
 }
 
 /**
- * 검사 2(상대 타당성) 유사 행 — C(교차소스)·평탄성 결과와 **스킵 사유**를 함께 낸다.
+ * 검사 2a(상대 타당성 — 가격 축) 유사 행 — C(교차소스)·평탄성 결과와 **스킵 사유**를 함께 낸다.
  *
- * ⚠️ 스킵을 별도로 보여주는 것이 이 행의 요점이다. 검사 2는 폐장·기준선을 전제로 하므로
+ * ⚠️ 스킵을 별도로 보여주는 것이 이 행의 요점이다. 검사 2a는 폐장·기준선을 전제로 하므로
  *    "장중이라 못 했다"와 "검사해서 통과했다"가 섞이면 통과율이 거짓말을 한다.
  *    checked=0인데 skipped만 잔뜩이면 그건 통과가 아니라 **미수행**이다.
  * (scripts/test-relative-guard.js에서 직접 검증하므로 export)
@@ -162,7 +162,7 @@ export function buildRelativeGuardSource(counters) {
   const c = counters?.scopes?.relative ?? null;
   const fields = counters?.fields?.relative ?? {};
   if (!c) {
-    return relRow('unknown', '검사 2 기록 없음 — 수집이 없었거나 계측이 끊겼다', null);
+    return relRow('unknown', '검사 2a 기록 없음 — 수집이 없었거나 계측이 끊겼다', null);
   }
   const { checked = 0, blocked = 0, skipped = 0, skips = {}, lastBlock = null } = c;
   const skipStr = Object.entries(skips).map(([r, n]) => `${r}×${n}`).join(' ');
@@ -181,7 +181,7 @@ export function buildRelativeGuardSource(counters) {
     status = 'warn'; verdict = 'not-run';
     note = skipped > 0
       ? `검사 0건 · 전부 스킵 ${skipped}건(${skipStr}) — 통과가 아니라 미수행`
-      : '검사 2 기록 없음 — 수집이 없었거나 계측이 끊겼다';
+      : '검사 2a 기록 없음 — 수집이 없었거나 계측이 끊겼다';
   } else if (blocked > 0) {
     status = 'warn'; verdict = 'transient';
     note = `불일치 ${blocked}/${checked}건${lastBlock ? ` · ${lastBlock}` : ''}`
@@ -218,7 +218,7 @@ export default async function handler(req, res) {
     // '전건 통과'와 같은 초록으로 보인다. checked=0이면 warn으로 드러낸다(KASI 렌즈).
     const counters = await getValidationCounters();
     sources.push(buildValueGuardSource(counters));
-    // 검사 2(상대 타당성) — 스킵 사유까지 함께 낸다(장중 미수행이 통과로 보이면 안 됨).
+    // 검사 2a(상대 타당성 — 가격 축) — 스킵 사유까지 함께 낸다(장중 미수행이 통과로 보이면 안 됨).
     sources.push(buildRelativeGuardSource(counters));
     // 상태가 있으므로 캐시는 짧게만 — 관측 목적상 최신값이 중요.
     res.setHeader('Cache-Control', 'no-store');

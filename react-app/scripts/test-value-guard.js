@@ -109,7 +109,7 @@ const INJECT = {
   assert(validateMacroField('cpi', { yoy: -0.8, mom: -0.2 }).ok, '4: CPI 디플레(음수) 통과');
   assert(!validateMacroField('cpi', { yoy: 500, mom: 0 }).ok, '4: CPI YoY 500%는 차단');
   // 변동 축(change/change_pct)은 검사 1의 범위가 아니다 — 여기서 판정하지 않음을 명시.
-  assert(ASSET_META.kospi.kind === 'price', '4: 검사 1은 레벨값만 — change 축은 검사 2 재료');
+  assert(ASSET_META.kospi.kind === 'price', '4: 검사 1은 레벨값만 — change 축은 검사 2b 재료');
 }
 
 // ── 5. 실행 가시성(0건 수행 ≠ 통과) ────────────────────────────
