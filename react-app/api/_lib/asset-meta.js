@@ -20,7 +20,7 @@
  * ── 검사 1의 범위(중요) ──────────────────────────────────────────────
  *   **레벨값의 형태·정의역만** 본다. change/change_pct(변동 축)는 하락일에 음수가
  *   정상이고 0도 정상이라 여기서 판정하지 않는다 — "200인데 change가 0" 유형의 과거
- *   4건(네이버 장전 0 반환, us10y r2 반올림 뭉갬 등)은 **검사 2(상대 타당성)** 재료다.
+ *   4건(네이버 장전 0 반환, us10y r2 반올림 뭉갬 등)은 **검사 2b(change 축)** 재료다.
  *   클라이언트 detectIssues의 경고도 그대로 둔다(서버 차단과 역할 분담).
  */
 
@@ -34,16 +34,29 @@
  * @property {boolean} fallback        last-good commit/폴백 대상인가
  */
 
-// ── 검사 2(상대 타당성)용 메타 ────────────────────────────────────────
+// ── 검사 2a(상대 타당성 — 가격 축)용 메타 ─────────────────────────────
 // cross : price와 history가 **서로 다른 소스**다. history[-1] 대조가 진짜 교차검산이 된다.
 //         예) CNBC 7종 — price=CNBC quote, history=Naver sise/Naver world/FRED/CBOE
 // semi  : 같은 소스의 **다른 엔드포인트**다. 소스 전체가 죽으면 둘 다 죽으므로 장애는
 //         못 잡지만, **한쪽 파서만 깨진 편측 실패**는 잡을 수 있다(그게 이 등급의 전부다).
 // tauto : 같은 소스의 같은 계열이라 대조가 동어반복이다 → C 검사 **제외**.
 //         btc/eth/dominance가 여기 속한다(현재가·history 모두 CoinGecko).
-// 시장(market)은 "폐장일 때만 검사한다"는 실행 조건에 쓴다. crypto는 24시간이라 폐장이
-// 없고 어차피 tauto다.
 const CROSS = 'cross', SEMI = 'semi', TAUTO = 'tauto';
+
+// ── 세션(market) ─────────────────────────────────────────────────────
+// "폐장일 때만 검사한다"는 실행 조건과 **거래일 파생**(relative-guard.tradingDateOf)에 쓴다.
+// 값은 relative-guard.js의 SESSION 키다 — 그쪽이 개·폐장 시각과 종류를 갖는다.
+//   US     : 주식 intraday 세션(09:30~16:00 ET). 지수·변동성지수·개별 미국 종목.
+//   KR     : 주식 intraday 세션(09:00~15:30 KST).
+//   FX     : **평일 연속 세션. 주말만 폐장.** FX·금리는 주식이 닫힌 뒤에도 계속 거래된다.
+//   CRYPTO : 24시간. 폐장이 없고 전부 tauto라 C 실행 조건에는 실제로 쓰이지 않는다.
+//
+// ⚠️ dxy·us10y를 US(주식) 세션에 묶어 둔 것이 오탐의 직접 원인이었다(2026-07-30 분리).
+//    16:00 ET에 주식이 닫혀도 FX·금리는 살아 있으므로 그 시간대 price는 실시간 값이고
+//    전일 종가와 벌어지는 게 정상이다. 실측:
+//    [저장소:9072dee8:health:validate:fields:relative@2026-07-30T00:38:40Z]
+//    us10y가 18:59 ET(=주식 폐장·금리 거래중) 회차에 1.493%로 위반 기록됐다.
+const US = 'US', KR = 'KR', FX = 'FX', CRYPTO = 'CRYPTO';
 
 // ── 갱신 주기와 성격 ─────────────────────────────────────────────────
 // 평탄성(파서 동결) 검사의 면제 여부를 **여기서 파생**한다. 항목마다 boolean 플래그를
@@ -66,40 +79,48 @@ const PRICE = { kind: 'price', unit: null, min: 0, max: null, allowNegative: fal
 export const ASSET_META = {
   // ── 지수·가격 ────────────────────────────────────────────────
   // CNBC quote ↔ Naver sise/world·FRED·CBOE history — 소스가 완전히 다르다(cross).
-  nasdaq: { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },
-  dow:    { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },
-  sp500:  { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },
-  sox:    { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },
+  nasdaq: { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
+  dow:    { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
+  sp500:  { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
+  sox:    { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
   // 현재가·history 모두 Naver지만 엔드포인트가 다르다(semi) — 편측 파서 실패만 감지 가능.
-  kospi:  { ...PRICE, cross: SEMI, market: 'KR', quantum: 0.01 },
-  kosdaq: { ...PRICE, cross: SEMI, market: 'KR', quantum: 0.01 },
+  kospi:  { ...PRICE, cross: SEMI, market: KR, quantum: 0.01 },
+  kosdaq: { ...PRICE, cross: SEMI, market: KR, quantum: 0.01 },
   // 현재가·history 모두 CoinGecko 계열 → 대조가 동어반복(tauto). C 검사에서 제외한다.
-  btc: { ...PRICE, cross: TAUTO, market: 'CRYPTO' },
-  eth: { ...PRICE, cross: TAUTO, market: 'CRYPTO' },
-  vix: { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },  // 변동성지수. history는 Naver world→CBOE.
-  dxy: { ...PRICE, cross: CROSS, market: 'US', quantum: 0.01 },  // history는 Naver marketIndex.
-  usdkrw: { ...PRICE, cross: SEMI, market: 'KR', quantum: 0.01 },
-  jpykrw: { ...PRICE, cross: SEMI, market: 'KR', quantum: 0.01 },
+  btc: { ...PRICE, cross: TAUTO, market: CRYPTO },
+  eth: { ...PRICE, cross: TAUTO, market: CRYPTO },
+  // 변동성지수. history는 Naver world→CBOE. **주식 파생상품이라 US 세션 유지**다 —
+  // VIX는 CBOE 정규장(주식과 동일)에 종가가 확정된다.
+  vix: { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
+  // ⚠️ FX 세션 — 주식과 함께 닫히지 않는다. history는 Naver marketIndex(exchange/FX_USDX).
+  dxy: { ...PRICE, cross: CROSS, market: FX, quantum: 0.01 },
+  // ⚠️ usdkrw·jpykrw는 **KR 세션 유지**다(이번 분리 대상 아님). 원화 현물환은 서울 외환시장
+  //    정규시간(09:00~15:30)에 거래되고 그 시각이 KR 주식 세션과 같다 — dxy처럼 24시간
+  //    돌아가는 값이 아니다. cross 등급도 semi라 진단력이 낮아 우선순위가 뒤다.
+  usdkrw: { ...PRICE, cross: SEMI, market: KR, quantum: 0.01 },
+  jpykrw: { ...PRICE, cross: SEMI, market: KR, quantum: 0.01 },
   // 개별 종목은 평탄성 검사에서 제외한다(저유동성·거래정지를 판정할 수단이 없어서).
   // C도 semi 이하라 진단력이 낮다 — 등급만 적어 두고 실행 대상에서는 빠진다.
-  HYPR:     { ...PRICE, cross: SEMI, market: 'US', quantum: 0.01, singleName: true },
-  419530:   { ...PRICE, cross: SEMI, market: 'KR', quantum: 1, singleName: true },
-  '028300': { ...PRICE, cross: SEMI, market: 'KR', quantum: 1, singleName: true },
-  '080220': { ...PRICE, cross: SEMI, market: 'KR', quantum: 1, singleName: true },
+  HYPR:     { ...PRICE, cross: SEMI, market: US, quantum: 0.01, singleName: true },
+  419530:   { ...PRICE, cross: SEMI, market: KR, quantum: 1, singleName: true },
+  '028300': { ...PRICE, cross: SEMI, market: KR, quantum: 1, singleName: true },
+  '080220': { ...PRICE, cross: SEMI, market: KR, quantum: 1, singleName: true },
 
   // ── 금리(음수 실재) ──────────────────────────────────────────
   // ⚠️ 마이너스 금리는 일본·유럽에서 실제로 있었다. "양수여야 함"을 적용할 수 없는 항목.
   //    상·하한은 상식 밖 값(파싱 사고)만 걸리게 넓게 잡는다.
   // ⚠️ price는 r4, history는 r2 — **거친 쪽(0.01)이 양자화 스텝**이다. 실측 잔차 0.217%가
   //    정확히 0.01/4.61이라 이 산정의 근거가 된다.
-  us10y:        { kind: 'rate', unit: 'percent', min: -10, max: 30, allowNegative: true, fallback: true, cross: CROSS, market: 'US', quantum: 0.01 },
-  kr_base_rate: { kind: 'rate', unit: 'pct_pt',  min: -10, max: 30, allowNegative: true, fallback: true, cross: TAUTO, market: 'KR', cadence: MONTHLY, type: POLICY_RATE },
+  // ⚠️ FX 세션 — 국채금리도 주식 폐장 후 계속 움직인다. history는 Naver marketIndex
+  //    (bond/US10YT=RR, us-indices.js:222). **FRED가 아니다** — FRED는 dow·sp500 폴백 전용.
+  us10y:        { kind: 'rate', unit: 'percent', min: -10, max: 30, allowNegative: true, fallback: true, cross: CROSS, market: FX, quantum: 0.01 },
+  kr_base_rate: { kind: 'rate', unit: 'pct_pt',  min: -10, max: 30, allowNegative: true, fallback: true, cross: TAUTO, market: KR, cadence: MONTHLY, type: POLICY_RATE },
 
   // ── 정의역이 명확한 비율·점수 ────────────────────────────────
   // ⚠️ **하한 0을 포함한다**(종전 공통 규칙 price>0과 충돌했던 지점). 공포탐욕 0과
   //    도미넌스 0은 이론상 정상값이며, 0을 이상값으로 막으면 정상 데이터가 폴백으로 밀린다.
-  dominance: { kind: 'ratio', unit: 'pct_pt', min: 0, max: 100, allowNegative: false, fallback: true, cross: TAUTO, market: 'CRYPTO' },
-  feargreed: { kind: 'score', unit: 'score',  min: 0, max: 100, allowNegative: false, fallback: true, cross: TAUTO, market: 'CRYPTO' },
+  dominance: { kind: 'ratio', unit: 'pct_pt', min: 0, max: 100, allowNegative: false, fallback: true, cross: TAUTO, market: CRYPTO },
+  feargreed: { kind: 'score', unit: 'score',  min: 0, max: 100, allowNegative: false, fallback: true, cross: TAUTO, market: CRYPTO },
 };
 
 /** 가격이 아닌 지표의 단위 집합 — MarketCard가 쓰던 하드코딩의 원본. */
@@ -169,8 +190,8 @@ export function validateLevel(id, value) {
  *    그래서 "파서가 실패해 0을 반환하는" 형태 붕괴를 **검사 1은 원리적으로 잡을 수 없다** —
  *    정상값과 구분되지 않기 때문이다. 시세류(가격 >0)에서는 0을 배제할 수 있지만 여기서는
  *    같은 수단을 쓸 수 없다.
- *    이 구간은 **검사 2(상대 타당성)**가 담당한다 — 직전 값 대비 변화폭·부호 지속성처럼
- *    "값 하나만 보고는 알 수 없는" 축으로 판정해야 한다. 검사 2 재료로 이관된 기존 이력:
+ *    이 구간은 **검사 2 계열**이 담당한다 — 직전 값 대비 변화폭·부호 지속성처럼
+ *    "값 하나만 보고는 알 수 없는" 축으로 판정해야 한다. 검사 2b 재료로 이관된 기존 이력:
  *      · 네이버 장전 quote가 change/change_pct를 0으로 반환(실측, 삼성전자 재현)
  *      · us10y r2 반올림으로 0.01%p 미만 변동이 0으로 뭉개짐 → r4로 정밀도 보존
  *      · us-indices recalcChange(|change| ≤ 0.01이면 history로 재계산)

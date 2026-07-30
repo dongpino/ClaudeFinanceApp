@@ -1,5 +1,5 @@
 /**
- * api/_lib/relative-guard.js — 검사 2(상대 타당성). 순수 로직, 네트워크·Redis 없음.
+ * api/_lib/relative-guard.js — **검사 2a(상대 타당성 — 가격 축)**. 순수 로직, 네트워크·Redis 없음.
  *
  * 검사 1(절대 타당성)이 "값 하나만 보고 알 수 있는 것"을 담당했다면 여기는 **두 값을
  * 견줘야 알 수 있는 것**을 본다. 1단계 조사에서 범위를 크게 좁혔다:
@@ -7,8 +7,25 @@
  *   · 평탄성(파서 동결) — history가 여러 날 완전히 같은 값
  * 급변·뉴스 교차확인·naver-index 400은 제외했다(근거는 파일 하단 EXCLUDED 주석).
  *
+ * ── 이름이 '2a'인 이유 = **change 축은 아직 미커버**다 ────────────────
+ * 여기서 보는 것은 **레벨값(price)** 뿐이다. change/change_pct(변동 축)는 검사 1이
+ * "하락일에 음수·보합에 0이 정상"이라 손대지 않고 검사 2 계열로 이관했는데, 그 이관을 받은
+ * 것이 이 파일이고 **아직 change 축을 구현하지 않았다.** 즉 아래 4건은 지금 어느 검사도
+ * 잡지 않는다:
+ *   ⚠️ TODO(검사 2b — change 축): 미커버 4건. 설계는 tradingDateOf()를 전제로 한다.
+ *     ① 네이버 장전 quote가 change/change_pct를 0으로 반환 (실측, 삼성전자 재현)
+ *     ② us10y r2 반올림으로 0.01%p 미만 변동이 0으로 뭉개짐 (→ r4로 정밀도 보존 완료,
+ *        그러나 "뭉개졌는지 감지"하는 검사는 없다)
+ *     ③ us-indices recalcChange(|change| ≤ 0.01이면 history로 재계산) — 재계산이 옳게
+ *        됐는지 검증하는 축이 없다
+ *     ④ 클라이언트 detectIssues가 경고 0건인데 실제로는 change가 틀린 경우
+ *   방향: prevClose(= price − change)를 history[-2].close와 대조하면 change 축이
+ *   레벨 축과 같은 양자화 허용오차로 판정된다. 거래일 정렬이 선행 조건이라 이 커밋에서
+ *   tradingDateOf()를 먼저 넣었다.
+ *
  * ⚠️ **차단하지 않는다. 경보만 한다.** 이 검사는 이미 서빙된 값의 사후 검증이라 막을
- *    대상이 없다(검사 1은 캐시 진입 전이라 차단이 성립했다).
+ *    대상이 없다(검사 1은 캐시 진입 전이라 차단이 성립했다). 서빙 경로에 개입하지 않음은
+ *    market-data.js:243에서 반환값을 쓰지 않는 것으로 코드상 보장된다.
  * ⚠️ **C 위반이 곧 price 오류라는 뜻이 아니다.** history 쪽 파서가 깨졌을 수도 있다 —
  *    어느 쪽이 틀렸는지는 이 검사로 알 수 없으므로 문구를 "양측 불일치"로 중립하게 쓴다.
  */
@@ -21,10 +38,128 @@ import { MARKET_HOLIDAYS } from './macro-calendar.js';
 // C 검사가 성립하지 않는다. 그래서 폐장일 때만 돌린다.
 // ⚠️ TODO(2026-09-14): 애프터마켓(16:00~20:00 KST) 시행 시 KR 세션 종료를 20:00으로
 //    옮겨야 한다. 그전에 반영하지 않으면 16~20시 사이가 '폐장'으로 잘못 잡혀 오탐이 난다.
+//
+// ── 세션은 두 종류다(2026-07-30 분리) ────────────────────────────────
+// intraday   : 하루 안에 개장·폐장이 있다. KR·US 주식(nasdaq·dow·sp500·sox·vix·개별종목).
+// continuous : **평일 연속. 주말만 폐장.** FX·금리(dxy·us10y)가 여기 속한다.
+//
+// ⚠️ 왜 분리하는가 — 종전에 dxy·us10y를 US(주식) 세션으로 묶은 것이 오탐의 직접 원인이었다.
+//    16:00 ET에 주식이 닫혀도 FX·금리는 계속 거래되므로, 그 시간대의 price는 여전히 살아
+//    있는 값이고 history[-1](전일 종가)과 벌어지는 게 **정상**이다. US 세션 기준으로는
+//    그 구간이 'after-hours=폐장'이라 검사가 돌아 버렸다. 실측:
+//    [저장소:9072dee8:health:validate:fields:relative@2026-07-30T00:38:40Z]
+//      us10y  1.493% 위반 @2026-07-29T22:59:14.826Z (=18:59 ET, 주식 폐장·금리 거래중)
+//    같은 회차에 조회한 현재 스냅샷도 1.071%로 여전히 임계를 넘는다 — 상시 오탐이었다.
 const SESSION = {
-  KR: { tz: 'Asia/Seoul',       open: 9 * 60,          close: 15 * 60 + 30 },
-  US: { tz: 'America/New_York', open: 9 * 60 + 30,     close: 16 * 60 },
+  KR: { kind: 'intraday', tz: 'Asia/Seoul',       open: 9 * 60,      close: 15 * 60 + 30, holidays: 'KR' },
+  US: { kind: 'intraday', tz: 'America/New_York', open: 9 * 60 + 30, close: 16 * 60,      holidays: 'US' },
+  // FX·금리 — 주말 폐장 창을 **일요일 재개 시각(17:00 ET)까지만**으로 좁힌다.
+  //
+  // ⚠️ 비대칭이 의도적이다. 금요일 17:00 ET 이후를 '개장'으로 남기면 검사 기회를 잃지만,
+  //    일요일 저녁 재개 구간을 '폐장'으로 잘못 잡으면 **거래 중인 price를 금요일 캔들과
+  //    대조해 오탐**이 난다. 이 검사의 목적상 오탐 한 번이 커버리지 한 칸보다 비싸다
+  //    (FLAT_RUN_THRESHOLD를 7로 크게 잡은 것과 같은 판단 기준).
+  // ⚠️ 미국 증시 휴장일은 폐장으로 보지 않는다. 국채는 SIFMA 권고로 쉬지만 글로벌 FX는
+  //    얇게라도 거래되고, 무엇보다 "휴장일에 캔들이 안 나온 상태"에서 검사를 돌리면
+  //    history[-1]이 전 거래일에 머물러 오탐이 된다. 커버리지를 포기하는 쪽을 택한다.
+  FX: { kind: 'continuous', tz: 'America/New_York', reopenWeekday: 'Sun', reopenMinutes: 17 * 60 },
 };
+
+// ── 거래일(trading date) 파생 ────────────────────────────────────────
+// ⚠️ **KST 날짜와 거래일은 같지 않다.** US 세션 종료 16:00 ET는 여름(EDT)에 05:00 KST
+//    **다음날**이다. 그 시각의 price는 KST로는 오늘이지만 거래일은 어제다. 이 함수 없이
+//    KST 날짜를 거래일로 쓰면 정확히 하루가 어긋난다.
+// 검사 2b(change 축)가 history[-1]의 거래일을 price의 거래일과 맞춰야 하므로 여기서 만든다.
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const shiftDate = (ymd, days) =>
+  new Date(Date.parse(`${ymd}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+const dowOf = ymd => DOW[new Date(`${ymd}T00:00:00Z`).getUTCDay()];
+
+/**
+ * 그 날짜가 거래일인가. holidayKey가 null이면 **주말만** 본다(continuous 세션).
+ * @param {string} ymd 'YYYY-MM-DD'
+ * @param {'KR'|'US'|null} holidayKey
+ */
+export function isTradingDay(ymd, holidayKey) {
+  const d = dowOf(ymd);
+  if (d === 'Sat' || d === 'Sun') return false;
+  if (holidayKey && MARKET_HOLIDAYS[holidayKey]?.[ymd]) return false;
+  return true;
+}
+
+/**
+ * ymd 직전의 거래일. 휴장일 표가 그 연도를 덮지 않으면 평일이 그대로 거래일이 된다.
+ * @returns {string|null} 10일 안에 못 찾으면 null(연휴 최장 5일이라 도달하지 않는 상한)
+ */
+export function prevTradingDay(ymd, holidayKey, maxBack = 10) {
+  let d = ymd;
+  for (let i = 0; i < maxBack; i++) {
+    d = shiftDate(d, -1);
+    if (isTradingDay(d, holidayKey)) return d;
+  }
+  return null;
+}
+
+/**
+ * 아이템의 as_of 문자열/Date → Date. 홈 아이템은 'YYYY-MM-DD HH:mm KST' 형식을 쓴다
+ * (market-data.fmtKST) — Date.parse가 'KST'를 못 읽으므로 직접 처리한다.
+ * @returns {Date|null} 해석 불가면 null
+ */
+export function parseAsOf(v) {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'number') return new Date(v);
+  if (typeof v !== 'string') return null;
+  // 'KST'는 서머타임이 없어 +09:00 고정이 어느 계절에도 참이다(probe-store.js와 같은 근거).
+  const m = v.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?\s*KST$/);
+  if (m) return new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4] ?? '00'}+09:00`);
+  const t = Date.parse(v);
+  return Number.isNaN(t) ? null : new Date(t);
+}
+
+/**
+ * **그 시점에 관측된 price가 속한 거래일.** 항목의 세션(ASSET_META.market)으로 판정한다.
+ *
+ * basis 어휘 — 사람이 "왜 그 날짜인가"를 되짚을 수 있게 함께 돌려준다.
+ *   intraday            장중. 진행 중인 그 날이 거래일
+ *   after-close         폐장 후. 그 날이 거래일 (⭐ KST 날짜와 갈리는 구간)
+ *   pre-open            개장 전. 전 거래일이 거래일
+ *   non-trading-day     주말·휴장일. 전 거래일
+ *   continuous-weekday  FX·금리 평일
+ *   continuous-weekend  FX·금리 주말 → 직전 금요일
+ *   utc-date            크립토(24시간, 세션 경계가 없어 UTC 날짜를 쓴다)
+ *
+ * @param {string} id      ASSET_META 키
+ * @param {Date|string|number} at  price의 관측 시각(as_of)
+ * @returns {{ date: string|null, market: string|null, basis: string }}
+ */
+export function tradingDateOf(id, at = new Date()) {
+  const market = ASSET_META[id]?.market ?? null;
+  const when = parseAsOf(at);
+  if (!when) return { date: null, market, basis: 'unparsable-asof' };
+  // 크립토는 폐장이 없어 '거래일'이 세션으로 정의되지 않는다. 캔들 날짜도 UTC 기준이다.
+  if (market === 'CRYPTO') return { date: when.toISOString().slice(0, 10), market, basis: 'utc-date' };
+  const s = SESSION[market];
+  if (!s) return { date: null, market, basis: 'unknown-market' };
+
+  const { date, minutes } = localParts(when, s.tz);
+
+  if (s.kind === 'continuous') {
+    // 주말이면 직전 금요일 — 일요일 저녁에 장이 재개돼도 **완결된 마지막 거래일**은
+    // 금요일이다(소스가 일요일 캔들을 발행하지 않는다). isMarketClosed와 답이 다른 게
+    // 정상이다 — 저쪽은 "지금 거래 중인가", 이쪽은 "price가 어느 날의 값인가"를 답한다.
+    return isTradingDay(date, null)
+      ? { date, market, basis: 'continuous-weekday' }
+      : { date: prevTradingDay(date, null), market, basis: 'continuous-weekend' };
+  }
+
+  if (!isTradingDay(date, s.holidays)) {
+    return { date: prevTradingDay(date, s.holidays), market, basis: 'non-trading-day' };
+  }
+  if (minutes < s.open) {
+    return { date: prevTradingDay(date, s.holidays), market, basis: 'pre-open' };
+  }
+  return { date, market, basis: minutes >= s.close ? 'after-close' : 'intraday' };
+}
 
 function localParts(now, tz) {
   const p = new Intl.DateTimeFormat('en-CA', {
@@ -41,7 +176,7 @@ function localParts(now, tz) {
 
 /**
  * 그 시장이 지금 닫혀 있는가.
- * @param {'KR'|'US'|'CRYPTO'} market
+ * @param {'KR'|'US'|'FX'|'CRYPTO'} market
  * @returns {{ closed: boolean, reason: string }}
  */
 export function isMarketClosed(market, now = new Date()) {
@@ -50,9 +185,19 @@ export function isMarketClosed(market, now = new Date()) {
   const s = SESSION[market];
   if (!s) return { closed: false, reason: 'unknown-market' };
   const { date, minutes, weekday } = localParts(now, s.tz);
+
+  // ── 평일 연속 세션(FX·금리) — 주말만 폐장 ──────────────────────────
+  if (s.kind === 'continuous') {
+    if (weekday === 'Sat') return { closed: true, reason: 'weekend' };
+    // 일요일은 재개 시각 전까지만 폐장. 그 이후는 거래 중이므로 검사하지 않는다.
+    if (weekday === s.reopenWeekday && minutes < s.reopenMinutes) return { closed: true, reason: 'weekend' };
+    return { closed: false, reason: 'continuous-open' };
+  }
+
+  // ── intraday 세션(주식) ────────────────────────────────────────────
   if (weekday === 'Sat' || weekday === 'Sun') return { closed: true, reason: 'weekend' };
   // 휴장일 표는 검사 1·KASI 자동대조로 관리되는 그 표를 그대로 쓴다(원본 하나).
-  if (MARKET_HOLIDAYS[market]?.[date]) return { closed: true, reason: 'holiday' };
+  if (MARKET_HOLIDAYS[s.holidays]?.[date]) return { closed: true, reason: 'holiday' };
   if (minutes < s.open || minutes >= s.close) return { closed: true, reason: 'after-hours' };
   return { closed: false, reason: 'open' };
 }
@@ -166,7 +311,7 @@ export function baselineTooOld(item, now = new Date()) {
 }
 
 /**
- * 아이템 배열 → 검사 2 결과 집계. **순수 함수**(호출측이 Redis에 기록한다).
+ * 아이템 배열 → 검사 2a 결과 집계. **순수 함수**(호출측이 Redis에 기록한다).
  * @returns {{ checked, blocked, skipped, skipReasons, findings, fields }}
  */
 export function runRelativeChecks(items, now = new Date()) {
@@ -231,7 +376,7 @@ export function runRelativeChecks(items, now = new Date()) {
  *   감시 대상(HYPR·코스닥 3종)은 국내 RSS 게재율이 낮다. 결정적으로 매칭 실패 시
  *   행동을 정의할 수 없다 — "뉴스 없음"이 이상인지 미게재인지 구분되지 않아 경보로 쓰면
  *   상시 오탐이고 무시하면 검사가 무의미하다.
- * · **naver-index http-400**: 검사 2 정의 밖. 명시적 HTTP 실패라 "200인데 값이 이상"이
+ * · **naver-index http-400**: 검사 2a 정의 밖. 명시적 HTTP 실패라 "200인데 값이 이상"이
  *   아니다(48시간 569성공/7실패, 시각 집중 없음). health가 계측하고 last-good이 폴백한다.
  * · **저유동성 무변동**: 판정 수단 없음. 거래량을 싣지 않는 한 "안 움직인 것"과 "거래가
  *   없던 것"을 구분할 수 없다 — 개별 종목을 평탄성에서 뺀 이유이며, **오탐 불가 구간**으로

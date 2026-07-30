@@ -1,5 +1,5 @@
 /**
- * scripts/test-relative-guard.js — 검사 2(상대 타당성) 검증. 네트워크·Redis 없음.
+ * scripts/test-relative-guard.js — 검사 2a(상대 타당성 — 가격 축) 검증. 네트워크·Redis 없음.
  *
  * 1단계 조사에서 범위를 C(교차소스) + 평탄성으로 좁혔다. 급변·뉴스 교차확인·
  * naver-index 400·저유동성 무변동은 제외했고 그 근거는 relative-guard.js 하단에 있다.
@@ -8,6 +8,8 @@
  *  1. C 3등급 분류 고정 (cross / semi / tauto)
  *  2. 허용 오차 — **절대 오차 설계면 실패하는 반례**(HYPR r2 사례)
  *  3. 폐장 판정 분기 (주말·휴장일·장중·장후)
+ *  3b. FX/금리 세션 분리 — us10y 상시 오탐의 회귀 고정
+ *  3c. 거래일 파생 — **KST 날짜 ≠ 거래일**(US 폐장 05:00 KST 케이스)
  *  4. 평탄성 N일 경계 + 캔들 부재와의 구분
  *  5. 스킵 3종이 checked와 섞이지 않는가 (조사 말미 지적)
  *  6. 상태판 행 — 전부 스킵이 '통과'로 보이지 않는가
@@ -17,6 +19,7 @@
 import {
   isMarketClosed, crossTolerance, checkCross, checkFlatness, baselineTooOld,
   runRelativeChecks, FLAT_RUN_THRESHOLD, BASELINE_MAX_AGE_MS,
+  tradingDateOf, parseAsOf, prevTradingDay, isTradingDay,
 } from '../api/_lib/relative-guard.js';
 import { ASSET_META, isFlatExempt } from '../api/_lib/asset-meta.js';
 import { readFileSync } from 'node:fs';
@@ -90,6 +93,135 @@ const NOW_KR_OPEN = new Date('2026-07-29T02:00:00Z'); // 11:00 KST 수요일 = K
   // 장중이면 C를 아예 하지 않는다(장중 불일치는 정상이라 검사가 성립하지 않음)
   const open = checkCross({ id: 'kospi', price: 5663, history: hist(30, 5600) }, NOW_KR_OPEN);
   assert(open.state === 'skipped' && open.reason === 'market-open', '3: 장중이면 C 스킵');
+}
+
+// ── 3b. FX/금리 세션 분리 (2026-07-30) ─────────────────────────
+// ⭐ 이 블록이 us10y 상시 오탐의 회귀 고정이다.
+//    [저장소:9072dee8:health:validate:fields:relative@2026-07-30T00:38:40Z]
+//    us10y 1.493% 위반 @2026-07-29T22:59:14.826Z = 18:59 ET — 주식은 폐장이지만
+//    금리는 거래 중인 구간. US 세션으로 묶여 있어 검사가 돌아 버렸다.
+{
+  assert(ASSET_META.dxy.market === 'FX',   '3b: dxy는 FX 세션');
+  assert(ASSET_META.us10y.market === 'FX', '3b: us10y는 FX 세션');
+  // 주식 5종은 US 세션 유지 — 분리가 과하게 번지지 않는지
+  for (const id of ['nasdaq', 'dow', 'sp500', 'sox', 'vix']) {
+    assert(ASSET_META[id].market === 'US', `3b: ${id}는 US 세션 유지`);
+  }
+  // 원화 환율은 이번 분리 대상이 아니다(서울 외환시장 정규시간 = KR 주식 세션)
+  assert(ASSET_META.usdkrw.market === 'KR' && ASSET_META.jpykrw.market === 'KR',
+    '3b: usdkrw·jpykrw는 KR 세션 유지');
+
+  // ⭐ 실측 위반 시각 재현 — 같은 순간에 세션 판정이 갈려야 한다
+  const VIOLATION_AT = new Date('2026-07-29T22:59:14.826Z'); // 18:59 ET 수요일
+  assert(isMarketClosed('US', VIOLATION_AT).reason === 'after-hours',
+    '3b: 그 시각 US(주식)는 폐장 — 종전 판정');
+  assert(isMarketClosed('FX', VIOLATION_AT).closed === false,
+    '3b: ⭐ 같은 시각 FX(금리)는 거래중 — 이제 C가 돌지 않는다(오탐 차단)');
+  const skipped = checkCross(
+    { id: 'us10y', price: 4.6697, history: [...hist(29, 4.3, '2026-07-28', 0.01), { date: '2026-07-28', close: 4.6 }] },
+    VIOLATION_AT);
+  assert(skipped.state === 'skipped' && skipped.reason === 'market-open',
+    `3b: ⭐ us10y 1.493% 회차가 스킵된다 (실제: ${JSON.stringify(skipped)})`);
+
+  // 평일 연속 — 주식이 닫힌 시간대 전부 '거래중'이어야 한다
+  for (const iso of ['2026-07-29T02:00:00Z', '2026-07-29T12:00:00Z', '2026-07-29T18:00:00Z',
+                     '2026-07-30T04:00:00Z']) {
+    assert(isMarketClosed('FX', new Date(iso)).closed === false, `3b: 평일 ${iso}는 FX 거래중`);
+  }
+  // 주말만 폐장 — 토요일 종일
+  assert(isMarketClosed('FX', new Date('2026-08-01T12:00:00Z')).reason === 'weekend',
+    '3b: 토요일 08:00 ET는 FX 폐장');
+  assert(isMarketClosed('FX', new Date('2026-08-02T18:00:00Z')).reason === 'weekend',
+    '3b: 일요일 14:00 ET(재개 전)는 FX 폐장');
+  // ⚠️ 비대칭의 회귀 — 일요일 재개(17:00 ET) 이후를 폐장으로 잡으면 오탐이 난다
+  assert(isMarketClosed('FX', new Date('2026-08-02T22:00:00Z')).closed === false,
+    '3b: ⭐ 일요일 18:00 ET(재개 후)는 거래중 — 폐장으로 잡으면 금요일 캔들과 대조해 오탐');
+  // 미 증시 휴장일은 FX 폐장으로 보지 않는다(의도적 커버리지 포기)
+  assert(isMarketClosed('FX', new Date('2026-07-03T18:00:00Z')).closed === false,
+    '3b: 7/3 미 증시 휴장일에도 FX는 폐장으로 보지 않는다');
+}
+
+// ── 3c. 거래일(trading date) 파생 ──────────────────────────────
+// ⭐ **KST 날짜 ≠ 거래일**의 회귀 고정. [B](검사 2b)가 이 함수를 전제로 설계된다.
+{
+  const kstDate = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(d);
+
+  // ⭐ US 폐장 16:00 ET = 05:00 KST **다음날** — 지시된 그 케이스
+  const AT_CLOSE = new Date('2026-07-29T20:00:00Z');  // 16:00 EDT 수 = 05:00 KST 목
+  assert(kstDate(AT_CLOSE) === '2026-07-30', '3c: 그 순간의 KST 날짜는 07-30');
+  const tdClose = tradingDateOf('nasdaq', AT_CLOSE);
+  assert(tdClose.date === '2026-07-29',
+    `3c: ⭐ 거래일은 07-29 — KST 날짜와 하루 갈린다 (실제: ${JSON.stringify(tdClose)})`);
+  assert(tdClose.date !== kstDate(AT_CLOSE), '3c: ⭐ 두 값이 실제로 다름을 명시적으로 고정');
+  assert(tdClose.basis === 'after-close', `3c: basis=after-close (실제: ${tdClose.basis})`);
+
+  // 실측 위반 회차도 같은 구간 — price는 07-29 종가였다
+  const tdViol = tradingDateOf('vix', new Date('2026-07-29T22:59:14.826Z'));
+  assert(tdViol.date === '2026-07-29' && tdViol.basis === 'after-close',
+    `3c: 위반 회차(18:59 ET) 거래일=07-29 (실제: ${JSON.stringify(tdViol)})`);
+  // 그 회차 history[-1]은 07-28이었다 → 전 거래일 = 오정렬 검출의 재료
+  assert(prevTradingDay('2026-07-29', 'US') === '2026-07-28',
+    '3c: 07-29의 전 거래일은 07-28 — 오정렬 판정의 기준');
+  // 거래일 판정 자체 — 주말/휴장일 표가 둘 다 반영되는가
+  assert(isTradingDay('2026-07-29', 'US') === true,  '3c: 07-29(수)는 거래일');
+  assert(isTradingDay('2026-08-01', 'US') === false, '3c: 08-01(토)은 비거래일');
+  assert(isTradingDay('2026-07-03', 'US') === false, '3c: 미 휴장일은 비거래일');
+  assert(isTradingDay('2026-07-17', 'KR') === false, '3c: 제헌절은 KR 비거래일');
+  // ⚠️ holidayKey=null(continuous)은 **주말만** 본다 — FX가 증시 휴장일에 쉬지 않는 근거
+  assert(isTradingDay('2026-07-03', null) === true,
+    '3c: continuous 세션은 증시 휴장일을 거래일로 본다(FX 설계와 일치)');
+  assert(prevTradingDay('2026-07-06', null) === '2026-07-03',
+    '3c: continuous의 전 거래일은 휴장일을 건너뛰지 않는다');
+
+  // 개장 전 — 전 거래일
+  const tdPre = tradingDateOf('nasdaq', new Date('2026-07-29T12:00:00Z')); // 08:00 ET 수
+  assert(tdPre.date === '2026-07-28' && tdPre.basis === 'pre-open',
+    `3c: 개장 전은 전 거래일 (실제: ${JSON.stringify(tdPre)})`);
+  // 장중 — 진행 중인 그 날
+  const tdIn = tradingDateOf('nasdaq', new Date('2026-07-29T18:00:00Z')); // 14:00 ET 수
+  assert(tdIn.date === '2026-07-29' && tdIn.basis === 'intraday', '3c: 장중은 그 날');
+
+  // 휴장일·주말은 전 거래일로 물러난다
+  const tdHol = tradingDateOf('nasdaq', new Date('2026-07-03T18:00:00Z')); // 미 휴장(금)
+  assert(tdHol.date === '2026-07-02' && tdHol.basis === 'non-trading-day',
+    `3c: 미 휴장일은 전 거래일 (실제: ${JSON.stringify(tdHol)})`);
+  const tdSat = tradingDateOf('nasdaq', new Date('2026-08-01T18:00:00Z'));
+  assert(tdSat.date === '2026-07-31', '3c: 토요일은 직전 금요일');
+
+  // KR 세션 — 15:30 KST 이후는 그 날, 09:00 전은 전 거래일
+  assert(tradingDateOf('kospi', new Date('2026-07-29T08:00:00Z')).date === '2026-07-29',
+    '3c: 17:00 KST는 그 날이 거래일');
+  assert(tradingDateOf('kospi', new Date('2026-07-28T23:00:00Z')).date === '2026-07-28',
+    '3c: 08:00 KST(개장 전)는 전 거래일');
+  // 제헌절(2026-07-17, 금) — 휴장일 표가 거래일 파생에도 반영되는가
+  assert(tradingDateOf('kospi', new Date('2026-07-17T08:00:00Z')).date === '2026-07-16',
+    '3c: 제헌절은 전 거래일(07-16) — 휴장일 표 원본 하나를 공유');
+
+  // FX 세션 — 평일은 그 날, 주말은 직전 금요일
+  assert(tradingDateOf('us10y', new Date('2026-07-29T22:59:14.826Z')).date === '2026-07-29',
+    '3c: FX 평일 거래일');
+  const fxSun = tradingDateOf('dxy', new Date('2026-08-02T22:00:00Z')); // 일 18:00 ET(재개 후)
+  assert(fxSun.date === '2026-07-31' && fxSun.basis === 'continuous-weekend',
+    `3c: ⭐ 일요일 재개 후에도 완결된 거래일은 금요일 (실제: ${JSON.stringify(fxSun)})`);
+  // isMarketClosed와 답이 갈리는 게 정상 — 서로 다른 질문이다
+  assert(isMarketClosed('FX', new Date('2026-08-02T22:00:00Z')).closed === false
+      && fxSun.basis === 'continuous-weekend',
+    '3c: "거래중"과 "완결된 거래일"은 별개 질문 — 답이 갈려도 모순 아님');
+
+  // 크립토 — 세션 경계가 없어 UTC 날짜
+  const tdBtc = tradingDateOf('btc', new Date('2026-07-29T22:00:00Z'));
+  assert(tdBtc.date === '2026-07-29' && tdBtc.basis === 'utc-date', '3c: 크립토는 UTC 날짜');
+
+  // as_of 문자열 파싱 — 홈 아이템이 실제로 쓰는 형식
+  assert(parseAsOf('2026-07-30 08:51 KST').toISOString() === '2026-07-29T23:51:00.000Z',
+    '3c: "YYYY-MM-DD HH:mm KST" 파싱(+09:00 고정)');
+  assert(tradingDateOf('vix', '2026-07-30 08:51 KST').date === '2026-07-29',
+    '3c: ⭐ 실제 as_of 문자열로도 거래일 07-29 — [B]가 이 형태로 호출한다');
+  assert(parseAsOf('말도 안 되는 값') === null, '3c: 해석 불가는 null');
+  assert(tradingDateOf('vix', '말도 안 되는 값').basis === 'unparsable-asof',
+    '3c: 해석 불가는 basis로 드러낸다(조용히 오늘로 떨어지지 않음)');
+  assert(tradingDateOf('없는항목', new Date()).basis === 'unknown-market',
+    '3c: 미지의 id는 unknown-market');
 }
 
 // ── 4. 평탄성 N일 경계 ─────────────────────────────────────────
