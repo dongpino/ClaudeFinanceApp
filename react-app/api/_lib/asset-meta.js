@@ -84,19 +84,6 @@ const POLICY_RATE = 'policy_rate';
 
 /** 평탄성 검사를 면제할 갱신 주기 — 일 단위로 보면 평탄한 게 정상인 것들. */
 const FLAT_EXEMPT_CADENCES = new Set([MONTHLY, QUARTERLY]);
-
-/**
- * 그 항목이 **일별로 갱신되는가.** cadence 미기재는 daily로 본다(대다수가 일별이라
- * 기본값이고, 비일별인 것만 명시한다 — kr_base_rate가 유일).
- *
- * ⚠️ 검사 2a의 stale-history(거래일 갭 ≥2) 판정이 이걸 쓴다. 월별 지표는 거래일마다
- *    새 캔들이 생기지 않으므로 갭이 정의상 벌어진다 — 일별 항목에만 적용해야 한다.
- *    현재 C 대상(cross/semi) 중 비일별은 없지만, 향후 편입 시 조용히 상시 오탐이 되는
- *    구간이라 규칙으로 먼저 막는다.
- */
-export function isDailyCadence(id) {
-  return (ASSET_META[id]?.cadence ?? DAILY) === DAILY;
-}
 /** 평탄성 검사를 면제할 값 성격 — 평탄함 자체가 정상 신호인 것들. */
 const FLAT_EXEMPT_TYPES = new Set([POLICY_RATE]);
 

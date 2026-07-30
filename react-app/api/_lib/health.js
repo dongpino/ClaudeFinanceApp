@@ -247,9 +247,9 @@ export function recordRetry(source, { recovered } = {}) {
  * @param {string} scope   'market' | 'macro' | 'macro-history' 등 검사 지점
  * @param {{checked:number, blocked?:number, reason?:string, detail?:string}} p
  */
-export function recordValidation(scope, { checked = 0, blocked = 0, skipped = 0, skipReasons, reason, detail, fields, blockDiversity } = {}) {
+export function recordValidation(scope, { checked = 0, blocked = 0, skipped = 0, skipReasons, reason, detail, fields } = {}) {
   if (!scope) return;
-  void persistValidation(scope, checked, blocked, reason, detail, fields, skipped, skipReasons, blockDiversity);
+  void persistValidation(scope, checked, blocked, reason, detail, fields, skipped, skipReasons);
 }
 
 // ── 게이트 자체의 실패 감시 ──────────────────────────────────────────
@@ -263,7 +263,7 @@ export const CONSEC_BLOCK_THRESHOLD = 3;               // 이 횟수 이상 연�
 export const FIELD_STALE_MS = 24 * 60 * 60 * 1000;     // 마지막 성공 갱신이 이보다 오래면 승격
 const FIELD_STATE_KEY = scope => `health:validate:fields:${scope}`;
 
-async function persistValidation(scope, checked, blocked, reason, detail, fields, skipped = 0, skipReasons, blockDiversity) {
+async function persistValidation(scope, checked, blocked, reason, detail, fields, skipped = 0, skipReasons) {
   const r = getRedis();
   if (!r) return;
   try {
@@ -282,25 +282,9 @@ async function persistValidation(scope, checked, blocked, reason, detail, fields
       // 마지막 차단의 구체 내용(어느 필드, 어떤 값) — 사람이 원인을 좇을 유일한 단서.
       if (detail) p.hset(key, { [`${scope}:lastBlock`]: String(detail).slice(0, 160) });
     }
-    // ── 전 필드 동시 차단 — 원인 다양성으로 게이트/소스를 갈라 찍는다 ────
-    // ⚠️ **"동시 차단 = 게이트 결함"은 필드 독립을 가정한다.** 공통 원인이 작용하면 동시
-    //    차단이 정상 결과여서 그 추정이 성립하지 않는다. 실측 사례가 둘 있다:
-    //      · 날짜 오정렬 — 전 항목에 동시 작용(vix 11.859%·sox 5.630% 등 5종 동시)
-    //      · 단일 벤더 — nasdaq·dow·sp500·sox·vix는 price가 전부 CNBC 하나의 bulk 콜이다
-    //    후자는 "게이트가 고장났다"보다 "CNBC 한 곳이 이상하다"가 정확한 읽기다.
-    // 그래서 게이트 결함 도장은 **원인이 실제로 다양할 때만** 찍고, 단일 벤더 동시 차단은
-    // sourceSuspect로 분리한다. blockDiversity가 없으면(다른 scope) 종전 동작을 유지한다.
+    // 전 필드 동시 차단 — 게이트 결함 의심 신호라 따로 도장을 찍는다(1건짜리는 제외).
     if (checked > 1 && blocked === checked) {
-      const div = blockDiversity;
-      const diverse = !div || (div.sources >= 2 && ((div.kinds ?? 1) >= 2 || (div.alignments ?? 1) >= 2));
-      if (diverse) {
-        p.hset(key, { [`${scope}:allBlockedAt`]: new Date().toISOString() });
-      } else {
-        p.hset(key, {
-          [`${scope}:sourceSuspectAt`]: new Date().toISOString(),
-          [`${scope}:sourceSuspect`]: sanitizeCode(div.soleSource ?? 'unknown'),
-        });
-      }
+      p.hset(key, { [`${scope}:allBlockedAt`]: new Date().toISOString() });
     }
     p.expire(key, DAILY_TTL_SEC);
 
@@ -349,14 +333,11 @@ export async function getValidationCounters(scopeNames = ['market', 'macro', 'ma
     for (const [k, v] of Object.entries(dayHash ?? {})) {
       const [scope, ...rest] = k.split(':');
       const field = rest.join(':');
-      scopes[scope] ??= { checked: 0, blocked: 0, skipped: 0, reasons: {}, skips: {}, lastBlock: null,
-        allBlockedAt: null, sourceSuspectAt: null, sourceSuspect: null };
+      scopes[scope] ??= { checked: 0, blocked: 0, skipped: 0, reasons: {}, skips: {}, lastBlock: null, allBlockedAt: null };
       if (field === 'checked') scopes[scope].checked = Number(v) || 0;
       else if (field === 'blocked') scopes[scope].blocked = Number(v) || 0;
       else if (field === 'lastBlock') scopes[scope].lastBlock = String(v);
       else if (field === 'allBlockedAt') scopes[scope].allBlockedAt = String(v);
-      else if (field === 'sourceSuspectAt') scopes[scope].sourceSuspectAt = String(v);
-      else if (field === 'sourceSuspect') scopes[scope].sourceSuspect = String(v);
       else if (field === 'skipped') scopes[scope].skipped = Number(v) || 0;
       else if (field.startsWith('blk:')) scopes[scope].reasons[field.slice(4)] = Number(v) || 0;
       else if (field.startsWith('skip:')) scopes[scope].skips[field.slice(5)] = Number(v) || 0;

@@ -86,12 +86,9 @@ function recordRelative(items) {
   const head = r.findings[0];
   recordValidation('relative', {
     checked: r.checked, blocked: r.blocked, skipped: r.skipped, skipReasons: r.skipReasons,
-    reason: head?.checkKind ?? head?.kind,
+    reason: head?.kind,
     detail: head ? `${head.id} ${head.detail}` : undefined,
     fields: r.fields.filter(f => f.ok !== null),
-    // 게이트 결함 추정에 원인 다양성을 함께 넘긴다 — 단일 벤더 동시 차단을 게이트 결함으로
-    // 오인하지 않게 하는 재료다(health.persistValidation이 판단한다).
-    blockDiversity: r.blockDiversity,
   });
 }
 
