@@ -5,11 +5,13 @@
  * naver-index 400·저유동성 무변동은 제외했고 그 근거는 relative-guard.js 하단에 있다.
  *
  * 검증 대상:
- *  1. C 3등급 분류 고정 (cross / semi / tauto)
+ *  1. C 4등급 분류 고정 (cross / semi / tauto / tautological)
  *  2. 허용 오차 — **절대 오차 설계면 실패하는 반례**(HYPR r2 사례)
  *  3. 폐장 판정 분기 (주말·휴장일·장중·장후)
+ *  1b. 항등(tautological) 강등 — 사유를 tauto와 구분해 센다
  *  3b. FX/금리 세션 분리 — us10y 상시 오탐의 회귀 고정
  *  3c. 거래일 파생 — **KST 날짜 ≠ 거래일**(US 폐장 05:00 KST 케이스)
+ *  3d. 날짜만 있는 asOf — 시각 해석 시 하루 밀림 + 런타임 TZ 의존
  *  4. 평탄성 N일 경계 + 캔들 부재와의 구분
  *  5. 스킵 3종이 checked와 섞이지 않는가 (조사 말미 지적)
  *  6. 상태판 행 — 전부 스킵이 '통과'로 보이지 않는가
@@ -19,7 +21,7 @@
 import {
   isMarketClosed, crossTolerance, checkCross, checkFlatness, baselineTooOld,
   runRelativeChecks, FLAT_RUN_THRESHOLD, BASELINE_MAX_AGE_MS,
-  tradingDateOf, parseAsOf, prevTradingDay, isTradingDay,
+  tradingDateOf, parseAsOf, asOfTradingDate, prevTradingDay, isTradingDay,
 } from '../api/_lib/relative-guard.js';
 import { ASSET_META, isFlatExempt } from '../api/_lib/asset-meta.js';
 import { readFileSync } from 'node:fs';
@@ -36,6 +38,7 @@ const hist = (n, base, endDate = '2026-07-29', step = 1) =>
   }));
 const NOW_CLOSED = new Date('2026-07-29T08:00:00Z'); // 17:00 KST 수요일 = KR 장후, US 04:00 ET 장전
 const NOW_KR_OPEN = new Date('2026-07-29T02:00:00Z'); // 11:00 KST 수요일 = KR 장중
+const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US 장중
 
 // ── 1. C 3등급 분류 ────────────────────────────────────────────
 {
@@ -43,15 +46,55 @@ const NOW_KR_OPEN = new Date('2026-07-29T02:00:00Z'); // 11:00 KST 수요일 = K
   for (const id of ['nasdaq', 'dow', 'sp500', 'sox', 'vix', 'dxy', 'us10y']) {
     assert(g(id) === 'cross', `1: ${id}는 cross(price=CNBC, history=Naver/FRED/CBOE)`);
   }
-  for (const id of ['kospi', 'kosdaq', 'usdkrw', 'jpykrw']) {
-    assert(g(id) === 'semi', `1: ${id}는 semi(같은 소스 다른 엔드포인트)`);
+  // ⚠️ semi는 **엔드포인트가 실제로 다른** 것만 남는다(2026-07-30 강등 후).
+  for (const id of ['419530', '028300', '080220', 'HYPR']) {
+    assert(g(id) === 'semi', `1: ${id}는 semi(quote↔history 엔드포인트가 다름)`);
   }
   for (const id of ['btc', 'eth', 'dominance', 'feargreed', 'kr_base_rate']) {
-    assert(g(id) === 'tauto', `1: ${id}는 tauto(동어반복 — C 제외)`);
+    assert(g(id) === 'tauto', `1: ${id}는 tauto(같은 벤더 — 서로를 반증 못 함)`);
+  }
+  // ⭐ 항등 강등 4종 — 같은 응답의 같은 행이라 잔차가 정의상 0
+  for (const id of ['kospi', 'kosdaq', 'usdkrw', 'jpykrw']) {
+    assert(g(id) === 'tautological', `1: ${id}는 tautological(같은 응답 같은 행 — 잔차 정의상 0)`);
   }
   // tauto는 폐장이든 아니든 검사하지 않는다
   const r = checkCross({ id: 'btc', price: 64379, history: hist(30, 60000) }, NOW_CLOSED);
   assert(r.state === 'skipped' && r.reason === 'tauto', `1: tauto는 스킵 (실제: ${JSON.stringify(r)})`);
+}
+
+// ── 1b. 항등(tautological) 강등 — 사유를 tauto와 구분해 센다 ────
+// ⭐ 근거는 소스 구조다(kr.js:45-62 / :134-176 — 현재가와 history가 같은 응답의 같은 행).
+//    실측 확인 [계산@2026-07-30T01:49:26Z 프로덕션 9072dee8]:
+//      kospi 5663.24 / kosdaq 662.68 / usdkrw 1446 / jpykrw 884.76
+//      네 항목 모두 price−history[-1] = 0.00000000, prevClose−history[-2] = 0.00000000
+{
+  for (const id of ['kospi', 'kosdaq', 'usdkrw', 'jpykrw']) {
+    const c = checkCross({ id, price: 100, history: hist(30, 90) }, NOW_CLOSED);
+    assert(c.state === 'skipped' && c.reason === 'tautological',
+      `1b: ${id}는 tautological로 스킵 (실제: ${JSON.stringify(c)})`);
+  }
+  // 사유가 tauto와 섞이지 않는가 — btc 계열과 원인이 다르므로 집계도 갈려야 한다
+  const agg = runRelativeChecks([
+    { id: 'kospi',  price: 100,   history: hist(30, 90) },
+    { id: 'usdkrw', price: 1446,  history: hist(30, 1400) },
+    { id: 'btc',    price: 64379, history: hist(30, 60000) },
+    { id: 'nasdaq', price: 24876.91, history: hist(30, 24800) },
+  ], NOW_CLOSED);
+  assert(agg.skipReasons.tautological === 2,
+    `1b: ⭐ 항등 2건이 tautological로 집계 (실제: ${JSON.stringify(agg.skipReasons)})`);
+  assert(agg.skipReasons.tauto === 1, '1b: btc는 여전히 tauto — 사유가 섞이지 않는다');
+
+  // ⭐ 항등 통과가 더는 "교차 검사 통과"로 보이지 않는다.
+  //    단 항목은 평탄성이 유효하므로 checked에 남는다 — 그건 실제로 수행한 검사다.
+  const kospiOnly = runRelativeChecks([{ id: 'kospi', price: 100, history: hist(30, 90) }], NOW_CLOSED);
+  assert(kospiOnly.checked === 1, '1b: kospi는 평탄성이 유효하므로 checked 유지');
+  assert(kospiOnly.skipReasons.tautological === 1, '1b: 그러나 C축은 tautological로 스킵 노출');
+  assert(kospiOnly.blocked === 0, '1b: 항등이 위반으로 잡히지도 않는다');
+
+  // 대조군 — 코스닥 3종은 엔드포인트가 달라 semi 유지, 실제로 검사가 돈다
+  const kq = checkCross({ id: '080220', price: 55100, history: [...hist(29, 54000, '2026-07-28', 10), { date: '2026-07-28', close: 55100 }] }, NOW_CLOSED);
+  assert(kq.state === 'checked' && kq.grade === 'semi',
+    `1b: 080220은 semi로 실제 검사 (실제: ${JSON.stringify(kq)})`);
 }
 
 // ── 2. 허용 오차 — 절대 오차 반례 ──────────────────────────────
@@ -91,7 +134,7 @@ const NOW_KR_OPEN = new Date('2026-07-29T02:00:00Z'); // 11:00 KST 수요일 = K
   assert(isMarketClosed('CRYPTO').closed === false, '3: 크립토는 폐장 없음');
 
   // 장중이면 C를 아예 하지 않는다(장중 불일치는 정상이라 검사가 성립하지 않음)
-  const open = checkCross({ id: 'kospi', price: 5663, history: hist(30, 5600) }, NOW_KR_OPEN);
+  const open = checkCross({ id: '080220', price: 55100, history: hist(30, 54000, '2026-07-29', 10) }, NOW_KR_OPEN);
   assert(open.state === 'skipped' && open.reason === 'market-open', '3: 장중이면 C 스킵');
 }
 
@@ -107,7 +150,9 @@ const NOW_KR_OPEN = new Date('2026-07-29T02:00:00Z'); // 11:00 KST 수요일 = K
   for (const id of ['nasdaq', 'dow', 'sp500', 'sox', 'vix']) {
     assert(ASSET_META[id].market === 'US', `3b: ${id}는 US 세션 유지`);
   }
-  // 원화 환율은 이번 분리 대상이 아니다(서울 외환시장 정규시간 = KR 주식 세션)
+  // ⚠️ 원화 환율은 KR 세션 유지 — 근거는 시장 거래시간이 아니라 **소스 발행 캘린더**다.
+  //    [자체실측] history_90d 2026-03-19~07-29 구간 평일 KR 공휴일 5건 전부 캔들 없음(0/5).
+  //    아래 항등 강등으로 C가 아예 돌지 않아 폐장 판정이 결과에 영향을 주지도 않는다.
   assert(ASSET_META.usdkrw.market === 'KR' && ASSET_META.jpykrw.market === 'KR',
     '3b: usdkrw·jpykrw는 KR 세션 유지');
 
@@ -224,6 +269,33 @@ const NOW_KR_OPEN = new Date('2026-07-29T02:00:00Z'); // 11:00 KST 수요일 = K
     '3c: 미지의 id는 unknown-market');
 }
 
+// ── 3d. 날짜만 있는 asOf — 시각으로 해석하면 하루 밀린다 ────────
+// ⭐ 실측 프로덕션 asOf 계열이 두 종류다. 날짜만인 쪽을 Date.parse에 넘기면 V8이 괄호를
+//    주석으로 무시하고 **로컬 자정**으로 읽어, 런타임 TZ에 따라 답이 달라졌다:
+//      TZ=Asia/Seoul → 2026-07-28(pre-open)   TZ=UTC → 2026-07-29(intraday)
+//    로컬 개발기와 Vercel이 다른 거래일을 내는 상태였다.
+{
+  const FORMS = [
+    ['2026-07-29 (Naver 종가)',      'kospi'],
+    ['2026-07-29 (Naver 환율)',      'usdkrw'],
+    ['2026-07-29 (Twelve Data 종가)', 'HYPR'],
+    ['2026-07-29 (ECB 기준환율)',     'usdkrw'],
+  ];
+  for (const [asOf, id] of FORMS) {
+    assert(asOfTradingDate(asOf) === '2026-07-29', `3d: "${asOf}" → 날짜만으로 인식`);
+    const td = tradingDateOf(id, asOf);
+    assert(td.date === '2026-07-29' && td.basis === 'asof-date',
+      `3d: ⭐ ${id} 거래일 = 소스가 준 날짜 그대로 (실제: ${JSON.stringify(td)})`);
+  }
+  // 시각이 있는 형식은 날짜만으로 오인되지 않는다(세션 규칙을 계속 타야 한다)
+  assert(asOfTradingDate('2026-07-30 08:51 KST') === null, '3d: 시각 있는 형식은 null');
+  assert(tradingDateOf('vix', '2026-07-30 08:51 KST').basis === 'after-close',
+    '3d: 시각 있는 형식은 세션 규칙을 탄다');
+  // ⭐ TZ 무관 — parseAsOf가 날짜만인 경우 UTC 자정으로 고정한다
+  assert(parseAsOf('2026-07-29 (Naver 종가)').toISOString() === '2026-07-29T00:00:00.000Z',
+    '3d: ⭐ 날짜만 asOf는 UTC 자정 고정(런타임 TZ에 흔들리지 않음)');
+}
+
 // ── 4. 평탄성 N일 경계 ─────────────────────────────────────────
 {
   assert(FLAT_RUN_THRESHOLD === 7, '4: 임계 7일');
@@ -266,7 +338,10 @@ const NOW_KR_OPEN = new Date('2026-07-29T02:00:00Z'); // 11:00 KST 수요일 = K
   // (c) 장중 — C만 스킵되고 평탄성(일봉 기반)은 그대로 돈다.
   //     ⚠️ 스킵을 **검사 단위**로 세는 이유가 여기다. 항목 단위로 세면 평탄성이 돌았다는
   //     이유로 'C를 못 했다'는 사실이 통째로 사라진다.
-  const open = runRelativeChecks([{ id: 'kospi', price: 5663, history: hist(30, 5600) }], NOW_KR_OPEN);
+  // ⚠️ KR 세션으로는 이 케이스를 만들 수 없다(2026-07-30 강등 후) — KR 항목 중 C가 도는
+  //    것은 코스닥 3종뿐이고 그것들은 singleName이라 평탄성에서도 빠진다. 즉 "C만 스킵,
+  //    평탄성은 수행"이 성립하는 조합이 KR에는 없다. US 세션 항목으로 검증한다.
+  const open = runRelativeChecks([{ id: 'nasdaq', price: 24876.91, history: hist(30, 24800) }], NOW_US_OPEN);
   assert(open.skipReasons['market-open'] === 1,
     `5: 장중이면 C가 market-open으로 스킵 (실제: ${JSON.stringify(open.skipReasons)})`);
   assert(open.checked === 1, '5: 그래도 평탄성은 돌았으므로 항목은 checked');

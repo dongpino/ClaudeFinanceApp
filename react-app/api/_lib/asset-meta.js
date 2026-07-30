@@ -41,7 +41,21 @@
 //         못 잡지만, **한쪽 파서만 깨진 편측 실패**는 잡을 수 있다(그게 이 등급의 전부다).
 // tauto : 같은 소스의 같은 계열이라 대조가 동어반복이다 → C 검사 **제외**.
 //         btc/eth/dominance가 여기 속한다(현재가·history 모두 CoinGecko).
-const CROSS = 'cross', SEMI = 'semi', TAUTO = 'tauto';
+// tautological : **같은 응답의 같은 행**이라 잔차가 정의상 0이다 → C 검사 제외.
+//         tauto보다 강한 조건이다. tauto는 "같은 벤더라 서로를 반증하지 못한다"이고
+//         이쪽은 "애초에 같은 숫자를 두 번 읽었다"다 — 파서가 하나뿐이라 semi가 약속하는
+//         '편측 파서 실패 감지'조차 성립하지 않는다. 사유를 구분해 기록하는 이유가 이것이다.
+//
+// ⚠️ **등급은 소스 구조에서 나온다. 스냅샷 1회의 잔차로 정하지 않는다.**
+//    2026-07-30 강등 근거는 코드 구조다(잔차 0 실측은 그 구조의 확인일 뿐):
+//      kospi·kosdaq  fetchIndexCurrent  = m.stock.naver.com/api/index/{code}/price rows[0],[1]
+//                    fetchIndexHistory  = **같은 엔드포인트** ?pageSize=30      (kr.js:45-62)
+//      usdkrw·jpykrw fetchExchangeCurrent = exchangeDailyQuote.naver page=1 matches[0],[1]
+//                    fetchExchangeHistory = **같은 페이지** 1~3               (kr.js:134-176)
+//    반대로 419530·028300·080220은 잔차가 오늘 0이어도 semi를 유지한다 —
+//      quote=/api/stock/{code}/basic ↔ history=/api/stock/{code}/price (naver-stock.js:76, :147)
+//      **엔드포인트가 달라** 한쪽 파서만 깨지면 잡힌다. 항등이 아니라 우연한 일치다.
+const CROSS = 'cross', SEMI = 'semi', TAUTO = 'tauto', TAUTOLOGICAL = 'tautological';
 
 // ── 세션(market) ─────────────────────────────────────────────────────
 // "폐장일 때만 검사한다"는 실행 조건과 **거래일 파생**(relative-guard.tradingDateOf)에 쓴다.
@@ -83,9 +97,14 @@ export const ASSET_META = {
   dow:    { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
   sp500:  { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
   sox:    { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
-  // 현재가·history 모두 Naver지만 엔드포인트가 다르다(semi) — 편측 파서 실패만 감지 가능.
-  kospi:  { ...PRICE, cross: SEMI, market: KR, quantum: 0.01 },
-  kosdaq: { ...PRICE, cross: SEMI, market: KR, quantum: 0.01 },
+  // ⚠️ 종전 semi → **tautological 강등**(2026-07-30). 현재가와 history가 같은 엔드포인트의
+  //    같은 행이다(kr.js:45-62) — price = rows[0].closePrice, history[-1] = 같은 rows[0].
+  //    [계산@2026-07-30T01:49:26Z 프로덕션 9072dee8] price−history[-1] = 0.00000000,
+  //    prevClose−history[-2] = 0.00000000 (kospi 5663.24 / kosdaq 662.68). 우연이 아니라 정의다.
+  //    ⚠️ Naver 실패 시 Yahoo(^KS11/^KQ11) 폴오버가 현재가만 갈아치우므로 그때는 진짜 교차가
+  //       된다 — 그 축은 별건(로드맵 ① 겸용)으로 다룬다. 상시 등급은 항등이 맞다.
+  kospi:  { ...PRICE, cross: TAUTOLOGICAL, market: KR, quantum: 0.01 },
+  kosdaq: { ...PRICE, cross: TAUTOLOGICAL, market: KR, quantum: 0.01 },
   // 현재가·history 모두 CoinGecko 계열 → 대조가 동어반복(tauto). C 검사에서 제외한다.
   btc: { ...PRICE, cross: TAUTO, market: CRYPTO },
   eth: { ...PRICE, cross: TAUTO, market: CRYPTO },
@@ -94,13 +113,39 @@ export const ASSET_META = {
   vix: { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
   // ⚠️ FX 세션 — 주식과 함께 닫히지 않는다. history는 Naver marketIndex(exchange/FX_USDX).
   dxy: { ...PRICE, cross: CROSS, market: FX, quantum: 0.01 },
-  // ⚠️ usdkrw·jpykrw는 **KR 세션 유지**다(이번 분리 대상 아님). 원화 현물환은 서울 외환시장
-  //    정규시간(09:00~15:30)에 거래되고 그 시각이 KR 주식 세션과 같다 — dxy처럼 24시간
-  //    돌아가는 값이 아니다. cross 등급도 semi라 진단력이 낮아 우선순위가 뒤다.
-  usdkrw: { ...PRICE, cross: SEMI, market: KR, quantum: 0.01 },
-  jpykrw: { ...PRICE, cross: SEMI, market: KR, quantum: 0.01 },
-  // 개별 종목은 평탄성 검사에서 제외한다(저유동성·거래정지를 판정할 수단이 없어서).
-  // C도 semi 이하라 진단력이 낮다 — 등급만 적어 두고 실행 대상에서는 빠진다.
+  // ── 원화 환율: KR 세션 유지 + tautological 강등 ─────────────
+  // ⚠️ **KR 세션 유지의 근거를 정정한다(2026-07-30).** 종전 주석은 "서울 외환시장 정규시간
+  //    09:00~15:30이 KR 주식 세션과 같아서"라고 적었는데 그 근거는 성립하지 않는다 —
+  //    서울 외환시장은 개편으로 정규시간이 늘었고 공휴일에도 거래된다.
+  //    성립하는 근거는 시장이 아니라 **소스 발행 캘린더**다. 검사가 대조하는 것은 시장이
+  //    아니라 Naver 환율 표이고, 그 표는 KRX 영업일만 발행한다:
+  //    [자체실측 @2026-07-30T01:34:43Z 프로덕션 9072dee8, history_90d 2026-03-19~07-29]
+  //      구간 내 평일 KR 공휴일 5건(05-01·05-05·05-25·06-03·07-17) 전부 캔들 없음 → 0/5
+  //      대조군 kospi·kosdaq도 0/5 (동일 패턴) / FX 세션인 dxy 3/3·us10y 3/4 (반대 패턴)
+  //      usdkrw ↔ jpykrw 90일 날짜 집합 **완전 동일** — 소스 수준에서 두 통화가 구분 안 됨
+  //    ⚠️ **KRW-FX 세션은 신설하지 않는다.** 아래 항등 강등으로 C 검사가 아예 돌지 않으므로
+  //       폐장 판정이 결과에 영향을 주지 않는다. 더 근본적으로 price = 캔들 row 0이라
+  //       공휴일에 캔들이 없으면 price도 갱신되지 않아 **오탐이 구조적으로 불가능**하다
+  //       (dxy를 옮긴 근거 — 캔들은 붙는데 폐장으로 잡혀 오탐 — 이 여기서는 성립하지 않는다).
+  // ⚠️ 종전 semi → tautological 강등: 현재가·history가 같은 페이지의 같은 행이다(kr.js:134-176).
+  //    [계산@2026-07-30T01:49:26Z] usdkrw·jpykrw 모두 price−history[-1]=0, prevClose−history[-2]=0.
+  //    TODO(검사 2b 이후): Frankfurter 폴백 시에만 price 소스가 갈려 진짜 교차가 된다.
+  //      단 그 잔차(실측 0.44%, kr.js:148-152)는 ECB 기준환율의 **1일 시차**에서 오는 값이라
+  //      vix 11.859%와 같은 날짜 오정렬 유형이다 — 검출 근거로 쓰지 말 것. 거래일 정렬을
+  //      먼저 세운 뒤에 판단한다.
+  usdkrw: { ...PRICE, cross: TAUTOLOGICAL, market: KR, quantum: 0.01 },
+  jpykrw: { ...PRICE, cross: TAUTOLOGICAL, market: KR, quantum: 0.01 },
+  // ── 개별 종목 ────────────────────────────────────────────────
+  // 평탄성 검사에서 제외한다(저유동성·거래정지를 판정할 수단이 없어서).
+  // ⚠️ 코스닥 3종은 **semi 유지**다. 잔차가 오늘 0이지만 항등이 아니다 —
+  //    quote=/api/stock/{code}/basic ↔ history=/api/stock/{code}/price (naver-stock.js:76, :147).
+  //    엔드포인트가 달라 한쪽 파서만 깨지면 잡힌다. 등급은 구조로 정하고 스냅샷으로 정하지 않는다.
+  // ⚠️ HYPR는 실은 semi가 아니다 — price=Finnhub, history=Twelve Data로 **벤더가 다르다**
+  //    (watchlist.js:71-72). 등급 정의상 cross에 해당한다. 실측도 항등이 아니다:
+  //    [계산@2026-07-30T01:49:26Z] price−history[-1]=0 이지만 prevClose−history[-2]=−0.01.
+  //    TODO: cross 승격 검토(허용 바닥이 0.2%→0.5%로 완화되는 부작용을 함께 판단해야 함).
+  //    지금은 등급을 건드리지 않는다 — singleName이라 평탄성에서 빠지고, C도 [B] 이후에
+  //    거래일 정렬이 서야 의미가 생긴다.
   HYPR:     { ...PRICE, cross: SEMI, market: US, quantum: 0.01, singleName: true },
   419530:   { ...PRICE, cross: SEMI, market: KR, quantum: 1, singleName: true },
   '028300': { ...PRICE, cross: SEMI, market: KR, quantum: 1, singleName: true },

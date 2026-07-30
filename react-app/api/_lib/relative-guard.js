@@ -100,9 +100,34 @@ export function prevTradingDay(ymd, holidayKey, maxBack = 10) {
   return null;
 }
 
+// asOf 형식은 항목마다 다르다 — 두 계열이 실재한다(실측 프로덕션 lastgood):
+//   시각 있음 : '2026-07-30 08:51 KST'          (CNBC 계열 — market-data.fmtKST)
+//   날짜만    : '2026-07-29 (Naver 종가)'        (kr.js:52, :143 / watchlist.js:64, :88)
+//               '2026-07-29 (Naver 환율)' · '(Twelve Data 종가)' · '(ECB 기준환율)'
+const ASOF_TIME_RE = /\d{2}:\d{2}/;
+const ASOF_DATE_RE = /^(\d{4}-\d{2}-\d{2})(?:\D|$)/;
+
 /**
- * 아이템의 as_of 문자열/Date → Date. 홈 아이템은 'YYYY-MM-DD HH:mm KST' 형식을 쓴다
- * (market-data.fmtKST) — Date.parse가 'KST'를 못 읽으므로 직접 처리한다.
+ * asOf가 '날짜만'이면 그 날짜 문자열. 시각이 붙어 있으면 null.
+ *
+ * ⚠️ **날짜만 있는 asOf는 시각이 아니라 이미 확정된 거래일이다.** 소스가 일별 종가 표의
+ *    날짜를 그대로 준 값이고, 그 표는 거래일에만 행을 발행한다. 시각으로 해석해 세션
+ *    규칙을 적용하면 안 된다 — 자정으로 읽혀 '개장 전'이 되고 전 거래일로 밀린다.
+ */
+export function asOfTradingDate(v) {
+  if (typeof v !== 'string' || ASOF_TIME_RE.test(v)) return null;
+  return v.match(ASOF_DATE_RE)?.[1] ?? null;
+}
+
+/**
+ * 아이템의 as_of 문자열/Date → Date.
+ *
+ * ⚠️ 날짜만 있는 문자열을 Date.parse에 그냥 넘기면 **런타임 타임존에 따라 답이 달라진다.**
+ *    V8은 괄호 안을 주석으로 무시하고 'YYYY-MM-DD ...'를 로컬 자정으로 읽는다:
+ *      TZ=Asia/Seoul       → 2026-07-28T15:00:00Z
+ *      TZ=UTC              → 2026-07-29T00:00:00Z
+ *    같은 입력이 로컬 개발기(KST)와 Vercel(UTC)에서 다른 거래일을 낸다 — 그래서 날짜만인
+ *    경우는 **UTC 자정으로 고정**한다. (거래일 판정은 asOfTradingDate가 먼저 가로챈다.)
  * @returns {Date|null} 해석 불가면 null
  */
 export function parseAsOf(v) {
@@ -112,6 +137,8 @@ export function parseAsOf(v) {
   // 'KST'는 서머타임이 없어 +09:00 고정이 어느 계절에도 참이다(probe-store.js와 같은 근거).
   const m = v.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?\s*KST$/);
   if (m) return new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4] ?? '00'}+09:00`);
+  const d = asOfTradingDate(v);
+  if (d) return new Date(`${d}T00:00:00Z`);      // TZ 무관하게 고정
   const t = Date.parse(v);
   return Number.isNaN(t) ? null : new Date(t);
 }
@@ -120,6 +147,7 @@ export function parseAsOf(v) {
  * **그 시점에 관측된 price가 속한 거래일.** 항목의 세션(ASSET_META.market)으로 판정한다.
  *
  * basis 어휘 — 사람이 "왜 그 날짜인가"를 되짚을 수 있게 함께 돌려준다.
+ *   asof-date           asOf에 시각이 없다 = 소스가 준 날짜가 곧 거래일(세션 규칙 미적용)
  *   intraday            장중. 진행 중인 그 날이 거래일
  *   after-close         폐장 후. 그 날이 거래일 (⭐ KST 날짜와 갈리는 구간)
  *   pre-open            개장 전. 전 거래일이 거래일
@@ -134,6 +162,10 @@ export function parseAsOf(v) {
  */
 export function tradingDateOf(id, at = new Date()) {
   const market = ASSET_META[id]?.market ?? null;
+  // ⭐ 날짜만 있는 asOf는 소스가 확정한 거래일이다 — 세션 규칙을 적용하면 하루 밀린다.
+  //    (Naver 종가/환율·Twelve Data 종가 계열 전부가 이 형식이다.)
+  const direct = asOfTradingDate(at);
+  if (direct) return { date: direct, market, basis: 'asof-date' };
   const when = parseAsOf(at);
   if (!when) return { date: null, market, basis: 'unparsable-asof' };
   // 크립토는 폐장이 없어 '거래일'이 세션으로 정의되지 않는다. 캔들 날짜도 UTC 기준이다.
@@ -235,6 +267,11 @@ export function checkCross(item, now = new Date()) {
   const meta = ASSET_META[item?.id];
   if (!meta) return { state: 'skipped', reason: 'no-meta' };
   if (meta.cross === 'tauto') return { state: 'skipped', reason: 'tauto' };
+  // ⚠️ tauto와 사유를 구분해 센다. tauto는 "같은 벤더라 서로를 반증하지 못한다"이고
+  //    tautological은 "같은 응답의 같은 행을 두 번 읽었다 — 잔차가 정의상 0"이다.
+  //    종전에는 이 4종(kospi·kosdaq·usdkrw·jpykrw)이 semi로 분류돼 **항등 통과가 checked에
+  //    집계**됐다 — 상태판의 "검사 N건 통과"가 실제로는 아무것도 검증하지 않은 건을 포함했다.
+  if (meta.cross === 'tautological') return { state: 'skipped', reason: 'tautological' };
   if (meta.cross !== 'cross' && meta.cross !== 'semi') return { state: 'skipped', reason: 'no-grade' };
 
   const { closed, reason: mkt } = isMarketClosed(meta.market, now);
