@@ -691,13 +691,13 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
 // ⚠️ 이 절의 케이스는 **전부 현행(4b94b31) 코드로는 실패한다.** 그게 요건이다 —
 //    통과하는 테스트를 추가하는 건 회귀 고정이 아니다.
 {
-  // 프로덕션 실측값. [저장소:correct-marten-133336:lastgood:market:* @2026-07-31T02:0xZ]
+  // 프로덕션 실측값. [저장소:9072dee8:lastgood:market:* @2026-07-31T02:0xZ]
   const CLOSES = {
     nasdaq: { d28: 24876.91, d29: 24442.94 }, dow: { d28: 52747.32, d29: 51594.14 },
     sp500:  { d28: 7428.78,  d29: 7316.15 },  sox: { d28: 11035.68, d29: 10447.49 },
     vix:    { d28: 18.21,    d29: 20.66 },
   };
-  // 기록된 오탐 잔차. [저장소:correct-marten-133336:health:validate:fields:relative
+  // 기록된 오탐 잔차. [저장소:9072dee8:health:validate:fields:relative
   //                    @2026-07-30T08:55:26.056Z] detail의 '[cross-prevclose-origin] N%'
   const RECORDED = { nasdaq: 1.775, dow: 2.235, sp500: 1.539, sox: 5.630, vix: 11.859 };
   const PREMARKET_ASOF = '2026-07-30 17:55 KST';   // = 04:55 ET 07-30, 프리마켓 창 안
@@ -741,7 +741,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
     '10-2: 같은 시각이 exthrs 유무로 하루 갈린다');
 
   // ── (3) vix 필수 픽스처 ──────────────────────────────────────────────
-  // [저장소:correct-marten-133336:lastgood:market:vix @2026-07-30T22:52:55.530Z]
+  // [저장소:9072dee8:lastgood:market:vix @2026-07-30T22:52:55.530Z]
   //   price 17.09 / prev_close 20.66 / history[-1] 2026-07-29 20.66 (07-30 캔들 미도착)
   // 이 회차가 vix:consec을 4까지 올린 20.889% 위반의 실체다. 라이브에서는 07-31T00:29:59Z에
   // Naver가 07-30 캔들을 올려 사라졌으므로 **픽스처로 동결**한다.
@@ -773,7 +773,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   }
 
   // ── (5) HYPR 부동소수 경계 — 양자 정수 비교 ──────────────────────────
-  // [저장소:correct-marten-133336:health:validate:fields:relative@2026-07-30T22:52:55.542Z]
+  // [저장소:9072dee8:health:validate:fields:relative@2026-07-30T22:52:55.542Z]
   //   HYPR '양측 불일치 1.075% > 허용 1.075%' — 같은 값인데 위반으로 기록됐다.
   assert(Math.abs(0.92 - 0.93) !== 0.01, '10-5: 전제 — 0.92−0.93은 정확한 0.01이 아니다');
   const relOld = Math.abs(0.92 - 0.93) / 0.93, tolOld = Math.max(0.002, 0.01 / 0.93);
@@ -859,7 +859,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
     '10-8: 미발동이면 서빙값이 곧 원본');
 
   // ── (9) us10y — 신호·시계 불일치는 ambiguous(신규 오탐 방지) ─────────
-  // [저장소:correct-marten-133336:lastgood:market:us10y @2026-07-31T00:29:59Z]
+  // [저장소:9072dee8:lastgood:market:us10y @2026-07-31T00:29:59Z]
   //   price 4.67 / prev_close 4.66 / h[-1] 07-30 4.67 / h[-2] 07-29 4.62
   //   금리가 17:00 ET 롤을 넘어 안 움직여 price==h[-1]이 **우연히** 성립한다.
   //   신호만 믿으면 same-day → change 축 |4.62−4.66|/4.66 = 0.858% > 0.5% 신규 오탐이었다.
@@ -873,7 +873,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
     `10-9: 갈리면 축을 만들지 않는다 — 0.858% 신규 오탐 방지 (실제: ${u.state}/${u.reason})`);
 
   // ── (10) dxy — 신호가 없으면 시계(17:00 ET 롤)가 구한다 ──────────────
-  // [저장소:correct-marten-133336:lastgood:market:dxy @2026-07-31T00:29:59Z]
+  // [저장소:9072dee8:lastgood:market:dxy @2026-07-31T00:29:59Z]
   //   price 100.08 / prev_close 99.86 / h[-1] 07-30 99.72 — 양쪽 다 h1과 불일치
   const dx = checkCross({ id: 'dxy', price: 100.08, prev_close: 99.86, change: 0.21,
     source: 'CNBC', as_of: '2026-07-31 09:29 KST', quoteWindow: 'extended', prov: { v: 2 },
@@ -934,7 +934,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
 {
   // KR 장중 — 2026-07-31(금) 13:47 KST = 04:47 UTC. KR 세션 09:00~15:30 안.
   const KR_OPEN = new Date('2026-07-31T04:47:00Z');
-  // [저장소:correct-marten-133336:lastgood:market:419530@2026-07-31T04:27:34Z] 실측 형상
+  // [저장소:9072dee8:lastgood:market:419530@2026-07-31T04:27:34Z] 실측 형상
   const kr = (id, price, prevClose, h1c, h2c) => ({
     id, price, prev_close: prevClose, change: price - prevClose, source: 'Naver',
     as_of: '2026-07-31 (Naver 종가)', prov: { v: 2 },

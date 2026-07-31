@@ -214,7 +214,7 @@ export function parseAsOf(v) {
  * 이미 당일이다. 그 구간에서 우리 시계만 전 거래일을 가리키면 history[-1](전 거래일)과
  * **날짜 라벨이 우연히 맞아** same-day로 통과 판정되고, change 축이 한 칸 더 과거인
  * history[-2]와 대조돼 체계적 오탐이 된다.
- *   [저장소:correct-marten-133336:health:validate:fields:relative@2026-07-30T08:55:26.056Z]
+ *   [저장소:9072dee8:health:validate:fields:relative@2026-07-30T08:55:26.056Z]
  *   nasdaq 1.775% / dow 2.235% / sp500 1.539% / sox 5.630% / vix 11.859% — 전부 이 경로다.
  *   detail이 '정렬 same-day, price거래일 2026-07-29, history 2026-07-29'로 남아 있다.
  * ⚠️ **이 플래그는 요청 파라미터에서 파생된다** — 소스가 무엇을 돌려줬는지가 아니라
@@ -366,7 +366,7 @@ export function crossTolerance(id, base, quanta = 1) {
 // 가격 축은 두 값이 각각 1번 반올림되므로 1스텝.
 // change 축은 prevClose = price − change 로 만들어 **price의 반올림과 change의 반올림을
 // 둘 다** 물려받으므로 2스텝이다. 1스텝으로 두면 정상 반올림이 위반이 된다 — 실측 반례:
-//   [계산@2026-07-30T02:10:30Z 저장소:correct-marten-133336]
+//   [계산@2026-07-30T02:10:30Z 프로덕션 9072dee8]
 //   HYPR prevClose 0.91 vs history[-2] 0.92 → 잔차 1.099%,
 //        1양자 허용 0.01/0.91 = 1.099% → 잔차 == 허용, 경계에 정확히 걸림
 //        2양자 허용 2.198% → 여유 있게 통과
@@ -377,7 +377,7 @@ const QUANTA_PRICE = 1, QUANTA_PREVCLOSE = 2;
  *
  * ⚠️ 실수 비교(residual <= tolerance)만 쓰면 **정확히 1양자 차이일 때 부동소수점으로
  *    경계가 뒤집힌다.** 두 항이 같은 나눗셈에서 나오는데 분자만 뺄셈 오차를 안고 오기 때문:
- *    [저장소:correct-marten-133336:health:validate:fields:relative@2026-07-30T22:52:55.542Z]
+ *    [저장소:9072dee8:health:validate:fields:relative@2026-07-30T22:52:55.542Z]
  *      HYPR '양측 불일치 1.075% > 허용 1.075%' — 같은 값인데 위반으로 기록됐다.
  *    [계산@2026-07-31T02:0xZ] Math.abs(0.92 − 0.93) = 0.010000000000000009 (정확한 0.01이 아님)
  *      잔차 0.01075268817204302 > 허용 0.01075268817204301 (차 1.04e-17)
@@ -450,7 +450,7 @@ export function originOf(item) {
  * ⚠️ circular(as_of가 history[-1].date에서 파생됨)이면 `h1.date === priceDate`가 정의상
  *    참이라 시계는 **언제나 same-day**를 답한다. 그건 증거가 아니라 항등식이므로
  *    신호가 있든 없든 판정 근거가 될 수 없다.
- *    실측 반례 [저장소:correct-marten-133336:health:validate:2026-07-31@2026-07-31T04:27:59Z]:
+ *    실측 반례 [저장소:9072dee8:health:validate:2026-07-31@2026-07-31T04:27:59Z]:
  *      419530 [cross-price] 0.382% > 0.200% — 신호 unknown이라 순환 시계가 단독 채택돼
  *      same-day로 판정됐고, KR 장중 실시간가를 **진행 중인 캔들**과 견줘 오탐이 났다.
  *      (그 케이스는 이제 isIntradayCandle이 먼저 가로챈다 — 이 함수는 세션 밖 방어다.)
@@ -588,7 +588,7 @@ export function checkCross(item, now = new Date()) {
 
   // ── 두 축을 각각 구한 뒤 합의를 요구한다 ─────────────────────────────
   // ⚠️ **어느 한쪽도 단독으로는 못 쓴다.** 라이브 실측이 둘 다 무너지는 지점을 하나씩 준다:
-  //    [계산@2026-07-31T02:11:13Z 저장소:correct-marten-133336:lastgood:market:*]
+  //    [계산@2026-07-31T02:11:13Z 저장소:9072dee8:lastgood:market:*]
   //      dxy   신호 unknown(price·prev_close 둘 다 h1과 불일치) → 시계가 구한다(roll-17ET)
   //      us10y 신호 same-day(금리가 롤을 넘어 안 움직여 price==h1이 **우연히** 성립)
   //            ↔ 시계 prev-day. 신호만 믿으면 change 축 0.858% > 0.5% 신규 오탐이었다.
@@ -691,7 +691,7 @@ export function checkCross(item, now = new Date()) {
   // ── 가격 축 ─────────────────────────────────────────────────────────
   // same-day : h1이 확정 종가다 → **판정**한다.
   // intraday : h1이 진행 중인 캔들이라 price와의 차이가 정상 등락이다 → **관측만** 한다.
-  //   실측 [저장소:correct-marten-133336:lastgood:market:419530@2026-07-31T04:27:34Z]
+  //   실측 [저장소:9072dee8:lastgood:market:419530@2026-07-31T04:27:34Z]
   //     KR 장중 13:47 KST, price 26,200 ↔ h1(2026-07-31) 26,300 → 0.382%(100틱).
   //     같은 회차 028300·080220은 0.000%였다 — 419530만 그 순간 움직여 있었다.
   //     "얼마나 움직여도 정상인가"를 판정할 모델이 없으므로 임계를 세우지 않는다.
