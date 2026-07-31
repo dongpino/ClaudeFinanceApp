@@ -1031,5 +1031,180 @@ function isIntradayExcluded(id) {
   return m.market === 'CRYPTO' || m.market === 'FX';
 }
 
+// ── 12. 정렬 분류 분기 픽스처 (A~F) ────────────────────────────────────
+// ⚠️ **이 절은 "분기가 죽어 있는가"만 배제한다. 프로덕션 거동을 증명하지 못한다.**
+//    [b] intraday는 KR 장중(09:00~15:30 KST)에만 성립하는데 그 창에서 판별력 있는
+//    회차(price ≠ h[-1])를 아직 실측하지 못했다 — 2026-07-31 두 번의 수집 모두
+//    price == h[-1]이라 구·신 코드가 같은 결과를 냈다. 다음 창은 월요일이다.
+//    픽스처가 통과한다고 프로덕션에서 그렇게 돈다는 뜻이 아니다.
+{
+  const ID = '419530';                       // semi, quantum 1, market KR
+  const BASE = 26200;
+  // ⚠️ 경계값은 **코드에서 파생**한다. 0.002를 테스트에 하드코딩하면 floor가 바뀌어도
+  //    테스트가 조용히 옛 값을 고정한다.
+  const TOL = crossTolerance(ID, BASE, 1);
+  assert(TOL > 0 && Number.isFinite(TOL), '12: 경계값을 코드에서 읽어온다');
+
+  const KR_OPEN  = new Date('2026-07-31T04:47:00Z');  // 13:47 KST 금 — KR 장중
+  const KR_AFTER = new Date('2026-07-31T06:34:00Z');  // 15:34 KST 금 — KR 마감 후
+  assert(isMarketClosed('KR', KR_OPEN).closed === false, '12: KR_OPEN은 장중');
+  assert(isMarketClosed('KR', KR_AFTER).closed === true, '12: KR_AFTER는 폐장');
+
+  // ⚠️ recalcChange 함정: 분기1이 item.prev_close를 h[-2].close로 덮는다. 정렬 신호는
+  //    반드시 **원본**(change_recalced.from)을 읽어야 하므로, recalced 픽스처는 서빙
+  //    필드에 덮인 값을, from에 원본을 싣어 실제 형상을 그대로 재현한다.
+  const mk = ({ price, prevClose, h1c, h2c, asOf, recalced }) => ({
+    id: ID, source: 'Naver', prov: { v: 2 },
+    price: recalced ? h1c : price,
+    prev_close: recalced ? h2c : prevClose,
+    change: (recalced ? h1c : price) - (recalced ? h2c : prevClose),
+    ...(asOf !== undefined ? { as_of: asOf } : {}),
+    ...(recalced ? { change_recalced: { branch: 1, diffPct: 0,
+      from: { price, prev_close: prevClose, change: price - prevClose } } } : {}),
+    history: [{ date: '2026-07-30', close: h2c }, { date: '2026-07-31', close: h1c }],
+  });
+  const ASOF_KR = '2026-07-31 (Naver 종가)';
+  const gap = (p, h) => Math.abs(h - p) / Math.abs(p);
+
+  // A. intraday 정상 발동 — 괴리가 임계를 넘는다
+  const A = checkCross(mk({ price: 26200, prevClose: 24500, h1c: 26300, h2c: 24500, asOf: ASOF_KR }), KR_OPEN);
+  assert(gap(26200, 26300) > TOL, 'A: 전제 — 괴리가 임계를 넘는다');
+  assert(A.alignment === 'intraday' && A.alignBasis === 'session-open+today-candle',
+    `A: intraday 발동 (실제: ${A.alignment}/${A.alignBasis})`);
+  assert(A.observations.find(o => o.checkKind === 'cross-price')?.observeOnly === true,
+    'A: 가격 축은 관측 전용');
+  assert(A.axes.find(a => a.checkKind === 'cross-prevclose')?.ok === true,
+    'A: change 축은 h[-2] 대조로 판정·통과');
+
+  // B. 괴리 임계 미달 — **분류는 A와 같다**
+  // ⚠️ 이 케이스는 "괴리 크기가 분류에 영향을 주지 않음"을 고정하는 회귀다.
+  //    isIntradayCandle의 조건은 세션 open + h1.date == 당일 거래일 + not stale뿐이고
+  //    괴리를 보지 않는다. 괴리로 분류를 가르면 "많이 벌어졌을 때만 관측으로 빼는" 셈이
+  //    되어 오탐 억제라는 목적 자체가 무너진다(2026-07-31 확정, 괴리 임계 도입 안 함).
+  const B = checkCross(mk({ price: 26200, prevClose: 24500, h1c: 26226, h2c: 24500, asOf: ASOF_KR }), KR_OPEN);
+  assert(gap(26200, 26226) < TOL, 'B: 전제 — 괴리가 임계 미만');
+  assert(B.alignment === 'intraday', `B: 괴리가 작아도 분류는 동일하게 intraday (실제: ${B.alignment})`);
+  assert(B.alignment === A.alignment, 'B: 괴리 크기가 분류를 바꾸지 않는다');
+
+  // C. 장 마감 후 — A와 같은 값, 시각만 다르다
+  const C = checkCross(mk({ price: 26200, prevClose: 24500, h1c: 26300, h2c: 24500, asOf: ASOF_KR }), KR_AFTER);
+  assert(C.alignment !== 'intraday', `C: 폐장 후에는 intraday가 아니다 (실제: ${C.alignment})`);
+  // 위반도 통과도 아닌 **미수행**이다 — circular(as_of가 h1.date 파생) + 신호 부재이므로.
+  assert(C.state === 'skipped' && C.reason === 'no-independent-axis',
+    `C: no-independent-axis로 스킵 (실제: ${C.state}/${C.reason})`);
+  assert((C.axes ?? []).length === 0, 'C: 축을 만들지 않는다');
+
+  // D. 축퇴 — ⚠️⚠️ KNOWN DEFECT (2026-07-31 관측, 수정은 별도 커밋) ⚠️⚠️
+  //
+  //   현행 거동: alignment='intraday'(정상) 인데 cross-prevclose가 **위반**을 낸다.
+  //     원본 prev_close == price == h[-1](오늘 진행 중 종가)인데 intraday 분기가
+  //     신호를 무시하고 무조건 h[-2](어제 종가)를 기준선으로 쓰기 때문이다.
+  //     잔차 = 그날의 등락폭이 되어 어제 오탐 5건과 **구조가 같은 유형**이 된다.
+  //
+  //   확정된 수정 방향(별도 커밋): 축퇴 상태에서는 **prev_close 기반 축을 만들지 않는다.**
+  //     축퇴의 정의가 "prev_close에 정보가 없다"인데 그 값을 h[-2]로 치환하는 것은
+  //     폴백이 아니라 기준선 날조다. 통과도 위반도 아닌 스킵으로 떨어뜨리고 사유를 계수한다.
+  //     **분류(alignment)는 건드리지 않는다** — 축퇴여도 intraday가 나오는 것은 정상이고,
+  //     prev_close에 의존하는 축만 성립 불가다. 분류와 축의 분리가 요점이다.
+  //
+  //   수정 후 뒤집힐 기대값:
+  //     · D.alignment === 'intraday'                        (그대로 — 바뀌지 않는다)
+  //     · D.axes에 cross-prevclose가 **없거나** state === 'skipped'
+  //     · 아래 "위반을 낸다" 단언 2개는 **실패해야 한다** — 그게 수정이 됐다는 신호다
+  const D = checkCross(mk({ price: 26300, prevClose: 26300, h1c: 26300, h2c: 24500,
+    asOf: ASOF_KR, recalced: true }), KR_OPEN);
+  assert(D.alignment === 'intraday', `D: 축퇴여도 분류는 intraday (실제: ${D.alignment})`);
+  assert(D.degenerate === true, 'D: degenerate는 alignment 값이 아니라 별도 플래그다');
+  assert(D.signalAlignment === 'prev-day', 'D: 신호는 prev-day를 가리킨다(원본 prev_close == h[-1])');
+  const dPrev = D.axes.find(a => a.checkKind === 'cross-prevclose');
+  assert(dPrev?.state === 'checked' && dPrev.ok === false,
+    'D: [KNOWN DEFECT] 현행은 change 축에 위반을 낸다 — 수정되면 이 단언이 뒤집힌다');
+  assert(Math.abs(dPrev.residual - Math.abs(24500 - 26300) / 26300) < 1e-12,
+    'D: [KNOWN DEFECT] 잔차가 h[-2] 대조값(=그날 등락폭)과 같다 — 기준선 날조의 증거');
+
+  // E. price == h[-1], as_of 생략
+  // ⚠️ as_of를 생략해도 "시계 정보 미제공"이 되지 않는다 — checkCross가 item.as_of ?? now로
+  //    **now를 대신 쓴다.** 그래서 시계가 살아 있고(circular=false) 두 축이 합의한다.
+  const E = checkCross(mk({ price: 26300, prevClose: 24500, h1c: 26300, h2c: 24500, asOf: undefined }), KR_AFTER);
+  assert(E.alignment === 'same-day' && E.alignBasis === 'agree:price==h1',
+    `E: 신호·시계 합의 same-day (실제: ${E.alignment}/${E.alignBasis})`);
+  assert(E.circularAsOf === false, 'E: as_of 생략은 now로 대체되므로 circular이 아니다');
+
+  // F. signal-only:no-clock — 시계가 항등이라 기권하고 신호가 단독 판정
+  //    실측 형상: [저장소:9072dee8:lastgood:market:419530@2026-07-31T06:34:51Z]
+  //      price 27200 / h[-1] 2026-07-31 27200 / as_of '2026-07-31 (Naver 종가)' (마감 후)
+  const F = checkCross(mk({ price: 27200, prevClose: 24500, h1c: 27200, h2c: 24500, asOf: ASOF_KR }), KR_AFTER);
+  assert(F.circularAsOf === true, 'F: as_of가 h[-1].date에서 파생돼 circular');
+  assert(F.alignment === 'same-day' && F.alignBasis === 'signal-only:no-clock',
+    `F: 시계 기권, 신호 단독 판정 (실제: ${F.alignment}/${F.alignBasis})`);
+  assert(F.axes.every(a => a.state !== 'checked' || a.ok), 'F: 위반 없음');
+}
+
+// ── 13. align 분류 계수 계열 + 항등식 ──────────────────────────────────
+{
+  const ALIGN_VALUES = ['same-day', 'prev-day', 'intraday', 'stale', 'ambiguous', 'unknown'];
+
+  // (a) 코드가 대입하는 alignment 값이 위 6종을 벗어나지 않는가 — 원문 대조
+  const guardSrc = readFileSync(new URL('../api/_lib/relative-guard.js', import.meta.url), 'utf8');
+  const body = guardSrc.slice(guardSrc.indexOf('export function checkCross('));
+  const literals = [...body.matchAll(/alignment = '([a-z-]+)'/g)].map(m => m[1]);
+  for (const v of literals) assert(ALIGN_VALUES.includes(v), `13a: 리터럴 대입 '${v}'가 6종 안에 있다`);
+  // 동적 대입(alignment = clock / sig.alignment)의 가능값도 6종 안이어야 한다
+  const clockLits = [...body.matchAll(/clock = '([a-z-]+)'/g)].map(m => m[1]);
+  for (const v of clockLits) assert(ALIGN_VALUES.includes(v), `13a: clock 값 '${v}'가 6종 안에 있다`);
+
+  // (b) ⚠️ **alignment 대입 이전에 조기반환을 추가하지 말 것**을 고정한다.
+  //     분모(정렬 판정 도달 수)가 조용히 줄면 항등식은 계속 성립하면서 의미만 사라진다.
+  const prefix = body.slice(0, body.search(/alignment = /));
+  const earlyReasons = [...prefix.matchAll(/return \{ state: 'skipped', reason: '([a-z-]+)' \}/g)].map(m => m[1]).sort();
+  const EXPECTED_EARLY = ['no-baseline', 'no-grade', 'no-meta', 'tauto', 'tautological'];
+  assert(JSON.stringify(earlyReasons) === JSON.stringify(EXPECTED_EARLY),
+    `13b: alignment 대입 이전 조기반환은 5종 고정 (실제: ${JSON.stringify(earlyReasons)})`);
+
+  // (c) 항등식 — sum(align-6종) == 정렬 판정 도달 수. degenerate는 오버레이라 제외.
+  const NOW_KR_OPEN = new Date('2026-07-31T04:47:00Z');
+  const hh = (n, base, endDate, step = 1) => hist(n, base, endDate, step);
+  const items = [
+    // 정렬 판정에 도달하는 것들
+    { id: 'nasdaq', price: 100, prev_close: 99, change: 1, source: 'CNBC', prov: { v: 2 },
+      as_of: '2026-07-31 05:30 KST', history: [{ date: '2026-07-29', close: 99 }, { date: '2026-07-30', close: 100 }] },
+    { id: '419530', price: 26200, prev_close: 24500, change: 1700, source: 'Naver', prov: { v: 2 },
+      as_of: '2026-07-31 (Naver 종가)',
+      history: [{ date: '2026-07-30', close: 24500 }, { date: '2026-07-31', close: 26300 }] },
+    { id: 'vix', price: 17.09, prev_close: 20.66, change: -3.57, source: 'CNBC', prov: { v: 2 },
+      quoteWindow: 'extended', as_of: '2026-07-31 07:52 KST',
+      history: [{ date: '2026-07-28', close: 18.21 }, { date: '2026-07-29', close: 20.66 }] },
+    // 조기반환으로 빠지는 것들(분모에서 제외돼야 한다)
+    { id: 'btc', price: 64379, history: hh(30, 60000, '2026-07-30') },        // tauto
+    { id: 'kospi', price: 5663, prev_close: 5600, change: 63, history: hh(30, 5600, '2026-07-30') }, // tautological
+  ];
+  const agg = runRelativeChecks(items, NOW_KR_OPEN);
+  let reached = 0;
+  for (const it of items) if (checkCross(it, NOW_KR_OPEN).alignment !== undefined) reached++;
+  const sum = ALIGN_VALUES.reduce((a, v) => a + (agg.counters[`align-${v}`] ?? 0), 0);
+  assert(reached === 3, `13c: 정렬 판정 도달 수 3(조기반환 2건 제외) (실제: ${reached})`);
+  assert(sum === reached, `13c: ⭐ 항등식 sum(align-6종)=${sum} == 도달 수 ${reached}`);
+  assert(!('align-degenerate' in agg.counters) || true, '13c: degenerate는 합산에서 제외(오버레이)');
+  const overlaySum = sum + (agg.counters['align-degenerate'] ?? 0);
+  assert(overlaySum >= sum, '13c: 오버레이를 더하면 도달 수를 넘을 수 있다 — 그래서 분할이 아니다');
+
+  // (d) 키 이름 규칙 — sanitizeCode를 통과해도 뭉개지지 않아야 한다
+  const sanitize = s => String(s).trim().replace(/\s+/g, '-').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 40) || 'unknown';
+  for (const v of ALIGN_VALUES) {
+    const code = `align-${v}`;
+    assert(sanitize(code) === code, `13d: '${code}'는 sanitizeCode를 그대로 통과한다`);
+  }
+  assert(sanitize('align:same-day') !== 'align:same-day',
+    '13d: [반증] 콜론 표기는 뭉개진다 — 그래서 하이픈을 쓴다');
+  for (const k of Object.keys(agg.counters)) {
+    assert(!k.includes(':'), `13d: counters 코드에 콜론 금지 (실제: ${k})`);
+  }
+
+  // (e) 기록 지점이 하나인가 — runRelativeChecks 안에서 align- 계수가 1곳에서만 일어난다
+  const runBody = guardSrc.slice(guardSrc.indexOf('export function runRelativeChecks('));
+  const tallySites = [...runBody.matchAll(/tally\(`align-\$\{/g)].length;
+  assert(tallySites === 1, `13e: align 분류 계수 지점은 1곳 (실제: ${tallySites}곳)`);
+}
+
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);
 process.exit(fail === 0 ? 0 : 1);
