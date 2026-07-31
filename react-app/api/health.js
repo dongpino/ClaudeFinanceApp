@@ -40,6 +40,39 @@ import { readAudit, buildKasiSource } from './_lib/holiday-audit.js';
 
 const DEPLETION_LABEL = { fomc: 'FOMC', cpi: 'CPI', msci: 'MSCI', earnings: '실적', holidays: '휴장일', bok: '금통위' };
 
+/**
+ * **지금 이 응답을 만든 코드가 어느 빌드인가.** 런타임이 이미 아는 값을 그대로 노출한다.
+ *
+ * ── 왜 필요한가(2026-07-31) ──────────────────────────────────────────
+ * 종전 응답은 checkedAt/storeFp/env/sources뿐이라 "서빙 중인 코드가 어느 커밋인지"를
+ * 알 수 없었다. 그래서 배포 반영 여부를 **카운터 델타로 역추론**하는 일이 반복됐고,
+ * 실제로 판별에 실패했다 — 190449a 배포 확인 시 health:validate 델타를 봤지만 그 회차의
+ * 데이터가 구·신 코드에서 같은 결과를 내는 형상이라 아무것도 구분하지 못했다.
+ * 이 블록이 있으면 1콜로 끝난다.
+ *
+ * ⚠️ **envKeys는 키 이름만 담는다. 값은 절대 담지 않는다.**
+ *    목적은 진단이다 — 시스템 환경변수 노출 설정이 꺼져 있으면 commitSha가 null로 나오는데,
+ *    그게 "설정 꺼짐"인지 "런타임 미주입"인지 키 목록만 보면 즉시 갈린다
+ *    (VERCEL_GIT_COMMIT_SHA 키 자체가 없으면 노출 설정 꺼짐).
+ *    값을 실으면 토큰류가 섞여 나갈 수 있고, 진단에 필요하지도 않다.
+ *
+ * ⚠️ **매 요청마다 process.env에서 직접 읽는다.** 모듈 최상위 상수로 캐시하지 않는다 —
+ *    이 값의 존재 이유가 "지금 서빙 중인 것"을 답하는 것이라 캐시된 값은 목적을 무너뜨린다.
+ *    (health 응답 자체는 Redis/CDN 캐시를 타지 않는다: 응답 조립은 매 요청 새로 하고
+ *     Cache-Control은 no-store다. 그래도 이 블록만은 규칙을 명시해 둔다.)
+ */
+export function buildIdentity() {
+  return {
+    commitSha:    process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+    commitRef:    process.env.VERCEL_GIT_COMMIT_REF ?? null,
+    vercelEnv:    process.env.VERCEL_ENV            ?? null,
+    deploymentId: process.env.VERCEL_DEPLOYMENT_ID  ?? null,
+    region:       process.env.VERCEL_REGION         ?? null,
+    // 키 이름만 — 값 금지(위 주석 참조).
+    envKeys: Object.keys(process.env).filter(k => k.startsWith('VERCEL')).sort(),
+  };
+}
+
 // 'YYYY-MM-DD' → 'M/D'
 function monthDay(dateStr) {
   const [, m, d] = String(dateStr).split('-').map(Number);
@@ -239,10 +272,16 @@ export default async function handler(req, res) {
       // 대조해 다른 DB를 보고 있는 상황을 즉시 잡는다(호스트 원문은 노출 안 함).
       storeFp: storeFingerprint(),
       env: ENV_TAG,
+      // 어느 **코드**가 이 응답을 만들었는지(위 buildIdentity 주석). 추가 전용 —
+      // 기존 필드는 이름·값·구조 어느 것도 건드리지 않았다.
+      build: buildIdentity(),
       sources,
     });
   } catch (e) {
     console.error('[health] 스냅샷 조회 실패:', e.message);
-    return res.status(503).json({ error: 'health 조회 실패(Redis)', details: e.message });
+    // ⚠️ 실패 응답에도 싣는다. Redis가 죽은 상황이 바로 "어느 빌드가 서빙 중인가"를
+    //    물어야 하는 때이고, 이 블록은 Redis를 전혀 타지 않아 여기서도 성립한다.
+    return res.status(503).json({ error: 'health 조회 실패(Redis)', details: e.message,
+      build: buildIdentity() });
   }
 }
