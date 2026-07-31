@@ -794,10 +794,23 @@ export function checkFlatness(item) {
  *    observations로 분리해 blocked에 절대 섞이지 않게 했다.
  * ── counters — 스킵이 아니어서 skipReasons에 못 넣는 것들 ──────────────
  * `skipped`를 오염시키지 않으려고 별도 맵으로 뺀다. 호출측이 `relative:{code}`로 hincrby한다.
+ * ⚠️ 코드에 ':'를 쓰지 않는다 — health.sanitizeCode가 콜론을 **제거**해 키가 뭉개진다
+ *    (실측: 'align:same-day' → 'alignsame-day', 'flat-exempt:policy_rate' →
+ *     'flat-exemptpolicy_rate'). 콜론은 포맷 문자열에만 살아남는다(health.js:277,283).
+ *
+ *   align-{분류값}   **정렬 분류 6종의 배타 분할.** same-day / prev-day / intraday /
+ *                    stale / ambiguous / unknown. 종전에는 축퇴와 ambiguous만 세어
+ *                    "분자만 있고 분모가 없는" 상태였다 — 어느 분류가 몇 건인지 회차마다
+ *                    알 수 있게 전 계열을 같은 규칙으로 센다.
+ *                    **항등식**: sum(align-6종) == 정렬 판정에 도달한 항목 수.
+ *                    (조기반환 5종 no-meta/tauto/tautological/no-grade/no-baseline은
+ *                     alignment가 대입되기 전에 빠지므로 분모에서 제외된다.)
+ *   align-degenerate ⚠️ **위 6종과 배타가 아니다. 합산에 넣지 말 것.**
+ *                    change≈0이라 same-day·prev-day 신호가 동시에 참인 회차를 세는
+ *                    **오버레이**다(실측: prev-day 5건과 전부 겹침). 오류가 아니라
+ *                    prev-day 우선 규칙이 실제로 발동한 횟수다.
  *   prov-legacy      출처 도장 없는 스냅샷(구버전 lastgood). **0으로 수렴해야 정상**이다 —
  *                    첫 성공 수집에서 전 항목이 재기록되므로 배포 확인 지표로 쓴다.
- *   align-degenerate change≈0이라 same-day·prev-day 신호가 동시에 참인 회차.
- *                    오류가 아니라 **prev-day 우선 규칙이 실제로 발동한 횟수**다.
  * @returns {{ checked, blocked, skipped, skipReasons, counters, findings, fields, observations, blockDiversity }}
  */
 export function runRelativeChecks(items, now = new Date()) {
@@ -821,6 +834,13 @@ export function runRelativeChecks(items, now = new Date()) {
     // ⚠️ 코드에 ':'를 쓰지 않는다 — health.sanitizeCode가 콜론을 **제거**해서
     //    'prov:legacy'가 'provlegacy'로 뭉개진다(기존 flat-exempt:policy_rate가 그 사례다).
     if (c.provenance === 'legacy') tally('prov-legacy');
+    // ── 정렬 분류 6종 — **여기 한 곳에서만 센다** ─────────────────────
+    // checkCross가 alignment를 단일 반환값으로 내므로 기록 지점이 하나로 모인다.
+    // 흩어서 세면 합이 안 맞고 항등식이 무의미해진다.
+    // ⚠️ c.alignment는 **조기반환 5종에서는 undefined**다(그 경로는 alignment 대입 전에
+    //    빠진다). 그래서 이 한 줄이 곧 "정렬 판정에 도달했는가"의 판별이기도 하다.
+    if (c.alignment) tally(`align-${c.alignment}`);
+    // 오버레이 — 위 6종과 배타가 아니므로 합산에서 제외된다(runRelativeChecks 주석).
     if (c.degenerate) tally('align-degenerate');
 
     // ⚠️ 스킵은 **검사 단위**로 센다. C와 평탄성은 성립 조건이 다르다 — 항목 단위로 세면

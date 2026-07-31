@@ -6,6 +6,28 @@
 - **`master`는 merge 시에만 체크아웃** — 배포용 브랜치. `git checkout master → git merge staging → git push` 목적으로만 잠시 전환하고, 직접 커밋하지 않는다.
 - **세션 종료 시 `staging`으로 복귀** — 어떤 작업이든 끝난 뒤에는 `staging` 브랜치에 머무른 상태로 종료한다(merge를 위해 master로 갔더라도 마지막에 `git checkout staging`).
 
+### master 머지는 반드시 `--no-ff` (필수)
+
+```
+git merge --no-ff staging -m "Merge branch 'staging'"
+```
+
+**이유**: fast-forward 머지는 master HEAD를 staging과 **같은 SHA**로 만든다. Vercel은 커밋
+SHA 단위로 배포를 생성하므로, 그 SHA가 staging 푸시에서 이미 빌드된 상태면 master 푸시 때
+**배포를 아예 만들지 않는다.**
+
+⚠️ **빌드가 실패하는 게 아니라 배포 레코드 자체가 생기지 않는다.** 그래서 `vercel ls`에도
+GitHub deployments API에도 아무것도 나타나지 않고, 푸시는 성공한 것처럼 보인다.
+"master에는 코드가 있는데 프로덕션에는 반영되지 않은" 상태를 알아채기 어렵다.
+
+**실측(2026-07-31)**: `190449a`를 master에 fast-forward 머지 후 푸시했으나 **47분간
+프로덕션 배포 미생성**. `--no-ff`로 새 머지 커밋을 만들어 푸시하자 **즉시 생성**됐다
+(`bc37bc6`, 15:23 KST).
+
+`-m`을 생략하면 편집기가 열린다(비대화형 셸에서는 멈춘다).
+
+**배포 반영 확인은 `/api/health`의 `build.commitSha`로 한다(1콜).**
+
 ## 근거 기록 규약 (필수)
 
 > **모델이 이미 알고 있던 값을 조회 결과가 반증하지 않는 것은 확인이 아니다.
