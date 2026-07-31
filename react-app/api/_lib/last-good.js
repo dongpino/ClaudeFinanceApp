@@ -44,6 +44,14 @@ function getRedis() {
 // 프로덕션 경로는 절대 호출하지 않는다(getRedis의 지연 생성만 사용).
 export function __setRedisClientForTest(client) { redisClient = client; }
 
+/**
+ * 출처 도장 버전. **이번 회차에 실제로 수집된 아이템**에만 찍힌다(applyLastGoodFallback).
+ * 검사 2a가 `item.prov?.v`의 유무로 "price/prev_close를 원본으로 믿어도 되는가"를 가른다 —
+ * 도장이 없으면 수집기가 값을 덮었는지 알 수 없는 구버전 스냅샷이므로 신호 축을 끈다.
+ * ⚠️ 값 자체는 쓰지 않는다(유무만 본다). 스키마가 바뀌면 올려서 구스냅샷을 무효화한다.
+ */
+export const PROV_VERSION = 2;
+
 function lgKey(ns, id) { return `lastgood:${ns}:${id}`; }
 function summarize(err) { return String(err?.message ?? err ?? 'unknown').slice(0, 200); }
 
@@ -117,6 +125,18 @@ export async function applyLastGoodFallback({ ns, collected = [], commitIds, fil
 
   for (const item of collected) {
     const id = item?.id;
+    // ⭐ 출처 도장 — **이번 회차에 실제로 수집된 아이템에만** 찍힌다(아래 폴백 경로는 저장된
+    //    값을 그대로 쓰므로 도장이 없다). 검사 2a가 "이 아이템의 price/prev_close를 원본으로
+    //    믿어도 되는가"를 판정하는 근거다.
+    //
+    // ⚠️ 왜 수집기가 아니라 여기인가 — 수집기는 8곳이고 앞으로 늘어난다. 한 곳이라도
+    //    빠뜨리면 그 항목만 조용히 'legacy'로 취급돼 신호 축이 꺼진다. 반면 이 함수는
+    //    **모든 신선 아이템이 반드시 통과하는 단일 지점**이라 누락이 구조적으로 불가능하다.
+    // ⚠️ 왜 필요한가 — change_recalced 부재는 "재계산이 안 걸렸다"와 "도장을 찍지 않던
+    //    구버전이 남긴 스냅샷이다"를 구분하지 못한다. lastgood은 TTL이 없어(위 9행)
+    //    배포 이전 스냅샷이 무기한 남고, 그게 폴백으로 서빙되면 검사에도 그대로 들어온다.
+    //    후자를 전자로 읽으면 이미 덮인 prev_close를 원본으로 믿는다.
+    if (item && typeof item === 'object') item.prov = { v: PROV_VERSION, at: asOfNow };
     if (!id) continue;
     if (commitSet.has(id)) {
       if (validate(item)) {

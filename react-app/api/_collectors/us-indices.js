@@ -44,10 +44,22 @@ async function fetchText(url) {
   return res.text();
 }
 
+// ── CNBC quote 소스 설정 — **확장시간 여부가 검사 2a의 입력이다** ────────
+// ⚠️ exthrs를 URL 문자열에만 박아 두면 "이 항목은 확장시간 견적"이라는 사실이 코드 어디에도
+//    남지 않는다. 그 사실이 사라져서 2026-07-30 오탐 5건이 났다 — 검사 2a의 거래일 파생은
+//    pre-open을 전 거래일로 보내는데, exthrs=1인 소스는 개장 전에 이미 당일로 롤돼 있어
+//    하루가 어긋났다(relative-guard.tradingDateOf의 'pre-open+exthrs' 주석).
+//    그래서 상수로 올리고 아이템에 quoteWindow로 **파생**시킨다(단일 원본 파생 원칙).
+export const CNBC_QUOTE = {
+  symbols: '.IXIC|.DJI|.VIX|US10Y|.DXY|.SPX|.SOX',
+  extendedHours: true,
+};
+
 async function fetchCNBCBulk() {
   const params = new URLSearchParams({
-    symbols: '.IXIC|.DJI|.VIX|US10Y|.DXY|.SPX|.SOX', requestMethod: 'itv',
-    noform: '1', partnerId: '2', fund: '1', exthrs: '1', output: 'json', events: '0',
+    symbols: CNBC_QUOTE.symbols, requestMethod: 'itv',
+    noform: '1', partnerId: '2', fund: '1',
+    exthrs: CNBC_QUOTE.extendedHours ? '1' : '0', output: 'json', events: '0',
   });
   const data = await fetchJSON(`https://quote.cnbc.com/quote-html-webservice/quote.htm?${params}`);
   const quotes = data?.ITVQuoteResult?.ITVQuote;
@@ -75,10 +87,15 @@ function buildItemFromCNBC(q, { id, name, symbol, category, unit }) {
     change_pct:     r4(changePct),
     direction:      direction(change),
     source:         'CNBC',
+    // 소스 설정에서 파생 — 검사 2a가 pre-open 분기를 고르는 데 쓴다.
+    quoteWindow:    CNBC_QUOTE.extendedHours ? 'extended' : 'regular',
     as_of:          fmtKST(),
     category,
     unit,
     history:        [],
+    // history를 실제로 준 경로. 폴백이 탔는지 사후에 알 수 있는 유일한 단서다 —
+    // 없으면 "vix history가 왜 늦었나"(Naver 지연인가 CBOE 폴백인가)를 물을 수 없다.
+    historySource:  null,
     ohlc_available: false,
     history_90d:    [],
   };
@@ -170,7 +187,9 @@ async function fetchHistoryNaverMarketIndex(category, reutersCode, numRows = 30)
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
-function recalcChange(item) {
+// ⚠️ 테스트에서 직접 검증하므로 export한다(값 무변경을 회귀로 고정 — 검사 2a가 이 함수의
+//    발동 여부에 따라 change 축 판정을 바꾸므로 동작이 조용히 달라지면 안 된다).
+export function recalcChange(item) {
   // percent 단위(국채금리 등)는 CNBC 원본을 r4로 이미 정밀 보존했으므로 history 폴백을 타지 않는다.
   // 국채금리는 하루 변동이 0.01%p 미만인 날이 흔해 이 임계값(과 history 기반 재계산)이
   // "정상적으로 작은 변동"을 "CNBC 값 의심"으로 오인시키기 때문(us10y 사례).
@@ -181,6 +200,20 @@ function recalcChange(item) {
   const hLast = h[h.length - 1].close, hPrev = h[h.length - 2].close;
   const diffPct = hLast ? Math.abs(item.price - hLast) / hLast * 100 : 0;
   const [newCurr, newPrev] = diffPct < 0.05 ? [hLast, hPrev] : [item.price, hLast];
+  // ── 발동 흔적 남기기(추가 전용, 2026-07-30) ─────────────────────────
+  // ⚠️ 서빙 값과 재계산 동작은 **전혀 바꾸지 않는다.** 아래 대입문은 손대지 않았고
+  //    필드 하나만 덧붙인다(회귀로 고정 — scripts/test-index-failover.js).
+  // 왜 필요한가 — 재계산은 price/prev_close를 **history 값으로 덮어쓴다.** 그러면
+  // 검사 2a의 change 축(prevClose ↔ history)이 자기 자신과의 비교가 되거나(분기 1),
+  // 한 칸 밀린 값과의 비교가 되어 체계적 오탐이 된다(분기 2). 발동 조건이
+  // |change| ≤ 0.01, 즉 "등락 0 = 계산 실패 의심" 구간과 정확히 겹치므로 —
+  // 수집기가 증상을 고쳐 버려 검사가 볼 것이 남지 않는다.
+  // 원본을 남겨 두면 "재계산이 옳았는가"를 원본값으로 따로 판정할 수 있다.
+  item.change_recalced = {
+    branch: diffPct < 0.05 ? 1 : 2,     // 1: price를 history로 교체 / 2: price 유지, prev만 교체
+    diffPct: r4(diffPct),
+    from: { price: item.price, change: item.change, prev_close: item.prev_close },
+  };
   item.price      = r2(newCurr);
   item.prev_close = r2(newPrev);
   item.change     = r2(newCurr - newPrev);
@@ -205,36 +238,41 @@ export async function collectUSIndices({ include90d = true } = {}) {
   // US10Y/DXY : Naver Market Index API(m.stock.naver.com) — 단일 소스, 폴백 없음(다른 지표와 동일 수준)
   // S&P500 : Naver World(심볼 '.INX' — CNBC의 '.SPX'와 다름, 2026-07-07 확인) → FRED SP500 폴백
   // SOX    : Naver World(심볼 '.SOX') — 단일 소스, 폴백 없음(FRED에 반도체지수 시리즈 없음, 2026-07-07 확인)
+  // ⚠️ history 소스를 아이템에 **기록**한다(historySource). 폴백이 탔는지는 로그로만 남아
+  //    있었고, 로그는 지나가면 사라진다 — 그래서 2026-07-30 vix history 지연(다른 Naver
+  //    World 심볼은 07-30 캔들이 붙었는데 vix만 1.5~3.5시간 늦음)에 대해 "Naver가 늦은 것인가
+  //    CBOE 폴백이 탄 것인가"를 사후에 물을 수 없었다. 다음 발생 때는 답할 수 있어야 한다.
+  const tag = (p, src) => p.then(h => ({ h, src }));
   await Promise.allSettled([
-    fetchHistoryNaverSise('NAS@IXIC', 3)
-      .then(h => { nasdaq.history = h; })
+    tag(fetchHistoryNaverSise('NAS@IXIC', 3), 'Naver sise NAS@IXIC')
+      .then(({ h, src }) => { nasdaq.history = h; nasdaq.historySource = src; })
       .catch(e => console.warn(`[nasdaq] history 실패: ${e.message}`)),
 
-    fetchHistoryNaverWorld('.DJI', 30)
-      .catch(e => { console.warn(`[dow] Naver world 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('DJIA', 30); })
-      .then(h => { dow.history = h; })
+    tag(fetchHistoryNaverWorld('.DJI', 30), 'Naver world .DJI')
+      .catch(e => { console.warn(`[dow] Naver world 실패: ${e.message} → FRED 폴백`); return tag(fetchHistoryFRED('DJIA', 30), 'FRED DJIA'); })
+      .then(({ h, src }) => { dow.history = h; dow.historySource = src; })
       .catch(e => console.warn(`[dow] history 실패: ${e.message}`)),
 
-    fetchHistoryNaverWorld('.VIX', 30)
-      .catch(e => { console.warn(`[vix] Naver world 실패: ${e.message} → CBOE CSV 폴백`); return fetchHistoryCBOEVIX(30); })
-      .then(h => { vix.history = h; })
+    tag(fetchHistoryNaverWorld('.VIX', 30), 'Naver world .VIX')
+      .catch(e => { console.warn(`[vix] Naver world 실패: ${e.message} → CBOE CSV 폴백`); return tag(fetchHistoryCBOEVIX(30), 'CBOE CSV'); })
+      .then(({ h, src }) => { vix.history = h; vix.historySource = src; })
       .catch(e => console.warn(`[vix] history 실패: ${e.message}`)),
 
-    fetchHistoryNaverMarketIndex('bond', 'US10YT=RR', 30)
-      .then(h => { us10y.history = h; })
+    tag(fetchHistoryNaverMarketIndex('bond', 'US10YT=RR', 30), 'Naver marketIndex bond/US10YT=RR')
+      .then(({ h, src }) => { us10y.history = h; us10y.historySource = src; })
       .catch(e => console.warn(`[us10y] history 실패: ${e.message}`)),
 
-    fetchHistoryNaverMarketIndex('exchange', 'FX_USDX', 30)
-      .then(h => { dxy.history = h; })
+    tag(fetchHistoryNaverMarketIndex('exchange', 'FX_USDX', 30), 'Naver marketIndex exchange/FX_USDX')
+      .then(({ h, src }) => { dxy.history = h; dxy.historySource = src; })
       .catch(e => console.warn(`[dxy] history 실패: ${e.message}`)),
 
-    fetchHistoryNaverWorld('.INX', 30)
-      .catch(e => { console.warn(`[sp500] Naver world 실패: ${e.message} → FRED 폴백`); return fetchHistoryFRED('SP500', 30); })
-      .then(h => { sp500.history = h; })
+    tag(fetchHistoryNaverWorld('.INX', 30), 'Naver world .INX')
+      .catch(e => { console.warn(`[sp500] Naver world 실패: ${e.message} → FRED 폴백`); return tag(fetchHistoryFRED('SP500', 30), 'FRED SP500'); })
+      .then(({ h, src }) => { sp500.history = h; sp500.historySource = src; })
       .catch(e => console.warn(`[sp500] history 실패: ${e.message}`)),
 
-    fetchHistoryNaverWorld('.SOX', 30)
-      .then(h => { sox.history = h; })
+    tag(fetchHistoryNaverWorld('.SOX', 30), 'Naver world .SOX')
+      .then(({ h, src }) => { sox.history = h; sox.historySource = src; })
       .catch(e => console.warn(`[sox] history 실패: ${e.message}`)),
   ]);
 

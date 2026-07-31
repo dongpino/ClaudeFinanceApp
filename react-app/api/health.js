@@ -164,7 +164,8 @@ export function buildRelativeGuardSource(counters) {
   if (!c) {
     return relRow('unknown', '검사 2a 기록 없음 — 수집이 없었거나 계측이 끊겼다', null);
   }
-  const { checked = 0, blocked = 0, skipped = 0, skips = {}, lastBlock = null } = c;
+  const { checked = 0, blocked = 0, skipped = 0, skips = {}, lastBlock = null,
+    allBlockedAt = null, sourceSuspectAt = null, sourceSuspect = null } = c;
   const skipStr = Object.entries(skips).map(([r, n]) => `${r}×${n}`).join(' ');
 
   // 연속 위반 승격은 검사 1과 같은 3등급 구조를 그대로 쓴다(어휘·임계 공유).
@@ -172,7 +173,17 @@ export function buildRelativeGuardSource(counters) {
     .filter(([, st]) => (st.consec ?? 0) >= CONSEC_BLOCK_THRESHOLD).map(([f]) => f);
 
   let status, verdict, note;
-  if (sustained.length) {
+  if (allBlockedAt) {
+    // 원인이 실제로 다양한 동시 차단만 여기 온다(단일 벤더는 아래 source-suspect로 갈린다).
+    status = 'down'; verdict = 'gate-suspect';
+    note = `전 항목 동시 차단 — 게이트 자체 결함 의심(차단 사유·소스가 모두 갈림)`
+      + (lastBlock ? ` · ${lastBlock}` : '');
+  } else if (sourceSuspectAt) {
+    // ⭐ 단일 벤더 동시 차단 — 게이트가 아니라 그 소스 한 곳의 문제로 읽는다.
+    status = 'down'; verdict = 'source-suspect';
+    note = `전 항목 동시 차단이지만 차단 소스가 ${sourceSuspect} 하나 — 게이트 결함이 아니라`
+      + ` 그 소스 이상으로 읽는다` + (lastBlock ? ` · ${lastBlock}` : '');
+  } else if (sustained.length) {
     status = 'down'; verdict = 'sustained';
     note = `${sustained[0]} ${CONSEC_BLOCK_THRESHOLD}회 이상 연속 위반 — 양측 중 한쪽 파서 이상 의심`
       + (sustained.length > 1 ? ` 외 ${sustained.length - 1}` : '')

@@ -107,6 +107,17 @@ function recalcChange(item) {
   const hLast = h[h.length - 1].close, hPrev = h[h.length - 2].close;
   const diffPct = hLast ? Math.abs(item.price - hLast) / hLast * 100 : 0;
   const [newCurr, newPrev] = diffPct < 0.05 ? [hLast, hPrev] : [item.price, hLast];
+  // ── 발동 흔적 남기기(추가 전용, 2026-07-31) ─────────────────────────
+  // ⚠️ 서빙 값과 재계산 동작은 **전혀 바꾸지 않는다.** 아래 대입문은 손대지 않았고
+  //    필드 하나만 덧붙인다. us-indices.recalcChange와 같은 형식이다(원본 하나).
+  // 이 항목들은 현재 C 검사 대상이 아니지만(tauto/tautological) **검사 2b(change 축)가
+  // 같은 원본 좌표를 요구**하므로 지금 함께 찍는다 — 나중에 한 곳만 빠뜨리면 그 항목만
+  // 조용히 오분류된다.
+  item.change_recalced = {
+    branch: diffPct < 0.05 ? 1 : 2,     // 1: price를 history로 교체 / 2: price 유지, prev만 교체
+    diffPct: r4(diffPct),
+    from: { price: item.price, change: item.change, prev_close: item.prev_close },
+  };
   item.price      = r2(newCurr);
   item.prev_close = r2(newPrev);
   item.change     = r2(newCurr - newPrev);

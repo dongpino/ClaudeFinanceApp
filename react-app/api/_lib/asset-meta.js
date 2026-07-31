@@ -68,7 +68,7 @@ const CROSS = 'cross', SEMI = 'semi', TAUTO = 'tauto', TAUTOLOGICAL = 'tautologi
 // ⚠️ dxy·us10y를 US(주식) 세션에 묶어 둔 것이 오탐의 직접 원인이었다(2026-07-30 분리).
 //    16:00 ET에 주식이 닫혀도 FX·금리는 살아 있으므로 그 시간대 price는 실시간 값이고
 //    전일 종가와 벌어지는 게 정상이다. 실측:
-//    [저장소:9072dee8:health:validate:fields:relative@2026-07-30T00:38:40Z]
+//    [저장소:correct-marten-133336:health:validate:fields:relative@2026-07-30T00:38:40Z]
 //    us10y가 18:59 ET(=주식 폐장·금리 거래중) 회차에 1.493%로 위반 기록됐다.
 const US = 'US', KR = 'KR', FX = 'FX', CRYPTO = 'CRYPTO';
 
@@ -84,6 +84,19 @@ const POLICY_RATE = 'policy_rate';
 
 /** 평탄성 검사를 면제할 갱신 주기 — 일 단위로 보면 평탄한 게 정상인 것들. */
 const FLAT_EXEMPT_CADENCES = new Set([MONTHLY, QUARTERLY]);
+
+/**
+ * 그 항목이 **일별로 갱신되는가.** cadence 미기재는 daily로 본다(대다수가 일별이라
+ * 기본값이고, 비일별인 것만 명시한다 — kr_base_rate가 유일).
+ *
+ * ⚠️ 검사 2a의 stale-history(거래일 갭 ≥2) 판정이 이걸 쓴다. 월별 지표는 거래일마다
+ *    새 캔들이 생기지 않으므로 갭이 정의상 벌어진다 — 일별 항목에만 적용해야 한다.
+ *    현재 C 대상(cross/semi) 중 비일별은 없지만, 향후 편입 시 조용히 상시 오탐이 되는
+ *    구간이라 규칙으로 먼저 막는다.
+ */
+export function isDailyCadence(id) {
+  return (ASSET_META[id]?.cadence ?? DAILY) === DAILY;
+}
 /** 평탄성 검사를 면제할 값 성격 — 평탄함 자체가 정상 신호인 것들. */
 const FLAT_EXEMPT_TYPES = new Set([POLICY_RATE]);
 
@@ -99,7 +112,7 @@ export const ASSET_META = {
   sox:    { ...PRICE, cross: CROSS, market: US, quantum: 0.01 },
   // ⚠️ 종전 semi → **tautological 강등**(2026-07-30). 현재가와 history가 같은 엔드포인트의
   //    같은 행이다(kr.js:45-62) — price = rows[0].closePrice, history[-1] = 같은 rows[0].
-  //    [계산@2026-07-30T01:49:26Z 프로덕션 9072dee8] price−history[-1] = 0.00000000,
+  //    [계산@2026-07-30T01:49:26Z 저장소:correct-marten-133336] price−history[-1] = 0.00000000,
   //    prevClose−history[-2] = 0.00000000 (kospi 5663.24 / kosdaq 662.68). 우연이 아니라 정의다.
   //    ⚠️ Naver 실패 시 Yahoo(^KS11/^KQ11) 폴오버가 현재가만 갈아치우므로 그때는 진짜 교차가
   //       된다 — 그 축은 별건(로드맵 ① 겸용)으로 다룬다. 상시 등급은 항등이 맞다.
@@ -119,7 +132,7 @@ export const ASSET_META = {
   //    서울 외환시장은 개편으로 정규시간이 늘었고 공휴일에도 거래된다.
   //    성립하는 근거는 시장이 아니라 **소스 발행 캘린더**다. 검사가 대조하는 것은 시장이
   //    아니라 Naver 환율 표이고, 그 표는 KRX 영업일만 발행한다:
-  //    [자체실측 @2026-07-30T01:34:43Z 프로덕션 9072dee8, history_90d 2026-03-19~07-29]
+  //    [자체실측 @2026-07-30T01:34:43Z 저장소:correct-marten-133336, history_90d 2026-03-19~07-29]
   //      구간 내 평일 KR 공휴일 5건(05-01·05-05·05-25·06-03·07-17) 전부 캔들 없음 → 0/5
   //      대조군 kospi·kosdaq도 0/5 (동일 패턴) / FX 세션인 dxy 3/3·us10y 3/4 (반대 패턴)
   //      usdkrw ↔ jpykrw 90일 날짜 집합 **완전 동일** — 소스 수준에서 두 통화가 구분 안 됨

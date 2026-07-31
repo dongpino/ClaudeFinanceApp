@@ -15,17 +15,24 @@
  *  4. 평탄성 N일 경계 + 캔들 부재와의 구분
  *  5. 스킵 3종이 checked와 섞이지 않는가 (조사 말미 지적)
  *  6. 상태판 행 — 전부 스킵이 '통과'로 보이지 않는가
+ *  8. [B] 승인 조건 회귀 — 거래일 갭·recalcChange·관측 전용 축·source-suspect·스키마 무변경
+ *  9. recalcChange 서빙 값·동작 무변경(플래그는 추가 전용)
  *
  * 실행: node scripts/test-relative-guard.js
  */
 import {
-  isMarketClosed, crossTolerance, checkCross, checkFlatness, baselineTooOld,
-  runRelativeChecks, FLAT_RUN_THRESHOLD, BASELINE_MAX_AGE_MS,
-  tradingDateOf, parseAsOf, asOfTradingDate, prevTradingDay, isTradingDay,
+  isMarketClosed, crossTolerance, checkCross, checkFlatness,
+  runRelativeChecks, FLAT_RUN_THRESHOLD, STALE_TRADING_DAY_GAP,
+  tradingDateOf, parseAsOf, asOfTradingDate, prevTradingDay, nextTradingDay,
+  isTradingDay, tradingDaysBetween, holidayKeyOf,
+  okByTicks, originOf, alignBySignal,
 } from '../api/_lib/relative-guard.js';
-import { ASSET_META, isFlatExempt } from '../api/_lib/asset-meta.js';
+import { ASSET_META, isFlatExempt, isDailyCadence } from '../api/_lib/asset-meta.js';
 import { readFileSync } from 'node:fs';
 import { buildRelativeGuardSource } from '../api/health.js';
+import { recalcChange, CNBC_QUOTE } from '../api/_collectors/us-indices.js';
+
+const r2 = n => Math.round(n * 100) / 100;
 
 let pass = 0, fail = 0;
 function assert(cond, msg) { if (cond) { pass++; } else { fail++; console.error('  ✗ FAIL:', msg); } }
@@ -36,7 +43,10 @@ const hist = (n, base, endDate = '2026-07-29', step = 1) =>
     date: new Date(Date.parse(`${endDate}T00:00:00Z`) - (n - 1 - i) * 86400000).toISOString().slice(0, 10),
     close: base + i * step,
   }));
-const NOW_CLOSED = new Date('2026-07-29T08:00:00Z'); // 17:00 KST 수요일 = KR 장후, US 04:00 ET 장전
+// ⚠️ 2026-07-30: 거래일 정렬이 들어오면서 '지금'이 픽스처의 endDate와 맞아야 한다.
+//    이 시각(16:30 ET 수)은 US=after-close, KR=pre-open(다음날 05:30 KST), FX=평일 롤 전이라
+//    **세 세션 모두 거래일이 2026-07-29**로 일치한다 — hist()의 기본 endDate와 같다.
+const NOW_CLOSED = new Date('2026-07-29T20:30:00Z');
 const NOW_KR_OPEN = new Date('2026-07-29T02:00:00Z'); // 11:00 KST 수요일 = KR 장중
 const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US 장중
 
@@ -64,7 +74,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
 
 // ── 1b. 항등(tautological) 강등 — 사유를 tauto와 구분해 센다 ────
 // ⭐ 근거는 소스 구조다(kr.js:45-62 / :134-176 — 현재가와 history가 같은 응답의 같은 행).
-//    실측 확인 [계산@2026-07-30T01:49:26Z 프로덕션 9072dee8]:
+//    실측 확인 [계산@2026-07-30T01:49:26Z 저장소:correct-marten-133336]:
 //      kospi 5663.24 / kosdaq 662.68 / usdkrw 1446 / jpykrw 884.76
 //      네 항목 모두 price−history[-1] = 0.00000000, prevClose−history[-2] = 0.00000000
 {
@@ -133,14 +143,21 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   assert(isMarketClosed('US', new Date('2026-07-03T18:00:00Z')).reason === 'holiday', '3: 7/3 미국 휴장');
   assert(isMarketClosed('CRYPTO').closed === false, '3: 크립토는 폐장 없음');
 
-  // 장중이면 C를 아예 하지 않는다(장중 불일치는 정상이라 검사가 성립하지 않음)
-  const open = checkCross({ id: '080220', price: 55100, history: hist(30, 54000, '2026-07-29', 10) }, NOW_KR_OPEN);
-  assert(open.state === 'skipped' && open.reason === 'market-open', '3: 장중이면 C 스킵');
+  // ⭐ 2026-07-30: **폐장 판정은 더 이상 C의 실행 조건이 아니다.** 거래일 정렬이 대신한다.
+  //    장중에는 당일 캔들이 없어 가격 축이 성립하지 않을 뿐이고, change 축은 그대로 돈다.
+  const open = checkCross({ id: '080220', price: 55100, change: 100, as_of: '2026-07-29 (테스트)',
+    history: [...hist(29, 54000, '2026-07-28', 10), { date: '2026-07-28', close: 55000 }] }, NOW_KR_OPEN);
+  assert(open.state === 'checked' && open.alignment === 'prev-day',
+    `3: ⭐ 장중에도 C가 돈다(정렬 prev-day) (실제: ${JSON.stringify(open)})`);
+  assert(open.axes.every(a => a.checkKind !== 'cross-price'),
+    '3: 당일 캔들이 없으므로 가격 축은 만들지 않는다');
+  assert(open.axes.some(a => a.checkKind === 'cross-prevclose' && a.ok),
+    '3: change 축은 성립하고 통과한다');
 }
 
 // ── 3b. FX/금리 세션 분리 (2026-07-30) ─────────────────────────
 // ⭐ 이 블록이 us10y 상시 오탐의 회귀 고정이다.
-//    [저장소:9072dee8:health:validate:fields:relative@2026-07-30T00:38:40Z]
+//    [저장소:correct-marten-133336:health:validate:fields:relative@2026-07-30T00:38:40Z]
 //    us10y 1.493% 위반 @2026-07-29T22:59:14.826Z = 18:59 ET — 주식은 폐장이지만
 //    금리는 거래 중인 구간. US 세션으로 묶여 있어 검사가 돌아 버렸다.
 {
@@ -161,12 +178,24 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   assert(isMarketClosed('US', VIOLATION_AT).reason === 'after-hours',
     '3b: 그 시각 US(주식)는 폐장 — 종전 판정');
   assert(isMarketClosed('FX', VIOLATION_AT).closed === false,
-    '3b: ⭐ 같은 시각 FX(금리)는 거래중 — 이제 C가 돌지 않는다(오탐 차단)');
-  const skipped = checkCross(
-    { id: 'us10y', price: 4.6697, history: [...hist(29, 4.3, '2026-07-28', 0.01), { date: '2026-07-28', close: 4.6 }] },
-    VIOLATION_AT);
-  assert(skipped.state === 'skipped' && skipped.reason === 'market-open',
-    `3b: ⭐ us10y 1.493% 회차가 스킵된다 (실제: ${JSON.stringify(skipped)})`);
+    '3b: 같은 시각 FX(금리)는 거래중');
+
+  // ⭐ 그 회차의 실측 형상으로 재현 — 17:00 ET 롤 덕에 price 거래일이 07-30이 되고
+  //    history[-1](07-29)은 전 거래일이 된다 → 가격 축 부재 + change 축 통과.
+  //    [원문 FRED DGS10 @2026-07-30] 07-28=4.61, 07-29 미발행. Naver 07-29=4.62가
+  //    CNBC prev_close 4.62와 일치 → CNBC price 4.6697은 이미 07-30 세션 값이다.
+  const real = checkCross({
+    id: 'us10y', price: 4.6697, change: 0.051, as_of: '2026-07-30 08:51 KST',
+    source: 'CNBC',
+    history: [...hist(29, 4.3, '2026-07-28', 0.01), { date: '2026-07-29', close: 4.62 }],
+  }, VIOLATION_AT);
+  assert(real.priceDate === '2026-07-30' && real.alignment === 'prev-day',
+    `3b: ⭐ 17:00 ET 롤로 price 거래일=07-30, 정렬=prev-day (실제: ${JSON.stringify({d:real.priceDate,a:real.alignment})})`);
+  assert(real.axes.every(a => a.checkKind !== 'cross-price'),
+    '3b: 07-30 캔들이 없으므로 가격 축 부재 — 1.071%/1.493% 대조가 애초에 만들어지지 않는다');
+  const pc = real.axes.find(a => a.checkKind === 'cross-prevclose');
+  assert(pc && pc.ok && pc.residual < 0.001,
+    `3b: ⭐ change 축은 통과(prevClose 4.6187 ↔ 4.62) (실제: ${JSON.stringify(pc)})`);
 
   // 평일 연속 — 주식이 닫힌 시간대 전부 '거래중'이어야 한다
   for (const iso of ['2026-07-29T02:00:00Z', '2026-07-29T12:00:00Z', '2026-07-29T18:00:00Z',
@@ -243,15 +272,28 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
     '3c: 제헌절은 전 거래일(07-16) — 휴장일 표 원본 하나를 공유');
 
   // FX 세션 — 평일은 그 날, 주말은 직전 금요일
-  assert(tradingDateOf('us10y', new Date('2026-07-29T22:59:14.826Z')).date === '2026-07-29',
-    '3c: FX 평일 거래일');
-  const fxSun = tradingDateOf('dxy', new Date('2026-08-02T22:00:00Z')); // 일 18:00 ET(재개 후)
-  assert(fxSun.date === '2026-07-31' && fxSun.basis === 'continuous-weekend',
-    `3c: ⭐ 일요일 재개 후에도 완결된 거래일은 금요일 (실제: ${JSON.stringify(fxSun)})`);
-  // isMarketClosed와 답이 갈리는 게 정상 — 서로 다른 질문이다
-  assert(isMarketClosed('FX', new Date('2026-08-02T22:00:00Z')).closed === false
-      && fxSun.basis === 'continuous-weekend',
-    '3c: "거래중"과 "완결된 거래일"은 별개 질문 — 답이 갈려도 모순 아님');
+  // FX 평일, 17:00 ET 롤 **전**
+  const fxPre = tradingDateOf('us10y', new Date('2026-07-29T16:00:00Z')); // 12:00 ET 수
+  assert(fxPre.date === '2026-07-29' && fxPre.basis === 'continuous-weekday',
+    `3c: FX 롤 전은 그 날 (실제: ${JSON.stringify(fxPre)})`);
+  // ⭐ 17:00 ET 롤 **후** — value date가 다음 거래일로 넘어간다([E] 근거)
+  const fxPost = tradingDateOf('us10y', new Date('2026-07-29T22:59:14.826Z')); // 18:59 ET 수
+  assert(fxPost.date === '2026-07-30' && fxPost.basis === 'continuous-rolled',
+    `3c: ⭐ FX 롤 후는 다음 거래일 (실제: ${JSON.stringify(fxPost)})`);
+  // 롤이 주말을 건너뛴다 — 금요일 롤 후는 폐장 구간이므로 금요일(마지막 완결 거래일)
+  const fxFri = tradingDateOf('dxy', new Date('2026-07-31T22:00:00Z')); // 18:00 ET 금
+  assert(fxFri.date === '2026-07-31' && fxFri.basis === 'continuous-weekend',
+    `3c: 금요일 17:00 ET 이후는 거래 정지 구간 → 그 금요일이 거래일 (실제: ${JSON.stringify(fxFri)})`);
+  // 토요일 — 마지막 완결 거래일
+  assert(tradingDateOf('dxy', new Date('2026-08-01T12:00:00Z')).date === '2026-07-31',
+    '3c: 토요일은 직전 금요일');
+  // ⭐ 일요일 재개(17:00 ET) 후 — 새 주의 첫 value date
+  const fxSun = tradingDateOf('dxy', new Date('2026-08-02T22:00:00Z')); // 일 18:00 ET
+  assert(fxSun.date === '2026-08-03' && fxSun.basis === 'continuous-rolled',
+    `3c: ⭐ 일요일 재개 후는 월요일 value date (실제: ${JSON.stringify(fxSun)})`);
+  // 일요일 재개 전 — 아직 금요일
+  assert(tradingDateOf('dxy', new Date('2026-08-02T18:00:00Z')).date === '2026-07-31',
+    '3c: 일요일 재개 전은 직전 금요일');
 
   // 크립토 — 세션 경계가 없어 UTC 날짜
   const tdBtc = tradingDateOf('btc', new Date('2026-07-29T22:00:00Z'));
@@ -321,19 +363,29 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
 
 // ── 5. 스킵이 checked와 섞이지 않는가 ──────────────────────────
 {
-  // (a) 낡은 기준선 — checked로 세면 'checked>0 = 검사 유효'가 깨진다
-  const oldHist = hist(30, 100, '2026-07-01');   // 마지막 캔들이 28일 전
-  const stale = baselineTooOld({ history: oldHist }, NOW_CLOSED);
-  assert(stale.stale === true, '5: 28일 전 기준선은 낡음');
-  assert(BASELINE_MAX_AGE_MS === 3 * 86400000, '5: 기준선 나이 임계 3일');
+  // (a) ⭐ 낡은 history는 **스킵이 아니라 finding**이다(2026-07-30 전환).
+  //     종전 baselineTooOld는 벽시계 3일로 스킵해서, 검사가 잡아야 할 파서 동결을 버렸다.
+  const oldHist = hist(30, 100, '2026-07-01');   // 마지막 캔들이 2026-07-01
+  const r = runRelativeChecks([
+    { id: 'nasdaq', price: 24876, as_of: '2026-07-29 (테스트)', history: oldHist }], NOW_CLOSED);
+  assert(r.checked === 1, `5: ⭐ 낡은 history도 checked로 센다(검사를 수행했다) (실제 ${r.checked})`);
+  assert(r.blocked === 1, `5: ⭐ 그리고 blocked — 파서 동결 증상을 검출한다 (실제 ${r.blocked})`);
+  assert(r.findings[0].kind === 'stale-history', `5: kind=stale-history (실제 ${r.findings[0].kind})`);
+  assert(r.findings[0].gap >= STALE_TRADING_DAY_GAP, `5: 거래일 갭이 임계 이상 (실제 ${r.findings[0].gap})`);
+  assert(r.findings[0].detail.includes('거래일'), '5: 문구가 거래일 기준임을 밝힌다');
+  assert(!('stale-baseline' in r.skipReasons), '5: stale-baseline 스킵 사유는 더 이상 없다');
 
-  const r = runRelativeChecks([{ id: 'nasdaq', price: 24876, history: oldHist }], NOW_CLOSED);
-  assert(r.checked === 0 && r.skipped === 1, `5: 낡은 기준선은 skipped (checked=${r.checked})`);
-  assert(r.skipReasons['stale-baseline'] === 1, `5: 사유가 stale-baseline (실제: ${JSON.stringify(r.skipReasons)})`);
+  // ⭐ 연휴 오작동 회귀 — 벽시계로는 3일을 넘지만 거래일 갭은 1(정상 prev-day)
+  //    2026-07-16(목) 캔들 + price 거래일 2026-07-20(월). 사이의 07-17은 제헌절 휴장.
+  const holiHist = [...hist(29, 100, '2026-07-15'), { date: '2026-07-16', close: 130 }];
+  const holi = runRelativeChecks([
+    { id: '080220', price: 130, change: 0, as_of: '2026-07-20 (테스트)', history: holiHist }], NOW_CLOSED);
+  assert(holi.findings.every(f => f.kind !== 'stale-history'),
+    `5: ⭐ 연휴를 건너뛴 1거래일 갭은 stale이 아니다 (실제: ${JSON.stringify(holi.findings)})`);
 
-  // (b) 기준선 없음
+  // (b) 기준선 없음 — 유일하게 남은 스킵
   const none = runRelativeChecks([{ id: 'nasdaq', price: 24876, history: [] }], NOW_CLOSED);
-  assert(none.checked === 0 && none.skipReasons['no-baseline'] === 1, '5: 기준선 없음도 skipped');
+  assert(none.checked === 0 && none.skipReasons['no-baseline'] === 1, '5: 기준선 없음은 skipped 유지');
 
   // (c) 장중 — C만 스킵되고 평탄성(일봉 기반)은 그대로 돈다.
   //     ⚠️ 스킵을 **검사 단위**로 세는 이유가 여기다. 항목 단위로 세면 평탄성이 돌았다는
@@ -341,21 +393,26 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   // ⚠️ KR 세션으로는 이 케이스를 만들 수 없다(2026-07-30 강등 후) — KR 항목 중 C가 도는
   //    것은 코스닥 3종뿐이고 그것들은 singleName이라 평탄성에서도 빠진다. 즉 "C만 스킵,
   //    평탄성은 수행"이 성립하는 조합이 KR에는 없다. US 세션 항목으로 검증한다.
-  const open = runRelativeChecks([{ id: 'nasdaq', price: 24876.91, history: hist(30, 24800) }], NOW_US_OPEN);
-  assert(open.skipReasons['market-open'] === 1,
-    `5: 장중이면 C가 market-open으로 스킵 (실제: ${JSON.stringify(open.skipReasons)})`);
-  assert(open.checked === 1, '5: 그래도 평탄성은 돌았으므로 항목은 checked');
-  assert(open.skipped === 1, '5: 스킵은 검사 단위로 1건');
+  //  ⭐ 2026-07-30 전환: **시계 게이팅을 없앴다.** 장중에도 C가 돈다 — 당일 캔들이 없으면
+  //     가격 축이 성립하지 않을 뿐이고 change 축은 그대로 성립한다.
+  const open = runRelativeChecks([{ id: 'nasdaq', price: 24829, change: 29,
+    as_of: '2026-07-29 (테스트)',
+    history: [...hist(29, 24700, '2026-07-28', 10), { date: '2026-07-28', close: 24800 }] }], NOW_US_OPEN);
+  assert(!('market-open' in open.skipReasons),
+    `5: ⭐ market-open 스킵이 더는 없다 (실제: ${JSON.stringify(open.skipReasons)})`);
+  assert(open.checked === 1, '5: 장중에도 검사가 수행된다');
 
   // (d) 정상 — 폐장 + 신선한 기준선이면 checked
   const good = runRelativeChecks([
-    { id: 'nasdaq', price: 24876.91, history: hist(30, 24800) },
+    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-29 (테스트)',
+      history: [...hist(29, 24800), { date: '2026-07-29', close: 24876.91 }] },
   ], NOW_CLOSED);
   assert(good.checked === 1, `5: 폐장+신선 기준선이면 checked (실제 ${good.checked})`);
 
   // (e) 위반 검출 — history[-1]이 price와 크게 어긋나면 blocked
   const bad = runRelativeChecks([
-    { id: 'nasdaq', price: 24876.91, history: [...hist(29, 24800), { date: '2026-07-29', close: 20000 }] },
+    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-29 (테스트)',
+      history: [...hist(29, 24800), { date: '2026-07-29', close: 20000 }] },
   ], NOW_CLOSED);
   assert(bad.checked === 1 && bad.blocked === 1, '5: 교차 불일치 검출');
   assert(bad.findings[0].kind === 'cross', '5: findings에 kind=cross');
@@ -404,6 +461,179 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   assert(sust.note.includes('한쪽 파서 이상 의심'), '6: 승격 문구도 중립(양측 중 한쪽)');
 }
 
+// ── 8. [B] 승인 조건 회귀 ──────────────────────────────────────
+// 1) stale 거래일 갭  2) recalcChange 무변경 + 원본 검사  3) internal-prevclose 미계상
+// 4) allBlockedAt 원인 다양성 + source-suspect  5) Redis 스키마·집계 방식 무변경
+{
+  // ── (1) 거래일 갭 유틸 ─────────────────────────────────────
+  assert(STALE_TRADING_DAY_GAP === 2, '8-1: stale 임계 = 거래일 갭 2');
+  assert(tradingDaysBetween('2026-07-28', '2026-07-29', 'US') === 1, '8-1: 연속 거래일 갭 1');
+  assert(tradingDaysBetween('2026-07-16', '2026-07-20', 'KR') === 1,
+    '8-1: 제헌절(07-17)+주말을 건너뛰면 갭 1 — 벽시계 4일이지만 거래일 1');
+  assert(tradingDaysBetween('2026-07-16', '2026-07-20', 'US') === 2,
+    '8-1: 같은 구간이 US 달력에서는 갭 2(07-17이 US 거래일)');
+  assert(tradingDaysBetween('2026-07-29', '2026-07-28', 'US') === null, '8-1: 역순은 null(정렬 이상)');
+  assert(holidayKeyOf('US') === 'US' && holidayKeyOf('KR') === 'KR', '8-1: intraday는 휴장일표 사용');
+  assert(holidayKeyOf('FX') === null, '8-1: continuous는 휴장일표 없음(주말만)');
+  assert(nextTradingDay('2026-07-31', null) === '2026-08-03', '8-1: 금요일 다음 거래일은 월요일');
+  // 비일별 항목은 stale 판정에서 제외 — 현재 C 대상에 없지만 규칙으로 먼저 막는다
+  const CROSS_ELIGIBLE = Object.entries(ASSET_META)
+    .filter(([, m]) => m.cross === 'cross' || m.cross === 'semi').map(([id]) => id);
+  for (const id of CROSS_ELIGIBLE) {
+    assert(isDailyCadence(id) === true,
+      `8-1: C 대상 ${id}는 일별이어야 한다 — 비일별이 편입되면 stale이 상시 오탐이 된다`);
+  }
+
+  // ── (2) recalcChange — 발동 시 change 축은 항등 스킵 + 원본 별도 검사 ──
+  const base = { id: 'nasdaq', price: 24876.91, change: 0.005, as_of: '2026-07-29 (테스트)', source: 'CNBC',
+    history: [...hist(29, 24800), { date: '2026-07-29', close: 24876.91 }] };
+  const plain = checkCross(base, NOW_CLOSED);
+  assert(plain.axes.some(a => a.checkKind === 'cross-prevclose' && a.state === 'checked'),
+    '8-2: 플래그 없으면 change 축이 정상 수행');
+  // ⚠️ 2026-07-31 설계 변경 — cross-prevclose-origin이라는 **별도 축을 없앴다.**
+  //    8b0f452는 재계산 발동 시에만 원본 축을 따로 만들었는데, 그러면 "언제 원본을 쓰는가"가
+  //    분기로 흩어져 한쪽만 고치는 실수가 난다(실제로 가격 축은 원본을 쓰지 않고 있었다 —
+  //    분기 1은 price도 덮는데). 이제 originOf가 발동 여부와 무관하게 원본을 돌려주므로
+  //    축은 cross-prevclose 하나이고 **언제나 원본 좌표**로 계산된다.
+  const recalced = checkCross({ ...base, prov: { v: 2 }, change_recalced: {
+    branch: 1, diffPct: 0.001, from: { price: 24876.91, change: 0.005, prev_close: 24876.905 } } }, NOW_CLOSED);
+  assert(!recalced.axes?.some(a => a.checkKind === 'cross-prevclose-origin'),
+    '8-2: cross-prevclose-origin 축은 더 이상 만들지 않는다(원본 사용이 기본이 됨)');
+  const changeAxis = recalced.axes.find(a => a.checkKind === 'cross-prevclose');
+  assert(changeAxis?.state === 'checked' && changeAxis.observed === 24876.905,
+    `8-2: change 축이 **원본 prev_close**로 수행된다 (실제: ${JSON.stringify(changeAxis)})`);
+  assert(recalced.recalced === true,
+    '8-2: 재계산 발동 사실은 축이 아니라 base.recalced로 남는다');
+  // 가격 축도 원본을 쓴다 — 분기 1이 price를 history[-1]로 덮으므로 서빙값을 쓰면 항등이 된다.
+  const branch1 = checkCross({ ...base, price: 99999, prov: { v: 2 }, change_recalced: {
+    branch: 1, diffPct: 0.001, from: { price: 24876.91, change: 0.005, prev_close: 24876.905 } } }, NOW_CLOSED);
+  const priceAxis = branch1.axes.find(a => a.checkKind === 'cross-price');
+  assert(priceAxis?.observed === 24876.91,
+    `8-2: 가격 축도 원본 price를 쓴다(서빙값 99999가 아니라) (실제: ${JSON.stringify(priceAxis)})`);
+
+  // ── (3) internal-prevclose — 관측 전용, blocked 미계상 ──────
+  // 실측 형상: HYPR item.prev_close 0.92 vs price−change 0.91 (차이 0.01)
+  const obs = runRelativeChecks([{ id: 'HYPR', price: 0.89, change: -0.02, prev_close: 0.92,
+    as_of: '2026-07-29 (Twelve Data 종가)', source: 'Finnhub',
+    history: [...hist(29, 0.8, '2026-07-28', 0.004), { date: '2026-07-29', close: 0.89 }] }], NOW_CLOSED);
+  const ip = obs.observations.find(o => o.checkKind === 'internal-prevclose');
+  assert(ip && Math.abs(ip.diff - 0.01) < 1e-9,
+    `8-3: 내부 불일치 0.01을 관측한다 (실제: ${JSON.stringify(ip)})`);
+  assert(ip.observeOnly === true, '8-3: observeOnly 표시');
+  assert(obs.blocked === 0, `8-3: blocked에 계상하지 않는다 (실제 ${obs.blocked})`);
+  assert(!obs.findings.some(f => f.checkKind === 'internal-prevclose'),
+    '8-3: findings에도 섞이지 않는다(별도 observations 배열)');
+
+  // ── (4) 원인 다양성 + source-suspect ────────────────────────
+  const sameSrc = runRelativeChecks([
+    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-29 (t)', source: 'CNBC',
+      history: [...hist(29, 24800), { date: '2026-07-29', close: 20000 }] },
+    { id: 'dow', price: 51594.14, change: 10, as_of: '2026-07-29 (t)', source: 'CNBC',
+      history: [...hist(29, 51000), { date: '2026-07-29', close: 40000 }] },
+  ], NOW_CLOSED);
+  assert(sameSrc.blocked === 2 && sameSrc.blockDiversity.sources === 1,
+    `8-4: 단일 소스 동시 차단 (실제: ${JSON.stringify(sameSrc.blockDiversity)})`);
+  assert(sameSrc.blockDiversity.soleSource === 'CNBC', '8-4: soleSource로 벤더를 특정');
+  const gate = buildRelativeGuardSource({
+    scopes: { relative: { checked: 2, blocked: 2, skipped: 0, skips: {}, reasons: {},
+      sourceSuspectAt: '2026-07-30T00:00:00Z', sourceSuspect: 'CNBC', lastBlock: 'nasdaq …' } },
+    fields: {},
+  });
+  assert(gate.verdict === 'source-suspect' && gate.note.includes('CNBC'),
+    `8-4: 상태판이 source-suspect로 갈라 표시 (실제: ${gate.verdict} / ${gate.note})`);
+  assert(gate.note.includes('게이트 결함이 아니라'), '8-4: 게이트 결함으로 오인하지 않음을 문구로 명시');
+  const gateReal = buildRelativeGuardSource({
+    scopes: { relative: { checked: 2, blocked: 2, skipped: 0, skips: {}, reasons: {},
+      allBlockedAt: '2026-07-30T00:00:00Z', lastBlock: 'x' } }, fields: {},
+  });
+  assert(gateReal.verdict === 'gate-suspect', '8-4: 원인이 갈리면 여전히 gate-suspect');
+
+  // ── (5) Redis 스키마·집계 방식 무변경 ───────────────────────
+  const r5 = runRelativeChecks([
+    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-29 (t)', source: 'CNBC',
+      history: [...hist(29, 24800), { date: '2026-07-29', close: 24876.91 }] },
+    { id: 'btc', price: 64379, history: hist(30, 60000) },
+  ], NOW_CLOSED);
+  for (const k of ['checked', 'blocked', 'skipped']) {
+    assert(typeof r5[k] === 'number', `8-5: ${k}는 여전히 number`);
+  }
+  assert(r5.skipReasons && typeof r5.skipReasons === 'object', '8-5: skipReasons는 여전히 객체');
+  // fields 원소 스키마 — persistValidation이 f.field/f.ok/f.reason/f.detail만 읽는다
+  const OK_KEYSETS = ['detail,field,ok,reason', 'field,ok,skipped'];
+  for (const f of r5.fields) {
+    const keys = Object.keys(f).sort().join(',');
+    assert(OK_KEYSETS.includes(keys), `8-5: fields 원소 키가 종전과 동일 (실제: ${keys})`);
+  }
+  // 축 정보는 findings에 추가만 됐다(기존 키 id/kind/detail 유지)
+  const bad5 = runRelativeChecks([{ id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-29 (t)',
+    source: 'CNBC', history: [...hist(29, 24800), { date: '2026-07-29', close: 20000 }] }], NOW_CLOSED);
+  const fnd = bad5.findings[0];
+  for (const k of ['id', 'kind', 'detail']) assert(k in fnd, `8-5: findings에 기존 키 ${k} 유지`);
+  for (const k of ['checkKind', 'priceDate', 'historyDate', 'priceSource']) {
+    assert(k in fnd, `8-5: findings에 ${k} 추가`);
+  }
+  assert(fnd.detail.includes('양측 불일치'), '8-5: 중립 문구 유지');
+  assert(fnd.priceDate === '2026-07-29' && fnd.historyDate === '2026-07-29', '8-5: 날짜 2종이 실려 나온다');
+}
+
+// ── 9. recalcChange — 서빙 값·동작 무변경 회귀 ─────────────────
+// ⚠️ [B]에서 플래그(change_recalced)를 **추가만** 했다. 아래는 그 추가가 서빙 값이나
+//    분기 판단을 건드리지 않았음을 값으로 고정한다. 검사 2a가 이 함수의 발동 여부로
+//    change 축 판정을 바꾸므로, 동작이 조용히 달라지면 검사 결과도 조용히 달라진다.
+{
+  const mk = (over = {}) => ({
+    id: 'nasdaq', unit: undefined, price: 24876.91, prev_close: 24876.90,
+    change: 0.005, change_pct: 0.0001, direction: 'up',
+    history: [{ date: '2026-07-28', close: 24800 }, { date: '2026-07-29', close: 24876.90 }],
+    ...over,
+  });
+
+  // (a) 조기 반환 3종 — 값·플래그 둘 다 손대지 않는다
+  const pct = mk({ unit: 'percent' });
+  recalcChange(pct);
+  assert(pct.price === 24876.91 && pct.change === 0.005, '9a: unit=percent는 조기 반환(값 불변)');
+  assert(pct.change_recalced === undefined, '9a: 조기 반환이면 플래그도 없다');
+
+  const big = mk({ change: 5 });
+  recalcChange(big);
+  assert(big.price === 24876.91 && big.change === 5, '9a: |change|>0.01은 조기 반환');
+  assert(big.change_recalced === undefined, '9a: 플래그 없음');
+
+  const noHist = mk({ history: [{ date: '2026-07-29', close: 24876.90 }] });
+  recalcChange(noHist);
+  assert(noHist.price === 24876.91 && noHist.change_recalced === undefined, '9a: history<2도 조기 반환');
+
+  // (b) 분기 1 — diffPct < 0.05 → price/prev를 history 값으로 교체
+  //     |24876.91 − 24876.90| / 24876.90 × 100 = 0.00004% < 0.05 → 분기 1
+  const b1 = mk();
+  recalcChange(b1);
+  assert(b1.price === 24876.9, `9b: [분기1] price = history[-1] (실제 ${b1.price})`);
+  assert(b1.prev_close === 24800, `9b: [분기1] prev_close = history[-2] (실제 ${b1.prev_close})`);
+  assert(b1.change === 76.9, `9b: [분기1] change = 24876.9 − 24800 (실제 ${b1.change})`);
+  assert(b1.direction === 'up', '9b: [분기1] direction 재산출');
+  assert(b1.change_recalced.branch === 1, '9b: [분기1] 플래그 branch=1');
+  assert(b1.change_recalced.from.price === 24876.91 && b1.change_recalced.from.change === 0.005,
+    '9b: 원본이 덮이기 **전** 값으로 보존된다');
+  assert(b1.change_recalced.from.prev_close === 24876.90, '9b: 원본 prev_close도 보존');
+
+  // (c) 분기 2 — diffPct >= 0.05 → price 유지, prev만 history[-1]로
+  const b2 = mk({ price: 25000, history: [{ date: '2026-07-28', close: 24800 }, { date: '2026-07-29', close: 24000 }] });
+  recalcChange(b2);
+  assert(b2.price === 25000, `9c: [분기2] price 유지 (실제 ${b2.price})`);
+  assert(b2.prev_close === 24000, `9c: [분기2] prev_close = history[-1] (실제 ${b2.prev_close})`);
+  assert(b2.change === 1000, `9c: [분기2] change = 25000 − 24000 (실제 ${b2.change})`);
+  assert(b2.change_recalced.branch === 2, '9c: [분기2] 플래그 branch=2');
+  assert(b2.change_recalced.from.price === 25000, '9c: 원본 price 보존');
+
+  // (d) 플래그를 제거하면 나머지 필드가 종전 구조와 **정확히 같은 키 집합**인가
+  const b3 = mk();
+  recalcChange(b3);
+  delete b3.change_recalced;
+  const expected = Object.keys(mk()).sort().join(',');
+  assert(Object.keys(b3).sort().join(',') === expected,
+    `9d: 플래그 외에 새 필드가 생기지 않았다 (실제: ${Object.keys(b3).sort().join(',')})`);
+}
+
 // ── 7. 평탄성 면제 파생(cadence/type) ──────────────────────────
 // ⚠️ 종전에는 정책금리가 stale-baseline이라는 **다른 이유로 우연히** 빠지고 있었다.
 //    history가 일별로 바뀌면 즉시 상시 오탐이 되는 상태였다 — 그 우연을 규칙으로 대체한다.
@@ -424,11 +654,10 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   }
   assert(isFlatExempt('없는항목').exempt === false, '7b: 미지의 id는 면제하지 않음');
 
-  // (c) ⭐ baselineTooOld와 **무관하게** 면제되는가 — 기준선을 오늘로 둬 stale을 배제한다
+  // (c) ⭐ history 나이와 **무관하게** 면제되는가 — 기준선을 오늘로 둬 낡음을 배제한다
   const today = new Date().toISOString().slice(0, 10);
   const fresh = Array.from({ length: 24 }, (_, i) => ({
     date: i === 23 ? today : `2025-${String((i % 12) + 1).padStart(2, '0')}-01`, close: 2.75 }));
-  assert(baselineTooOld({ history: fresh }).stale === false, '7c: 이 데이터는 stale-baseline이 아니다');
   const ex = checkFlatness({ id: 'kr_base_rate', history: fresh });
   assert(ex.state === 'skipped' && ex.reason === 'flat-exempt:policy_rate',
     `7c: 기준선이 신선해도 정책금리는 면제 (실제: ${JSON.stringify(ex)})`);
@@ -447,6 +676,237 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   // 파생 근거가 실제로 메타에 적혀 있는지(규칙이 읽을 재료가 있는가)
   assert(/cadence:\s*MONTHLY/.test(metaSrc) && /type:\s*POLICY_RATE/.test(metaSrc),
     '7d: cadence/type이 메타에 명시돼 있다');
+}
+
+// ── 10. 데이터 신호 정렬 — 2026-07-30 revert의 회귀 고정 ────────────────
+// ⚠️ 이 절의 케이스는 **전부 현행(4b94b31) 코드로는 실패한다.** 그게 요건이다 —
+//    통과하는 테스트를 추가하는 건 회귀 고정이 아니다.
+{
+  // 프로덕션 실측값. [저장소:correct-marten-133336:lastgood:market:* @2026-07-31T02:0xZ]
+  const CLOSES = {
+    nasdaq: { d28: 24876.91, d29: 24442.94 }, dow: { d28: 52747.32, d29: 51594.14 },
+    sp500:  { d28: 7428.78,  d29: 7316.15 },  sox: { d28: 11035.68, d29: 10447.49 },
+    vix:    { d28: 18.21,    d29: 20.66 },
+  };
+  // 기록된 오탐 잔차. [저장소:correct-marten-133336:health:validate:fields:relative
+  //                    @2026-07-30T08:55:26.056Z] detail의 '[cross-prevclose-origin] N%'
+  const RECORDED = { nasdaq: 1.775, dow: 2.235, sp500: 1.539, sox: 5.630, vix: 11.859 };
+  const PREMARKET_ASOF = '2026-07-30 17:55 KST';   // = 04:55 ET 07-30, 프리마켓 창 안
+
+  // 그 회차의 아이템 형상 — CNBC가 개장 전이라 change=0을 주고 recalcChange 분기1이 발동해
+  // price/prev_close가 history 값으로 덮인 상태(서빙값)에 원본이 함께 실려 있다.
+  const premarketItem = (id) => {
+    const { d28, d29 } = CLOSES[id];
+    return {
+      id, price: d29, prev_close: d28, change: r2(d29 - d28), source: 'CNBC',
+      as_of: PREMARKET_ASOF, quoteWindow: 'extended', prov: { v: 2 },
+      change_recalced: { branch: 1, diffPct: 0, from: { price: d29, prev_close: d29, change: 0 } },
+      history: [{ date: '2026-07-28', close: d28 }, { date: '2026-07-29', close: d29 }],
+    };
+  };
+
+  // ── (1) 오탐 5건이 각각 소멸한다 ─────────────────────────────────────
+  for (const id of Object.keys(CLOSES)) {
+    const c = checkCross(premarketItem(id), new Date('2026-07-30T08:55:26.056Z'));
+    assert(c.alignment === 'prev-day', `10-1: ${id} 프리마켓 회차는 prev-day (실제: ${c.alignment}/${c.alignBasis})`);
+    assert(c.state === 'checked' && c.axes.every(a => a.state !== 'checked' || a.ok),
+      `10-1: ${id} 위반 0건 — 기록된 ${RECORDED[id]}% 오탐 소멸 (실제: ${JSON.stringify(c.axes)})`);
+    const ax = c.axes.find(a => a.checkKind === 'cross-prevclose');
+    assert(ax && ax.residual === 0,
+      `10-1: ${id} change 축 잔차 0 (h[-1]과 대조) (실제: ${ax?.residual})`);
+    assert(!c.axes.some(a => a.checkKind === 'cross-price'),
+      `10-1: ${id} prev-day이므로 가격 축은 만들지 않는다(당일 캔들 부재가 정상)`);
+  }
+
+  // ── (2) exthrs 축이 없으면 시계가 하루 어긋난다(revert 원인의 직접 고정) ──
+  const noExt = checkCross({ ...premarketItem('nasdaq'), quoteWindow: 'regular' },
+    new Date('2026-07-30T08:55:26.056Z'));
+  assert(noExt.clockAlignment === 'same-day' && noExt.signalAlignment === 'prev-day',
+    `10-2: exthrs 없으면 시계는 same-day로 어긋난다 (실제 시계 ${noExt.clockAlignment}/신호 ${noExt.signalAlignment})`);
+  assert(noExt.state === 'skipped' && noExt.reason === 'alignment-ambiguous',
+    `10-2: 어긋나면 통과도 위반도 아닌 ambiguous (실제: ${noExt.state}/${noExt.reason})`);
+  assert(tradingDateOf('nasdaq', PREMARKET_ASOF, { extendedHours: true }).basis === 'pre-open+exthrs',
+    '10-2: 확장시간이면 pre-open이 당일로 롤된다');
+  assert(tradingDateOf('nasdaq', PREMARKET_ASOF, { extendedHours: true }).date === '2026-07-30'
+      && tradingDateOf('nasdaq', PREMARKET_ASOF).date === '2026-07-29',
+    '10-2: 같은 시각이 exthrs 유무로 하루 갈린다');
+
+  // ── (3) vix 필수 픽스처 ──────────────────────────────────────────────
+  // [저장소:correct-marten-133336:lastgood:market:vix @2026-07-30T22:52:55.530Z]
+  //   price 17.09 / prev_close 20.66 / history[-1] 2026-07-29 20.66 (07-30 캔들 미도착)
+  // 이 회차가 vix:consec을 4까지 올린 20.889% 위반의 실체다. 라이브에서는 07-31T00:29:59Z에
+  // Naver가 07-30 캔들을 올려 사라졌으므로 **픽스처로 동결**한다.
+  const vixFix = {
+    id: 'vix', price: 17.09, prev_close: 20.66, change: -3.57, source: 'CNBC',
+    as_of: '2026-07-31 07:52 KST', quoteWindow: 'extended', prov: { v: 2 },
+    history: [{ date: '2026-07-28', close: 18.21 }, { date: '2026-07-29', close: 20.66 }],
+  };
+  const vc = checkCross(vixFix, new Date('2026-07-30T22:52:55.542Z'));
+  assert(vc.alignment === 'prev-day' && vc.signalAlignment === 'prev-day' && vc.clockAlignment === 'prev-day',
+    `10-3: vix 픽스처는 신호·시계 합의 prev-day (실제: ${vc.alignBasis})`);
+  assert(vc.axes.find(a => a.checkKind === 'cross-prevclose')?.residual === 0,
+    '10-3: change 축 잔차 0 — 20.889% 위반 소멸');
+  assert(!vc.recalced, '10-3: |change|=3.57 > 0.01이라 recalcChange는 발동하지 않았다');
+
+  // ── (4) prev-day 우선 순서 — 뒤집으면 오탐 5건이 부활한다 ────────────
+  // 축퇴(change≈0)에서 same-day를 택하면 change 축이 history[-2]와 대조돼 기록된 잔차가
+  // 그대로 재현된다. 순서는 스타일이 아니라 **결과를 바꾸는 규칙**이다.
+  for (const id of Object.keys(CLOSES)) {
+    const { d28, d29 } = CLOSES[id];
+    const sig = alignBySignal({ price: d29, prevClose: d29, provenance: 'stamped' },
+      { date: '2026-07-29', close: d29 }, ASSET_META[id].quantum ?? 0.01);
+    assert(sig.alignment === 'prev-day' && sig.degenerate === true,
+      `10-4: ${id} 축퇴에서 prev-day를 택한다 (실제: ${sig.alignment})`);
+    // 반증 — same-day를 택했다면 얼마가 나왔을지 계산해 기록값과 대조한다.
+    const wouldBe = Math.abs(d28 - d29) / Math.abs(d29) * 100;
+    assert(Math.abs(wouldBe - RECORDED[id]) < 0.001,
+      `10-4: [반증] same-day였다면 기록된 ${RECORDED[id]}%가 재현된다 (계산 ${wouldBe.toFixed(3)})`);
+  }
+
+  // ── (5) HYPR 부동소수 경계 — 양자 정수 비교 ──────────────────────────
+  // [저장소:correct-marten-133336:health:validate:fields:relative@2026-07-30T22:52:55.542Z]
+  //   HYPR '양측 불일치 1.075% > 허용 1.075%' — 같은 값인데 위반으로 기록됐다.
+  assert(Math.abs(0.92 - 0.93) !== 0.01, '10-5: 전제 — 0.92−0.93은 정확한 0.01이 아니다');
+  const relOld = Math.abs(0.92 - 0.93) / 0.93, tolOld = Math.max(0.002, 0.01 / 0.93);
+  assert(relOld > tolOld && relOld - tolOld < 1e-16,
+    '10-5: 전제 — 실수 비교로는 1e-17 차이로 경계가 뒤집힌다');
+  const tick = okByTicks(0.92 - 0.93, 0.01, 1, 0.93, 0.002);
+  assert(tick.ok === true && tick.ticks === 1 && tick.via === 'quanta',
+    `10-5: 양자 정수 비교는 1틱 ≤ 1틱으로 통과 (실제: ${JSON.stringify(tick)})`);
+  // 통합 경로 — 실제 아이템으로도 통과해야 한다
+  const hyprFix = checkCross({ id: 'HYPR', price: 0.93, prev_close: 0.92, change: 0.01,
+    source: 'Finnhub', as_of: '2026-07-30 (Twelve Data 종가)', prov: { v: 2 },
+    history: [{ date: '2026-07-29', close: 0.91 }, { date: '2026-07-30', close: 0.92 }] }, NOW_CLOSED);
+  assert(hyprFix.axes.every(a => a.state !== 'checked' || a.ok),
+    `10-5: HYPR 1양자 차이는 위반이 아니다 (실제: ${JSON.stringify(hyprFix.axes)})`);
+  // 반증 — 2양자를 넘기면 가격 축이 잡아야 한다(경계 완화가 검사를 죽이지 않았는가)
+  const hyprBad = checkCross({ id: 'HYPR', price: 0.93, prev_close: 0.92, change: 0.01,
+    source: 'Finnhub', as_of: '2026-07-30 (Twelve Data 종가)', prov: { v: 2 },
+    history: [{ date: '2026-07-29', close: 0.91 }, { date: '2026-07-30', close: 0.80 }] }, NOW_CLOSED);
+  assert(hyprBad.axes.some(a => a.checkKind === 'cross-price' && a.ok === false),
+    `10-5: [반증] 13틱 차이는 여전히 위반 (실제: ${JSON.stringify(hyprBad.axes)})`);
+
+  // ── (6) change=0 축퇴 4조합 — 어느 것도 위반이 아니다 ────────────────
+  const degen = (P, V, H1, H2) => checkCross({ id: 'nasdaq', price: P, prev_close: V, change: P - V,
+    source: 'CNBC', as_of: '2026-07-30 (테스트)', prov: { v: 2 },
+    history: [{ date: '2026-07-29', close: H2 }, { date: '2026-07-30', close: H1 }] }, NOW_CLOSED);
+  for (const [label, P, V, H1, H2, wantAlign] of [
+    ['P=V=H1, H2 다름(개장 전 미변동)', 100, 100, 100, 99, 'prev-day'],
+    ['P=V=H1=H2(완전 평탄)',            100, 100, 100, 100, 'prev-day'],
+    ['P=H1, V=H2(정상 same-day)',       101, 100, 101, 100, 'same-day'],
+    ['V=H1, P 다름(정상 prev-day)',     103, 100, 100,  99, 'prev-day'],
+  ]) {
+    const d = degen(P, V, H1, H2);
+    assert(d.alignment === wantAlign, `10-6: ${label} → ${wantAlign} (실제: ${d.alignment}/${d.alignBasis})`);
+    assert(d.state !== 'skipped' && d.axes.every(a => a.state !== 'checked' || a.ok),
+      `10-6: ${label} 위반 0건 (실제: ${JSON.stringify(d.axes)})`);
+  }
+
+  // ── (7) 출처 도장 — 없으면 신호를 끄고 시계로 돈다 ───────────────────
+  // ⚠️ as_of를 시각 형식으로 준다 — 날짜만 주면 h1.date와 같아져 circular-asof로 빠지고
+  //    시계 축이 기권해 이 절이 검증하려는 '두 축 합의'가 성립하지 않는다.
+  const legacyItem = { id: 'nasdaq', price: 100, prev_close: 99, change: 1, source: 'CNBC',
+    as_of: '2026-07-31 05:30 KST',   // = 16:30 ET 07-30, 폐장 직후 → 거래일 07-30
+    history: [{ date: '2026-07-29', close: 99 }, { date: '2026-07-30', close: 100 }] };
+  const lg = checkCross(legacyItem, NOW_CLOSED);
+  assert(lg.provenance === 'legacy' && lg.signalAlignment === 'unknown',
+    `10-7: prov 없으면 신호 축을 끈다 (실제: ${lg.provenance}/${lg.signalAlignment})`);
+  assert(lg.alignBasis.startsWith('clock-only') && lg.alignment === 'same-day',
+    `10-7: 시계 단독으로 판정한다(종전 동작 유지) (실제: ${lg.alignBasis})`);
+  const stamped = checkCross({ ...legacyItem, prov: { v: 2 } }, NOW_CLOSED);
+  assert(stamped.provenance === 'stamped' && stamped.alignBasis.startsWith('agree'),
+    `10-7: 도장이 있으면 두 축 합의로 간다 (실제: ${stamped.alignBasis})`);
+  // 집계 — prov-legacy는 스킵이 아니라 counters로 센다(skipped 오염 방지)
+  const lgAgg = runRelativeChecks([legacyItem], NOW_CLOSED);
+  assert(lgAgg.counters['prov-legacy'] === 1,
+    `10-7: prov-legacy를 counters로 센다 (실제: ${JSON.stringify(lgAgg.counters)})`);
+  assert(!Object.keys(lgAgg.skipReasons).some(k => k.includes('prov')),
+    '10-7: skipReasons에는 넣지 않는다 — 검사는 시계 폴백으로 성립했다');
+  assert(lgAgg.checked === 1, '10-7: 구버전 스냅샷도 검사는 수행된다');
+
+  // ── (8) originOf — 두 분기 모두에서 원본을 복원한다 ──────────────────
+  const o1 = originOf({ price: 100, prev_close: 99, change: 1, prov: { v: 2 },
+    change_recalced: { branch: 1, from: { price: 24876.91, prev_close: 24800, change: 0 } } });
+  assert(o1.price === 24876.91 && o1.prevClose === 24800 && o1.recalced === true,
+    `10-8: 분기1 원본 복원 (실제: ${JSON.stringify(o1)})`);
+  const o2 = originOf({ price: 100, prev_close: 99, change: 1, prov: { v: 2 },
+    change_recalced: { branch: 2, from: { price: 100, prev_close: 98.5, change: 0.004 } } });
+  assert(o2.price === 100 && o2.prevClose === 98.5,
+    `10-8: 분기2 원본 복원 (실제: ${JSON.stringify(o2)})`);
+  // from.prev_close가 없는 형상(구 스키마)에서는 price − change로 파생한다
+  const o3 = originOf({ prov: { v: 2 }, change_recalced: { branch: 1, from: { price: 50, change: 2 } } });
+  assert(o3.prevClose === 48, `10-8: from.prev_close 부재 시 price−change 파생 (실제: ${o3.prevClose})`);
+  const o4 = originOf({ price: 10, prev_close: 9, change: 1, prov: { v: 2 } });
+  assert(o4.price === 10 && o4.prevClose === 9 && o4.recalced === false && o4.provenance === 'stamped',
+    '10-8: 미발동이면 서빙값이 곧 원본');
+
+  // ── (9) us10y — 신호·시계 불일치는 ambiguous(신규 오탐 방지) ─────────
+  // [저장소:correct-marten-133336:lastgood:market:us10y @2026-07-31T00:29:59Z]
+  //   price 4.67 / prev_close 4.66 / h[-1] 07-30 4.67 / h[-2] 07-29 4.62
+  //   금리가 17:00 ET 롤을 넘어 안 움직여 price==h[-1]이 **우연히** 성립한다.
+  //   신호만 믿으면 same-day → change 축 |4.62−4.66|/4.66 = 0.858% > 0.5% 신규 오탐이었다.
+  const u = checkCross({ id: 'us10y', price: 4.67, prev_close: 4.66, change: 0.004,
+    source: 'CNBC', as_of: '2026-07-31 09:29 KST', quoteWindow: 'extended', prov: { v: 2 },
+    history: [{ date: '2026-07-29', close: 4.62 }, { date: '2026-07-30', close: 4.67 }] },
+    new Date('2026-07-31T00:29:59.553Z'));
+  assert(u.signalAlignment === 'same-day' && u.clockAlignment === 'prev-day',
+    `10-9: us10y는 신호 same-day ↔ 시계 prev-day로 갈린다 (실제: ${u.signalAlignment}/${u.clockAlignment})`);
+  assert(u.state === 'skipped' && u.reason === 'alignment-ambiguous',
+    `10-9: 갈리면 축을 만들지 않는다 — 0.858% 신규 오탐 방지 (실제: ${u.state}/${u.reason})`);
+
+  // ── (10) dxy — 신호가 없으면 시계(17:00 ET 롤)가 구한다 ──────────────
+  // [저장소:correct-marten-133336:lastgood:market:dxy @2026-07-31T00:29:59Z]
+  //   price 100.08 / prev_close 99.86 / h[-1] 07-30 99.72 — 양쪽 다 h1과 불일치
+  const dx = checkCross({ id: 'dxy', price: 100.08, prev_close: 99.86, change: 0.21,
+    source: 'CNBC', as_of: '2026-07-31 09:29 KST', quoteWindow: 'extended', prov: { v: 2 },
+    history: [{ date: '2026-07-29', close: 100.72 }, { date: '2026-07-30', close: 99.72 }] },
+    new Date('2026-07-31T00:29:59.553Z'));
+  assert(dx.signalAlignment === 'unknown' && dx.alignment === 'prev-day',
+    `10-10: 신호 없으면 시계 단독으로 prev-day (실제: ${dx.signalAlignment}/${dx.alignment})`);
+  assert(dx.state === 'checked' && dx.axes.every(a => a.state !== 'checked' || a.ok),
+    `10-10: dxy는 통과한다 — 종전 market-open 스킵이던 구간의 커버리지 획득 (실제: ${JSON.stringify(dx.axes)})`);
+
+  // ── (11) kr_base_rate — 비일별은 stale-history에 도달하지 않는다 ─────
+  assert(isDailyCadence('kr_base_rate') === false, '10-11: kr_base_rate는 비일별');
+  assert(ASSET_META.kr_base_rate.cross === 'tauto', '10-11: tauto라 checkCross 최상단에서 조기반환');
+  const kb = checkCross({ id: 'kr_base_rate', price: 2.75, prev_close: 2.75, change: 0, prov: { v: 2 },
+    as_of: '2026-07-28 (한국은행)',
+    history: [{ date: '2026-06-30', close: 2.5 }, { date: '2026-07-28', close: 2.75 }] }, NOW_CLOSED);
+  assert(kb.state === 'skipped' && kb.reason === 'tauto',
+    `10-11: 갭이 크게 벌어져도 finding이 되지 않는다 (실제: ${kb.state}/${kb.reason})`);
+  // 이중 방어 — tauto가 아니었더라도 비일별이라 stale에서 빠진다
+  const monthlyStale = checkCross({ id: 'nasdaq', price: 100, prev_close: 99, change: 1, prov: { v: 2 },
+    as_of: '2026-07-30 (테스트)', source: 'CNBC',
+    history: [{ date: '2026-06-30', close: 90 }, { date: '2026-07-01', close: 91 }] }, NOW_CLOSED);
+  assert(monthlyStale.alignment === 'stale' || monthlyStale.state === 'skipped',
+    '10-11: [대조군] 일별 항목은 같은 갭에서 stale로 간다');
+
+  // ── (12) 스키마 — 기존 키는 그대로, counters만 추가 ──────────────────
+  const agg = runRelativeChecks([premarketItem('nasdaq'), vixFix], new Date('2026-07-30T08:55:26.056Z'));
+  for (const k of ['checked', 'blocked', 'skipped']) {
+    assert(typeof agg[k] === 'number', `10-12: ${k}는 number 유지`);
+  }
+  assert(agg.skipReasons && typeof agg.skipReasons === 'object', '10-12: skipReasons 객체 유지');
+  assert(agg.counters && typeof agg.counters === 'object', '10-12: counters 추가');
+  assert(Array.isArray(agg.findings) && Array.isArray(agg.fields), '10-12: findings/fields 배열 유지');
+  for (const f of agg.fields) {
+    assert(['field', 'ok', 'reason', 'detail', 'skipped'].some(k => k in f), '10-12: fields 원소 키 집합 유지');
+  }
+  // counters 코드에 콜론이 없어야 한다 — health.sanitizeCode가 제거해 키가 뭉개진다
+  assert(Object.keys(agg.counters).every(k => !k.includes(':')),
+    `10-12: counters 코드에 ':' 금지 (실제: ${Object.keys(agg.counters)})`);
+
+  // ── (13) 소스 설정에서 exthrs 파생 — URL 하드코딩이 다시 생기지 않게 ──
+  assert(CNBC_QUOTE.extendedHours === true, '10-13: CNBC_QUOTE가 확장시간 여부를 갖는다');
+  // ⚠️ 여기서는 주석을 걷어내지 않는다. us-indices.js에 Accept 헤더 'text/html,…,*/*'가 있어
+  //    블록주석 제거 정규식이 그 안의 '/*'를 여는 주석으로 읽고 파일 절반을 먹는다
+  //    (7d 주석이 경고한 것과 같은 함정 — 원문 검사가 안전한 경우엔 원문을 본다).
+  //    아래 두 패턴은 이 파일의 설명 주석과 겹치지 않는다(주석은 'exthrs=1'로 적혀 있다).
+  const usiSrc = readFileSync(new URL('../api/_collectors/us-indices.js', import.meta.url), 'utf8');
+  assert(!/exthrs:\s*'1'/.test(usiSrc),
+    '10-13: exthrs를 URL에 직접 박지 않는다(CNBC_QUOTE에서 파생)');
+  assert(/quoteWindow:\s*CNBC_QUOTE\.extendedHours/.test(usiSrc),
+    '10-13: 아이템의 quoteWindow가 같은 상수에서 파생된다');
 }
 
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);
