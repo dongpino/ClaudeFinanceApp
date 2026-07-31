@@ -145,5 +145,52 @@ assert(judgeStatus('coingecko', { lastFailureAt: agoHours(1), consecutiveFailure
   assert(/^\d{4}-\d{2}-\d{2}T\d{2}$/.test(kstHour()), 'kstHour: YYYY-MM-DDTHH 형식');
 }
 
+// ── 빌드 신원(build) — 값 노출 금지가 핵심 성질이다 ─────────────────────
+{
+  const { buildIdentity } = await import('../api/health.js');
+  const SAVED = { ...process.env };
+  try {
+    // 실제 Vercel 런타임 형상을 흉내낸다(값에 비밀이 섞여 있는 상황).
+    process.env.VERCEL = '1';
+    process.env.VERCEL_ENV = 'production';
+    process.env.VERCEL_GIT_COMMIT_SHA = '190449a1234567890abcdef1234567890abcdef12';
+    process.env.VERCEL_GIT_COMMIT_REF = 'master';
+    process.env.VERCEL_DEPLOYMENT_ID = 'dpl_TESTONLY';
+    process.env.VERCEL_REGION = 'icn1';
+    process.env.VERCEL_OIDC_TOKEN = 'SECRET-MUST-NOT-LEAK';
+
+    const b = buildIdentity();
+    assert(b.commitSha === '190449a1234567890abcdef1234567890abcdef12', 'build: commitSha 노출');
+    assert(b.commitRef === 'master' && b.vercelEnv === 'production', 'build: ref/env 노출');
+    assert(b.deploymentId === 'dpl_TESTONLY' && b.region === 'icn1', 'build: deploymentId/region 노출');
+
+    // ⭐ 핵심 — envKeys는 **이름만** 담는다. 값이 한 글자라도 섞이면 실패한다.
+    assert(Array.isArray(b.envKeys), 'build: envKeys는 배열');
+    assert(b.envKeys.includes('VERCEL_OIDC_TOKEN'), 'build: 키 이름은 담는다');
+    const flat = JSON.stringify(b.envKeys);
+    assert(!flat.includes('SECRET-MUST-NOT-LEAK'), 'build: ⚠️ envKeys에 값이 섞이면 안 된다');
+    assert(!flat.includes('dpl_TESTONLY'), 'build: envKeys에 deploymentId 값도 섞이지 않는다');
+    assert(b.envKeys.every(k => typeof k === 'string' && k.startsWith('VERCEL')),
+      'build: VERCEL 접두 키만, 전부 문자열');
+    assert(b.envKeys.every(k => process.env[k] !== undefined), 'build: 실재하는 키만');
+    const sorted = [...b.envKeys].sort();
+    assert(JSON.stringify(b.envKeys) === JSON.stringify(sorted), 'build: 정렬됨');
+
+    // 미주입 환경(로컬)에서는 null — "설정 꺼짐"과 구분하는 신호가 envKeys다.
+    delete process.env.VERCEL_GIT_COMMIT_SHA;
+    const b2 = buildIdentity();
+    assert(b2.commitSha === null, 'build: 미주입이면 null(undefined 아님)');
+    assert(!b2.envKeys.includes('VERCEL_GIT_COMMIT_SHA'),
+      'build: 키가 사라지면 envKeys에서도 빠진다 — 노출 설정 꺼짐 판별의 근거');
+
+    // 매 호출 새로 계산한다(모듈 상수로 굳으면 목적이 무너진다)
+    process.env.VERCEL_GIT_COMMIT_SHA = 'aaaaaaa';
+    assert(buildIdentity().commitSha === 'aaaaaaa', 'build: 매 호출 process.env에서 다시 읽는다');
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in SAVED)) delete process.env[k];
+    Object.assign(process.env, SAVED);
+  }
+}
+
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);
 process.exit(fail === 0 ? 0 : 1);
