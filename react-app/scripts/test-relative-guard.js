@@ -410,8 +410,13 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   assert(good.checked === 1, `5: 폐장+신선 기준선이면 checked (실제 ${good.checked})`);
 
   // (e) 위반 검출 — history[-1]이 price와 크게 어긋나면 blocked
+  // ⚠️ as_of를 **시각 형식**으로 준다(2026-07-31 [a] 도입). 날짜만 주면 h1.date와 같아져
+  //    circular-asof가 되고, 그때 시계는 항등이라 판정 근거가 되지 못한다. 여기 형상은
+  //    h1이 크게 깨져 있어 신호도 서지 않으므로 circular이면 no-independent-axis로 스킵된다
+  //    — 그 동작은 10-14가 따로 고정한다. 이 케이스가 검증하려는 것은 '위반 검출'이다.
+  //    '2026-07-30 05:30 KST' = 16:30 ET 07-29 → after-close → price 거래일 07-29 = h1.date.
   const bad = runRelativeChecks([
-    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-29 (테스트)',
+    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-30 05:30 KST', prov: { v: 2 },
       history: [...hist(29, 24800), { date: '2026-07-29', close: 20000 }] },
   ], NOW_CLOSED);
   assert(bad.checked === 1 && bad.blocked === 1, '5: 교차 불일치 검출');
@@ -485,7 +490,10 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   }
 
   // ── (2) recalcChange — 발동 시 change 축은 항등 스킵 + 원본 별도 검사 ──
+  // prov 도장을 준다 — 없으면 신호 축이 꺼지고, as_of가 날짜만이라 circular까지 겹쳐
+  // no-independent-axis로 스킵된다([a], 2026-07-31). 이 절이 보려는 것은 축 구성이다.
   const base = { id: 'nasdaq', price: 24876.91, change: 0.005, as_of: '2026-07-29 (테스트)', source: 'CNBC',
+    prov: { v: 2 },
     history: [...hist(29, 24800), { date: '2026-07-29', close: 24876.91 }] };
   const plain = checkCross(base, NOW_CLOSED);
   assert(plain.axes.some(a => a.checkKind === 'cross-prevclose' && a.state === 'checked'),
@@ -514,7 +522,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   // ── (3) internal-prevclose — 관측 전용, blocked 미계상 ──────
   // 실측 형상: HYPR item.prev_close 0.92 vs price−change 0.91 (차이 0.01)
   const obs = runRelativeChecks([{ id: 'HYPR', price: 0.89, change: -0.02, prev_close: 0.92,
-    as_of: '2026-07-29 (Twelve Data 종가)', source: 'Finnhub',
+    as_of: '2026-07-29 (Twelve Data 종가)', source: 'Finnhub', prov: { v: 2 },
     history: [...hist(29, 0.8, '2026-07-28', 0.004), { date: '2026-07-29', close: 0.89 }] }], NOW_CLOSED);
   const ip = obs.observations.find(o => o.checkKind === 'internal-prevclose');
   assert(ip && Math.abs(ip.diff - 0.01) < 1e-9,
@@ -526,9 +534,9 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
 
   // ── (4) 원인 다양성 + source-suspect ────────────────────────
   const sameSrc = runRelativeChecks([
-    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-29 (t)', source: 'CNBC',
+    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-30 05:30 KST', prov: { v: 2 }, source: 'CNBC',
       history: [...hist(29, 24800), { date: '2026-07-29', close: 20000 }] },
-    { id: 'dow', price: 51594.14, change: 10, as_of: '2026-07-29 (t)', source: 'CNBC',
+    { id: 'dow', price: 51594.14, change: 10, as_of: '2026-07-30 05:30 KST', prov: { v: 2 }, source: 'CNBC',
       history: [...hist(29, 51000), { date: '2026-07-29', close: 40000 }] },
   ], NOW_CLOSED);
   assert(sameSrc.blocked === 2 && sameSrc.blockDiversity.sources === 1,
@@ -550,7 +558,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
 
   // ── (5) Redis 스키마·집계 방식 무변경 ───────────────────────
   const r5 = runRelativeChecks([
-    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-29 (t)', source: 'CNBC',
+    { id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-30 05:30 KST', prov: { v: 2 }, source: 'CNBC',
       history: [...hist(29, 24800), { date: '2026-07-29', close: 24876.91 }] },
     { id: 'btc', price: 64379, history: hist(30, 60000) },
   ], NOW_CLOSED);
@@ -565,7 +573,8 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
     assert(OK_KEYSETS.includes(keys), `8-5: fields 원소 키가 종전과 동일 (실제: ${keys})`);
   }
   // 축 정보는 findings에 추가만 됐다(기존 키 id/kind/detail 유지)
-  const bad5 = runRelativeChecks([{ id: 'nasdaq', price: 24876.91, change: 10, as_of: '2026-07-29 (t)',
+  const bad5 = runRelativeChecks([{ id: 'nasdaq', price: 24876.91, change: 10,
+    as_of: '2026-07-30 05:30 KST', prov: { v: 2 },
     source: 'CNBC', history: [...hist(29, 24800), { date: '2026-07-29', close: 20000 }] }], NOW_CLOSED);
   const fnd = bad5.findings[0];
   for (const k of ['id', 'kind', 'detail']) assert(k in fnd, `8-5: findings에 기존 키 ${k} 유지`);
@@ -773,16 +782,25 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
   const tick = okByTicks(0.92 - 0.93, 0.01, 1, 0.93, 0.002);
   assert(tick.ok === true && tick.ticks === 1 && tick.via === 'quanta',
     `10-5: 양자 정수 비교는 1틱 ≤ 1틱으로 통과 (실제: ${JSON.stringify(tick)})`);
-  // 통합 경로 — 실제 아이템으로도 통과해야 한다
-  const hyprFix = checkCross({ id: 'HYPR', price: 0.93, prev_close: 0.92, change: 0.01,
-    source: 'Finnhub', as_of: '2026-07-30 (Twelve Data 종가)', prov: { v: 2 },
-    history: [{ date: '2026-07-29', close: 0.91 }, { date: '2026-07-30', close: 0.92 }] }, NOW_CLOSED);
+  // 통합 경로 — 실제 아이템으로도 통과해야 한다.
+  // ⚠️ as_of를 **시각 형식**으로 준다. 날짜만이면 circular이 되어 시계가 기권하는데,
+  //    price가 h1에서 1양자 떨어져 있으면 신호도 서지 않아 no-independent-axis로 빠진다
+  //    (=가격 축이 아예 안 만들어져 이 절이 검증하려는 경계를 못 본다).
+  //    '2026-07-31 05:30 KST' = 16:30 ET 07-30 → after-close → price 거래일 07-30 = h1.date.
+  const hyprAt = new Date('2026-07-30T20:30:00Z');   // 16:30 ET 07-30, US 폐장 직후
+  const hyprFix = checkCross({ id: 'HYPR', price: 0.93, prev_close: 0.91, change: 0.02,
+    source: 'Finnhub', as_of: '2026-07-31 05:30 KST', prov: { v: 2 },
+    history: [{ date: '2026-07-29', close: 0.91 }, { date: '2026-07-30', close: 0.92 }] }, hyprAt);
+  assert(hyprFix.alignment === 'same-day',
+    `10-5: 시계 단독으로 same-day (실제: ${hyprFix.alignment}/${hyprFix.alignBasis})`);
   assert(hyprFix.axes.every(a => a.state !== 'checked' || a.ok),
     `10-5: HYPR 1양자 차이는 위반이 아니다 (실제: ${JSON.stringify(hyprFix.axes)})`);
+  assert(hyprFix.axes.find(a => a.checkKind === 'cross-price')?.ticks === 1,
+    '10-5: 가격 축이 정확히 1틱으로 계산된다');
   // 반증 — 2양자를 넘기면 가격 축이 잡아야 한다(경계 완화가 검사를 죽이지 않았는가)
-  const hyprBad = checkCross({ id: 'HYPR', price: 0.93, prev_close: 0.92, change: 0.01,
-    source: 'Finnhub', as_of: '2026-07-30 (Twelve Data 종가)', prov: { v: 2 },
-    history: [{ date: '2026-07-29', close: 0.91 }, { date: '2026-07-30', close: 0.80 }] }, NOW_CLOSED);
+  const hyprBad = checkCross({ id: 'HYPR', price: 0.93, prev_close: 0.91, change: 0.02,
+    source: 'Finnhub', as_of: '2026-07-31 05:30 KST', prov: { v: 2 },
+    history: [{ date: '2026-07-29', close: 0.91 }, { date: '2026-07-30', close: 0.80 }] }, hyprAt);
   assert(hyprBad.axes.some(a => a.checkKind === 'cross-price' && a.ok === false),
     `10-5: [반증] 13틱 차이는 여전히 위반 (실제: ${JSON.stringify(hyprBad.axes)})`);
 
@@ -907,6 +925,110 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
     '10-13: exthrs를 URL에 직접 박지 않는다(CNBC_QUOTE에서 파생)');
   assert(/quoteWindow:\s*CNBC_QUOTE\.extendedHours/.test(usiSrc),
     '10-13: 아이템의 quoteWindow가 같은 상수에서 파생된다');
+}
+
+// ── 11. [b] 진행 중 캔들 + [a] 순환 시계 결정권 박탈 ────────────────────
+// 2026-07-31 04:27:34Z 회차에서 419530이 낸 신규 오탐의 회귀 고정.
+// ⚠️ 우선순위: intraday 판정([b])이 축 선택([a])보다 **먼저**다. 전자는 데이터의 사실
+//    상태이고 후자는 그 상태가 아닐 때의 축 선택 규칙이다.
+{
+  // KR 장중 — 2026-07-31(금) 13:47 KST = 04:47 UTC. KR 세션 09:00~15:30 안.
+  const KR_OPEN = new Date('2026-07-31T04:47:00Z');
+  // [저장소:correct-marten-133336:lastgood:market:419530@2026-07-31T04:27:34Z] 실측 형상
+  const kr = (id, price, prevClose, h1c, h2c) => ({
+    id, price, prev_close: prevClose, change: price - prevClose, source: 'Naver',
+    as_of: '2026-07-31 (Naver 종가)', prov: { v: 2 },
+    history: [{ date: '2026-07-30', close: h2c }, { date: '2026-07-31', close: h1c }],
+  });
+
+  // ── (1) 419530 실측 픽스처 — intraday로 잡히고 오탐이 사라진다 ────────
+  const c419 = checkCross(kr('419530', 26200, 24500, 26300, 24500), KR_OPEN);
+  assert(c419.alignment === 'intraday' && c419.alignBasis === 'session-open+today-candle',
+    `11-1: 419530은 intraday (실제: ${c419.alignment}/${c419.alignBasis})`);
+  const px419 = c419.observations.find(o => o.checkKind === 'cross-price');
+  assert(px419 && px419.observeOnly === true && px419.ticks === 100,
+    `11-1: 가격 축은 관측 전용 100틱 (실제: ${JSON.stringify(px419)})`);
+  assert(Math.abs(px419.residual * 100 - 0.382) < 0.001,
+    `11-1: 관측된 잔차가 실측 0.382% (실제: ${(px419.residual * 100).toFixed(3)})`);
+  assert(!c419.axes.some(a => a.checkKind === 'cross-price'),
+    '11-1: 가격 축은 axes(판정 대상)에 들어가지 않는다');
+  const pv419 = c419.axes.find(a => a.checkKind === 'cross-prevclose');
+  assert(pv419 && pv419.state === 'checked' && pv419.residual === 0 && pv419.ok,
+    `11-1: change 축은 h[-2] 대조로 판정, 잔차 0 (실제: ${JSON.stringify(pv419)})`);
+  // 집계 — blocked에 계상되지 않는다
+  const agg419 = runRelativeChecks([kr('419530', 26200, 24500, 26300, 24500)], KR_OPEN);
+  assert(agg419.blocked === 0 && agg419.checked === 1,
+    `11-1: blocked 0 / checked 1 (실제 blocked=${agg419.blocked} checked=${agg419.checked})`);
+  assert(agg419.observations.some(o => o.checkKind === 'cross-price' && o.id === '419530'),
+    '11-1: 관측은 observations로 남는다');
+
+  // ── (2) 같은 회차 대조군 무영향 ──────────────────────────────────────
+  for (const [id, p, v, h1c, h2c] of [['028300', 30500, 29950, 30500, 29950],
+                                      ['080220', 63200, 50100, 63200, 50100]]) {
+    const c = checkCross(kr(id, p, v, h1c, h2c), KR_OPEN);
+    assert(c.alignment === 'intraday', `11-2: ${id}도 intraday (실제: ${c.alignment})`);
+    assert(c.axes.every(a => a.state !== 'checked' || a.ok), `11-2: ${id} 위반 없음`);
+    assert(c.observations.find(o => o.checkKind === 'cross-price')?.residual === 0,
+      `11-2: ${id} 관측 잔차 0`);
+  }
+  // HYPR — US 폐장 중이고 h1이 어제라 intraday가 아니다(영향 없음)
+  const hy = checkCross({ id: 'HYPR', price: 0.93, prev_close: 0.89, change: 0.04, source: 'Finnhub',
+    as_of: '2026-07-30 (Twelve Data 종가)', prov: { v: 2 },
+    history: [{ date: '2026-07-29', close: 0.89 }, { date: '2026-07-30', close: 0.93 }] }, KR_OPEN);
+  assert(hy.alignment === 'same-day' && hy.alignBasis === 'signal-only:no-clock',
+    `11-2: HYPR은 intraday가 아니고 신호 단독 same-day (실제: ${hy.alignment}/${hy.alignBasis})`);
+  assert(hy.axes.every(a => a.state !== 'checked' || a.ok), '11-2: HYPR 위반 없음');
+
+  // ── (3) [a] 순환 시계는 신호가 없어도 판정 근거가 못 된다 ─────────────
+  // 세션 밖(KR 폐장) + circular + 신호 없음 → no-independent-axis
+  const KR_CLOSED = new Date('2026-07-31T09:00:00Z');   // 18:00 KST 금 — KR 폐장
+  const noAxis = checkCross(kr('419530', 26200, 24500, 26300, 24500), KR_CLOSED);
+  assert(noAxis.state === 'skipped' && noAxis.reason === 'no-independent-axis',
+    `11-3: 세션 밖 circular+신호부재는 no-independent-axis (실제: ${noAxis.state}/${noAxis.reason})`);
+  assert(noAxis.circularAsOf === true && noAxis.signalAlignment === 'unknown',
+    '11-3: 사유가 순환+신호부재임을 필드로 남긴다');
+  // 신호가 서면 순환이어도 판정한다(028300 형상)
+  const okSig = checkCross(kr('028300', 30500, 29950, 30500, 29950), KR_CLOSED);
+  assert(okSig.alignment === 'same-day' && okSig.alignBasis === 'signal-only:no-clock',
+    `11-3: 신호가 서면 시계 없이 판정 (실제: ${okSig.alignment}/${okSig.alignBasis})`);
+  // 집계 사유 코드
+  const aggNo = runRelativeChecks([kr('419530', 26200, 24500, 26300, 24500)], KR_CLOSED);
+  assert(aggNo.skipReasons['no-independent-axis'] === 1,
+    `11-3: skipReasons에 계상 (실제: ${JSON.stringify(aggNo.skipReasons)})`);
+
+  // ── (4) intraday 제외 조건 3종 ───────────────────────────────────────
+  // CRYPTO — always-open이라 조건이 영구 참이 되는 것을 막는다(등급이 바뀌어도)
+  assert(isIntradayExcluded('btc'), '11-4: CRYPTO는 intraday 대상이 아니다(세션 kind)');
+  // FX — continuous. 17:00 ET 롤 회귀(3b)가 intraday로 뒤집히면 안 된다
+  assert(isIntradayExcluded('us10y') && isIntradayExcluded('dxy'),
+    '11-4: FX(continuous)도 intraday 대상이 아니다');
+  // stale 아이템 — price가 실시간이 아니므로 '진행 중'이 성립하지 않는다
+  const st = checkCross({ ...kr('419530', 26200, 24500, 26300, 24500), stale: true }, KR_OPEN);
+  assert(st.alignment !== 'intraday',
+    `11-4: stale 아이템은 intraday가 아니다 (실제: ${st.alignment})`);
+
+  // ── (5) US 지수·vix 현행 유지 — [b][a]가 건드리지 않는다 ──────────────
+  // 2026-07-31T04:27:34Z 회차 실측 형상(US 폐장·pre-open, h1=07-30)
+  const usAt = new Date('2026-07-31T04:27:34.866Z');
+  const us = (id, price, prevClose, h1c, h2c, recalc) => ({
+    id, price, prev_close: prevClose, change: price - prevClose, source: 'CNBC',
+    as_of: '2026-07-31 13:27 KST', quoteWindow: 'extended', prov: { v: 2 },
+    ...(recalc ? { change_recalced: { branch: 1, diffPct: 0, from: { price: h1c, prev_close: h1c, change: 0 } } } : {}),
+    history: [{ date: '2026-07-29', close: h2c }, { date: '2026-07-30', close: h1c }],
+  });
+  const nq = checkCross(us('nasdaq', 25122.18, 24442.94, 25122.18, 24442.94, true), usAt);
+  assert(nq.alignment === 'prev-day' && nq.alignBasis === 'agree:prevclose==h1',
+    `11-5: nasdaq 현행 유지 prev-day (실제: ${nq.alignment}/${nq.alignBasis})`);
+  assert(nq.axes.every(a => a.state !== 'checked' || a.ok), '11-5: nasdaq 위반 없음');
+  const vx = checkCross(us('vix', 17.09, 20.66, 17.09, 20.66, false), usAt);
+  assert(vx.state === 'skipped' && vx.reason === 'alignment-ambiguous',
+    `11-5: vix 현행 유지 ambiguous (실제: ${vx.state}/${vx.reason})`);
+}
+
+/** 그 항목이 세션 종류상 intraday 판정 대상에서 빠지는가(테스트 전용 파생). */
+function isIntradayExcluded(id) {
+  const m = ASSET_META[id];
+  return m.market === 'CRYPTO' || m.market === 'FX';
 }
 
 console.log(`\n${fail === 0 ? '✓ 전체 통과' : '✗ 실패 있음'} — pass ${pass}, fail ${fail}`);

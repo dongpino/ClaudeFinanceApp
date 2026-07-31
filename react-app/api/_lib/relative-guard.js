@@ -445,6 +445,49 @@ export function originOf(item) {
 }
 
 /**
+ * **시계 축을 판정 근거로 쓸 수 있는가.**
+ *
+ * ⚠️ circular(as_of가 history[-1].date에서 파생됨)이면 `h1.date === priceDate`가 정의상
+ *    참이라 시계는 **언제나 same-day**를 답한다. 그건 증거가 아니라 항등식이므로
+ *    신호가 있든 없든 판정 근거가 될 수 없다.
+ *    실측 반례 [저장소:correct-marten-133336:health:validate:2026-07-31@2026-07-31T04:27:59Z]:
+ *      419530 [cross-price] 0.382% > 0.200% — 신호 unknown이라 순환 시계가 단독 채택돼
+ *      same-day로 판정됐고, KR 장중 실시간가를 **진행 중인 캔들**과 견줘 오탐이 났다.
+ *      (그 케이스는 이제 isIntradayCandle이 먼저 가로챈다 — 이 함수는 세션 밖 방어다.)
+ */
+function clockUsable(clock, circular) {
+  return clock !== 'unknown' && !circular;
+}
+
+/**
+ * **h1이 아직 확정되지 않은 '진행 중' 캔들인가.**
+ *
+ * 세션이 열려 있고 history[-1]의 날짜가 오늘 거래일이면, 그 캔들의 close는 종가가 아니라
+ * **현재가의 스냅샷**이다. 그때 price와 h1.close의 차이는 두 엔드포인트 조회 시점 사이의
+ * 정상 등락이고, 임계를 세울 근거가 없다(얼마나 움직여도 되는지 우리는 모른다).
+ *
+ * ⚠️ **당일 거래일은 as_of가 아니라 벽시계 now에서 구한다.** as_of에서 구하면 circular
+ *    항목에서 또 항등이 된다(as_of가 곧 h1.date이므로 조건이 무조건 참이 된다).
+ * ⚠️ **intraday 세션(KR·US)에만 적용한다.** 개·폐장이 하루 안에 있는 세션이라야
+ *    "오늘의 진행 중 캔들"이 정의된다. 제외되는 둘 다 실측으로 걸렸다:
+ *      CRYPTO — isMarketClosed가 always-open이라 조건이 영구 참이 된다.
+ *      FX     — continuous라 평일 내내 open이고, 게다가 value date가 자정이 아니라
+ *               17:00 ET에 바뀌므로 '오늘 ET 날짜'가 거래일과 어긋난다. 이걸 넣었더니
+ *               us10y가 17:00 ET 롤 회귀(3b)에서 prev-day 대신 intraday로 잡혔다.
+ * ⚠️ **stale 아이템은 제외한다.** last-good 폴백으로 서빙된 값은 price가 실시간이 아니다 —
+ *    h1.date가 오늘이어도 '진행 중'이라는 전제가 성립하지 않는다.
+ */
+function isIntradayCandle(item, meta, h1, now) {
+  const s = SESSION[meta.market];
+  if (!s || s.kind !== 'intraday') return false;
+  if (item.stale) return false;
+  if (isMarketClosed(meta.market, now).closed) return false;
+  const { date } = localParts(now, s.tz);
+  if (!isTradingDay(date, holidayKeyOf(meta.market))) return false;
+  return h1.date === date;
+}
+
+/**
  * **데이터 신호에 의한 정렬 판정.** 시각이 아니라 소스가 돌려준 값이 근거다.
  *
  *   원본 prev_close == history[-1].close  → prev-day (price는 다음 거래일 값)
@@ -569,24 +612,28 @@ export function checkCross(item, now = new Date()) {
   const sig = alignBySignal(origin, h1, quantum);
 
   let alignment, alignBasis;
-  if (circular && sig.alignment !== 'unknown') {
-    // 시계가 항등이라 반증력이 없다 — 신호가 단독으로 판정한다.
-    // ⚠️ 순환이어도 clock 값 자체는 버리지 않는다. 신호가 없을 때는 그게 유일한 단서이고
-    //    (구버전 스냅샷 구간) 종전 동작이기도 하다 — 커버리지를 0으로 떨어뜨리지 않는다.
-    alignment = sig.alignment; alignBasis = `signal-only:circular-asof`;
-  } else if (sig.alignment !== 'unknown' && clock !== 'unknown') {
+  const live = isIntradayCandle(item, meta, h1, now);
+  if (live) {
+    // ── ① 진행 중 캔들 — 축 선택보다 **먼저** 판정한다 ─────────────────
+    // 이건 축 선택 규칙이 아니라 **데이터의 사실 상태**다. h1이 아직 확정되지 않은
+    // 캔들이면 어느 축을 고르든 가격 축은 성립하지 않으므로, 축 선택보다 앞선다.
+    alignment = 'intraday'; alignBasis = 'session-open+today-candle';
+  } else if (sig.alignment !== 'unknown' && clockUsable(clock, circular)) {
     // 신호는 stale을 만들지 못하므로(값만 봄) clock==='stale'이면 항상 불일치가 된다.
     // 그때도 stale finding을 내지 않는다 — 값이 맞는데 날짜만 낡았다면 낡은 쪽이
     // history가 아니라 **우리 거래일 파생**일 수 있다(어제가 정확히 그 사고였다).
     if (sig.alignment === clock) { alignment = clock; alignBasis = `agree:${sig.basis}`; }
     else { alignment = 'ambiguous'; alignBasis = `disagree(신호 ${sig.alignment} vs 시계 ${clock})`; }
   } else if (sig.alignment !== 'unknown') {
-    alignment = sig.alignment; alignBasis = `signal-only:${sig.basis}`;
-  } else if (clock !== 'unknown') {
+    alignment = sig.alignment;
+    alignBasis = `signal-only:${circular ? 'no-clock' : sig.basis}`;
+  } else if (clockUsable(clock, circular)) {
     // 구버전 스냅샷(prov 없음)이 여기로 온다 — 신호를 포기하고 종전 동작(시계)으로 돈다.
     alignment = clock; alignBasis = `clock-only:${sig.basis}`;
   } else {
-    alignment = 'unknown'; alignBasis = `neither:${sig.basis}`;
+    // 신호도 없고 시계도 독립 축이 아니다 — 판정 근거가 하나도 없다.
+    alignment = 'unknown';
+    alignBasis = circular ? 'no-independent-axis' : `neither:${sig.basis}`;
   }
 
   const base = {
@@ -603,20 +650,27 @@ export function checkCross(item, now = new Date()) {
   if (alignment === 'ambiguous') return { ...base, state: 'skipped', reason: 'alignment-ambiguous' };
   if (alignment === 'unknown') {
     return { ...base, state: 'skipped',
-      reason: sig.basis === 'no-provenance' ? 'no-provenance' : (priceDate ? 'no-signal' : 'no-trading-date') };
+      reason: alignBasis === 'no-independent-axis' ? 'no-independent-axis'
+        : sig.basis === 'no-provenance' ? 'no-provenance'
+        : (priceDate ? 'no-signal' : 'no-trading-date') };
   }
 
   const axes = [], observations = [];
-  const mkAxis = (checkKind, observed, expected, denom, quanta) => {
+  /**
+   * @param {boolean} [observeOnly]  true면 observations로 보낸다 — **blocked에 계상되지 않는다.**
+   *   판정할 근거가 없을 뿐 값은 남겨야 하는 축에 쓴다(intraday의 가격 축).
+   */
+  const mkAxis = (checkKind, observed, expected, denom, quanta, observeOnly = false) => {
+    const sink = observeOnly ? observations : axes;
     if (!Number.isFinite(observed) || !Number.isFinite(expected)) {
-      axes.push({ checkKind, state: 'skipped', reason: 'no-baseline' });
+      sink.push({ checkKind, state: 'skipped', reason: 'no-baseline', observeOnly });
       return;
     }
     const floor = meta.cross === 'cross' ? CROSS_FLOOR_REL : SEMI_FLOOR_REL;
     const v = okByTicks(expected - observed, quantum, quanta, denom, floor);
-    axes.push({ checkKind, state: 'checked', ok: v.ok,
+    sink.push({ checkKind, state: 'checked', ok: v.ok,
       residual: v.residual, tolerance: crossTolerance(item.id, denom, quanta),
-      ticks: v.ticks, via: v.via, observed, expected, quanta });
+      ticks: v.ticks, via: v.via, observed, expected, quanta, observeOnly });
   };
 
   // ── stale — 축을 만들지 않고 finding 하나로 돌려보낸다 ───────────────
@@ -634,12 +688,21 @@ export function checkCross(item, now = new Date()) {
     return { ...base, axes: [], observations };
   }
 
-  // ── 가격 축 — same-day일 때만 성립한다(당일 캔들이 있어야 짝이 있다) ──
-  if (alignment === 'same-day') {
-    mkAxis('cross-price', origin.price, h1.close, origin.price, QUANTA_PRICE);
+  // ── 가격 축 ─────────────────────────────────────────────────────────
+  // same-day : h1이 확정 종가다 → **판정**한다.
+  // intraday : h1이 진행 중인 캔들이라 price와의 차이가 정상 등락이다 → **관측만** 한다.
+  //   실측 [저장소:correct-marten-133336:lastgood:market:419530@2026-07-31T04:27:34Z]
+  //     KR 장중 13:47 KST, price 26,200 ↔ h1(2026-07-31) 26,300 → 0.382%(100틱).
+  //     같은 회차 028300·080220은 0.000%였다 — 419530만 그 순간 움직여 있었다.
+  //     "얼마나 움직여도 정상인가"를 판정할 모델이 없으므로 임계를 세우지 않는다.
+  // prev-day : 당일 캔들이 아예 없다 → 축을 만들지 않는다.
+  if (alignment === 'same-day' || alignment === 'intraday') {
+    mkAxis('cross-price', origin.price, h1.close, origin.price, QUANTA_PRICE, alignment === 'intraday');
   }
-  // change 축의 대조 캔들 — same-day면 history[-2], prev-day면 history[-1].
-  const changeBaseline = alignment === 'same-day' ? h2?.close : h1.close;
+  // change 축의 대조 캔들 — 당일 캔들이 있으면(same-day·intraday) history[-2],
+  // prev-day면 history[-1]. intraday에서도 **전 세션 확정 종가와의 대조는 완전히 유효**하다 —
+  // 진행 중인 것은 h1이지 h2가 아니다. 그래서 장중에도 change 축은 판정한다.
+  const changeBaseline = (alignment === 'same-day' || alignment === 'intraday') ? h2?.close : h1.close;
 
   // ── change 축 — **언제나 원본 좌표로 센다** ──────────────────────────
   // 8b0f452는 recalc 발동 시에만 cross-prevclose-origin이라는 별도 축을 만들었는데,
