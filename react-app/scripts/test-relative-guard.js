@@ -74,7 +74,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
 
 // ── 1b. 항등(tautological) 강등 — 사유를 tauto와 구분해 센다 ────
 // ⭐ 근거는 소스 구조다(kr.js:45-62 / :134-176 — 현재가와 history가 같은 응답의 같은 행).
-//    실측 확인 [계산@2026-07-30T01:49:26Z 저장소:correct-marten-133336]:
+//    실측 확인 [계산@2026-07-30T01:49:26Z 프로덕션 9072dee8]:
 //      kospi 5663.24 / kosdaq 662.68 / usdkrw 1446 / jpykrw 884.76
 //      네 항목 모두 price−history[-1] = 0.00000000, prevClose−history[-2] = 0.00000000
 {
@@ -157,7 +157,7 @@ const NOW_US_OPEN = new Date('2026-07-29T18:00:00Z'); // 14:00 ET 수요일 = US
 
 // ── 3b. FX/금리 세션 분리 (2026-07-30) ─────────────────────────
 // ⭐ 이 블록이 us10y 상시 오탐의 회귀 고정이다.
-//    [저장소:correct-marten-133336:health:validate:fields:relative@2026-07-30T00:38:40Z]
+//    [저장소:9072dee8:health:validate:fields:relative@2026-07-30T00:38:40Z]
 //    us10y 1.493% 위반 @2026-07-29T22:59:14.826Z = 18:59 ET — 주식은 폐장이지만
 //    금리는 거래 중인 구간. US 세션으로 묶여 있어 검사가 돌아 버렸다.
 {

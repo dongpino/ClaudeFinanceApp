@@ -61,7 +61,7 @@ import { MARKET_HOLIDAYS } from './macro-calendar.js';
 //    16:00 ET에 주식이 닫혀도 FX·금리는 계속 거래되므로, 그 시간대의 price는 여전히 살아
 //    있는 값이고 history[-1](전일 종가)과 벌어지는 게 **정상**이다. US 세션 기준으로는
 //    그 구간이 'after-hours=폐장'이라 검사가 돌아 버렸다. 실측:
-//    [저장소:correct-marten-133336:health:validate:fields:relative@2026-07-30T00:38:40Z]
+//    [저장소:9072dee8:health:validate:fields:relative@2026-07-30T00:38:40Z]
 //      us10y  1.493% 위반 @2026-07-29T22:59:14.826Z (=18:59 ET, 주식 폐장·금리 거래중)
 //    같은 회차에 조회한 현재 스냅샷도 1.071%로 여전히 임계를 넘는다 — 상시 오탐이었다.
 const SESSION = {
