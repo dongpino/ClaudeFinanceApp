@@ -1094,33 +1094,41 @@ function isIntradayExcluded(id) {
     `C: no-independent-axis로 스킵 (실제: ${C.state}/${C.reason})`);
   assert((C.axes ?? []).length === 0, 'C: 축을 만들지 않는다');
 
-  // D. 축퇴 — ⚠️⚠️ KNOWN DEFECT (2026-07-31 관측, 수정은 별도 커밋) ⚠️⚠️
+  // D. 축퇴 + 당일 캔들 — **수정 완료(2026-08-03).** 종전 KNOWN DEFECT의 회귀 고정.
   //
-  //   현행 거동: alignment='intraday'(정상) 인데 cross-prevclose가 **위반**을 낸다.
-  //     원본 prev_close == price == h[-1](오늘 진행 중 종가)인데 intraday 분기가
-  //     신호를 무시하고 무조건 h[-2](어제 종가)를 기준선으로 쓰기 때문이다.
-  //     잔차 = 그날의 등락폭이 되어 어제 오탐 5건과 **구조가 같은 유형**이 된다.
+  //   수정 전 거동: alignment='intraday'(정상)인데 cross-prevclose가 **위반**을 냈다.
+  //     원본 prev_close == price == h[-1](오늘 진행 중 종가)라 prev_close에 정보가 없는데,
+  //     intraday 분기가 신호를 무시하고 무조건 h[-2](어제 종가)를 기준선으로 썼다.
+  //     잔차 = 그날의 등락폭 = |24500-26300|/26300 = 6.845%가 되어 오탐 5건과 **구조가
+  //     같은 유형**이었다. 그 값은 아래 반증 단언으로 계속 고정한다 — 수정이 풀리면
+  //     정확히 그 숫자가 되살아나므로, 사라진 값을 적어 두는 것이 회귀 방어가 된다.
   //
-  //   확정된 수정 방향(별도 커밋): 축퇴 상태에서는 **prev_close 기반 축을 만들지 않는다.**
-  //     축퇴의 정의가 "prev_close에 정보가 없다"인데 그 값을 h[-2]로 치환하는 것은
-  //     폴백이 아니라 기준선 날조다. 통과도 위반도 아닌 스킵으로 떨어뜨리고 사유를 계수한다.
-  //     **분류(alignment)는 건드리지 않는다** — 축퇴여도 intraday가 나오는 것은 정상이고,
-  //     prev_close에 의존하는 축만 성립 불가다. 분류와 축의 분리가 요점이다.
-  //
-  //   수정 후 뒤집힐 기대값:
-  //     · D.alignment === 'intraday'                        (그대로 — 바뀌지 않는다)
-  //     · D.axes에 cross-prevclose가 **없거나** state === 'skipped'
-  //     · 아래 "위반을 낸다" 단언 2개는 **실패해야 한다** — 그게 수정이 됐다는 신호다
+  //   수정: 축퇴이면서 기준선이 h[-2]인 구간(same-day·intraday)에서는 축을 만들지 않고
+  //     'degenerate-baseline'으로 스킵한다. 정보 없는 값에 남의 세션을 끼워 넣는 것은
+  //     폴백이 아니라 기준선 날조이므로, 통과도 위반도 아닌 **미수행**으로 떨어뜨린다.
+  //   ⚠️ **분류(alignment)는 건드리지 않았다** — 축퇴여도 intraday가 나오는 것이 정상이고
+  //     prev_close에 의존하는 축만 성립 불가다. 분류와 축의 분리가 이 수정의 요점이다.
+  //   ⚠️ prev-day 축퇴(기준선 h[-1])는 **범위 밖**이다. 잔차가 항상 0이라 날조가 아니라
+  //     동어반복이고 위반을 만들지 않는다 — 10-1이 그 거동을 '잔차 0'으로 고정한다.
   const D = checkCross(mk({ price: 26300, prevClose: 26300, h1c: 26300, h2c: 24500,
     asOf: ASOF_KR, recalced: true }), KR_OPEN);
   assert(D.alignment === 'intraday', `D: 축퇴여도 분류는 intraday (실제: ${D.alignment})`);
   assert(D.degenerate === true, 'D: degenerate는 alignment 값이 아니라 별도 플래그다');
   assert(D.signalAlignment === 'prev-day', 'D: 신호는 prev-day를 가리킨다(원본 prev_close == h[-1])');
   const dPrev = D.axes.find(a => a.checkKind === 'cross-prevclose');
-  assert(dPrev?.state === 'checked' && dPrev.ok === false,
-    'D: [KNOWN DEFECT] 현행은 change 축에 위반을 낸다 — 수정되면 이 단언이 뒤집힌다');
-  assert(Math.abs(dPrev.residual - Math.abs(24500 - 26300) / 26300) < 1e-12,
-    'D: [KNOWN DEFECT] 잔차가 h[-2] 대조값(=그날 등락폭)과 같다 — 기준선 날조의 증거');
+  assert(dPrev?.state === 'skipped' && dPrev.reason === 'degenerate-baseline',
+    `D: change 축은 판정하지 않고 degenerate-baseline으로 스킵 (실제: ${JSON.stringify(dPrev)})`);
+  assert(dPrev.ok === undefined && dPrev.residual === undefined,
+    'D: 스킵 축은 통과도 위반도 아니다 — ok·residual을 싣지 않는다');
+  // 반증 — 수정이 풀려 h[-2]를 기준선으로 되쓰면 이 잔차가 부활한다. 6.845%.
+  assert(Math.abs(Math.abs(24500 - 26300) / 26300 - 0.0684410646387833) < 1e-12,
+    'D: 날조 시 잔차는 그날 등락폭(6.845%)이었다 — 부활 시 대조할 기준값');
+  assert(D.axes.every(a => a.state !== 'checked' || a.ok),
+    'D: 축퇴 구간에서 위반이 나오지 않는다(오탐 소멸)');
+  // 분류 계수는 축 스킵과 무관하게 살아 있어야 한다 — 항등식의 근거.
+  assert(runRelativeChecks([mk({ price: 26300, prevClose: 26300, h1c: 26300, h2c: 24500,
+    asOf: ASOF_KR, recalced: true })], KR_OPEN).counters['align-intraday'] === 1,
+    'D: 축이 스킵돼도 align-intraday는 계수된다(분류와 축의 분리)');
 
   // E. price == h[-1], as_of 생략
   // ⚠️ as_of를 생략해도 "시계 정보 미제공"이 되지 않는다 — checkCross가 item.as_of ?? now로

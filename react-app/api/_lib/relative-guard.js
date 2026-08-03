@@ -709,7 +709,38 @@ export function checkCross(item, now = new Date()) {
   // 그러면 "언제 원본을 쓰는가"가 분기로 흩어져 한쪽만 고치는 실수가 난다. originOf가
   // 발동 여부와 무관하게 원본을 돌려주므로 축은 하나면 된다 — 발동 사실은 base.recalced로
   // 남겨 사람이 되짚을 수 있게 한다.
-  mkAxis('cross-prevclose', origin.prevClose, changeBaseline, origin.prevClose, QUANTA_PREVCLOSE);
+  //
+  // ── 축퇴 + 당일 캔들에서는 이 축을 만들지 않는다(D 수정, 2026-08-03) ───
+  // 축퇴의 정의가 **"prev_close가 어느 세션을 가리키는지 정보가 없다"**(원본
+  // prevClose == price == h[-1], alignBySignal:517)인데, 그 상태에서 기준선만 h[-2]로
+  // 갈아끼우면 폴백이 아니라 **기준선 날조**다. 잔차는 곧 그날 등락폭이 되고 임계를
+  // 넘으면 위반이 된다 — 소스 결함이 아니라 우리가 만들어 낸 오탐이다.
+  //   실측 [저장소:9072dee8:health:validate:fields:relative@2026-07-30T08:55:26Z]
+  //     sox 5.630% / dow 2.235% / nasdaq 1.775% / sp500 1.539% — 전부 이 구조다.
+  // 그래서 통과도 위반도 아닌 **미수행**으로 떨어뜨리고 사유를 계수한다
+  // (호출측이 axis- 접두어를 붙여 relative:skip:axis-degenerate-baseline로 기록한다).
+  // ⚠️ 기존 'no-baseline'과 구분한다 — 저쪽은 값이 비유한(NaN)이라 기준선이 **없는**
+  //    것이고, 이쪽은 값은 있으나 **정보가 없는** 것이다. 원인이 다르면 사유도 다르다.
+  //
+  // ⚠️⚠️ **분류(alignment)는 건드리지 않는다.** 축퇴여도 intraday가 나오는 것은 정상이고,
+  //    prev_close에 의존하는 이 축만 성립 불가다. 분류와 축의 분리가 요점 —
+  //    tally(align-*)가 축 생성보다 앞에 있으므로(runRelativeChecks) 항등식
+  //    sum(align-6종) == 정렬 판정 도달 수는 이 수정의 영향을 받지 않는다.
+  //
+  // ── 왜 당일 캔들 구간(same-day·intraday)으로 한정하는가 ────────────────
+  // 축퇴는 기준선에 따라 **성격이 다른 두 갈래**다. 날조는 그중 하나뿐이다.
+  //   same-day·intraday → 기준선 h[-2]. 남의 세션을 끼워 넣는 **날조** → 오탐이 난다.
+  //   prev-day          → 기준선 h[-1]. origin.prevClose와 같은 값이라 잔차가 항상 0.
+  //                       날조가 아니라 **동어반복**이고, 위반을 만들지 않는다.
+  // 여기서 고치는 것은 오탐을 내는 전자다. 후자는 "공허한 통과가 checked 분모를
+  // 부풀린다"는 별개 결함이며(위반은 없으므로 서빙·차단에 무영향), 손대면 2026-07-30
+  // revert 회귀 픽스처(test 10-1의 '잔차 0' 단언 5건)를 함께 갈아야 한다.
+  // TODO: prev-day 축퇴의 동어반복 통과를 checked에서 뺄지는 별도 판단으로 남긴다.
+  if (sig.degenerate && (alignment === 'same-day' || alignment === 'intraday')) {
+    axes.push({ checkKind: 'cross-prevclose', state: 'skipped', reason: 'degenerate-baseline' });
+  } else {
+    mkAxis('cross-prevclose', origin.prevClose, changeBaseline, origin.prevClose, QUANTA_PREVCLOSE);
+  }
 
   // ── 관측 전용 축: internal-prevclose ────────────────────────────────
   // item.prev_close(소스가 준 필드) ↔ price − change. history가 필요 없어 24시간 성립한다.
