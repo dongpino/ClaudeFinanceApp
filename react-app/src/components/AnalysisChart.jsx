@@ -6,6 +6,7 @@ import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesSt
 import { saveDrawings, makeShape, DRAWING_TYPE } from '../drawingsStore';
 import { DrawingPrimitive } from '../drawingPrimitive';
 import { hitTest } from '../drawingGeometry';
+import { createInteractionLock } from '../chartInteractionLock';
 
 // 두 차트의 우측 축 폭을 createChart 시점부터 동일하게 고정 (BTC 등 큰 숫자 기준으로 여유있게)
 const SCALE_WIDTH = 80;
@@ -352,6 +353,8 @@ const AnalysisChart = forwardRef(function AnalysisChart({
 
     const chart = createChart(el, buildChartOpts(theme, el.clientWidth, el.clientHeight));
     priceChartRef.current = chart;
+    // 스크롤·줌을 껐다 켜는 유일한 창구. 차트와 수명을 같이 한다(차트가 새로 생기면 잠금도 새로).
+    const interactionLock = createInteractionLock(chart);
 
     // 메인 시리즈 (캔들 or 영역)
     let mainSeries;
@@ -496,25 +499,27 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     // ⚠️ **setPointerCapture를 쓰지 않는다**(이 프로젝트에서 탭 내비게이션을 깨뜨린 전례).
     //    대신 드래그가 시작되면 **window에 pointermove/up/cancel을 건다** — 포인터가 차트
     //    밖으로 나가도 이벤트가 계속 오므로 캡처와 같은 효과를 얻으면서 캡처의 부작용이 없다.
-    // ⚠️ 차트가 같이 움직이면 끝점을 맞출 수 없으므로 드래그 동안 handleScroll/handleScale을
-    //    끈다. 복원은 **끄기 전에 읽어 둔 원본 값**으로 한다 — false로 덮은 뒤 부분 객체로
-    //    되돌리면 applyOptions가 병합만 해서 나머지 하위 플래그가 false로 남는다.
+    // ⚠️ 차트가 같이 움직이면 끝점을 맞출 수 없으므로 드래그 동안 스크롤·줌을 끈다.
+    //    끄고 켜는 일은 **chartInteractionLock 한 곳**에서만 한다 — options()가 내부 객체를
+    //    참조로 돌려주고 applyOptions가 그것을 제자리 변조하기 때문에, 복원하려면 반드시
+    //    깊은 복사본이어야 한다(그 실측 근거와 재진입 규약이 그 파일에 있다).
     // ⚠️ iOS 네이티브 스크롤은 pointermove preventDefault로 막히지 않는다(이 프로젝트 실측).
     //    그래서 드래그 동안만 **non-passive touchmove**를 걸어 preventDefault한다.
     const blockTouchScroll = ev => { if (dragRef.current) ev.preventDefault(); };
 
     function startEndpointDrag(hit) {
+      // 이미 드래그 중이면 새로 시작하지 않는다 — 두 번째 손가락이 다른 끝점에 닿는 경우가
+      // 있고, 그때 드래그 상태가 갈아치워지면 첫 손가락의 종료가 엉뚱한 도형을 저장한다.
+      if (dragRef.current) return;
       const shape = shapesRef.current.find(s => s.id === hit.id);
       if (!shape) return;
-      const prevOpts = chart.options();
       dragRef.current = {
         id: hit.id,
         index: hit.index,
         points: shape.points.map(p => ({ ...p })),
-        restore: { handleScroll: prevOpts.handleScroll, handleScale: prevOpts.handleScale },
       };
       forceHideShapeHover();
-      chart.applyOptions({ handleScroll: false, handleScale: false });
+      interactionLock.lock();
       el.style.touchAction = 'none';
       window.addEventListener('pointermove', onDragMove);
       window.addEventListener('pointerup', onDragEnd);
@@ -554,8 +559,10 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       dragRef.current = null;
       stopDragListeners();
       el.style.touchAction = '';
+      // ⚠️ 잠금 해제는 **저장보다 먼저**, 그리고 d 유무와 무관하게 한다 — 뒤에서 무엇이
+      //    실패하든 차트 조작은 반드시 살아 있어야 한다(이번 회귀의 증상이 정확히 그것이다).
+      interactionLock.unlock();
       if (!d) return;
-      chart.applyOptions(d.restore);
       const next = shapesRef.current.map(s => (s.id === d.id ? { ...s, points: d.points } : s));
       saveDrawings(drawPropsRef.current.symbolKey, next);
       drawPrimRef.current?.setShapes(next);
@@ -715,10 +722,13 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     return () => {
       ro.disconnect();
       el.removeEventListener('pointerdown', onPointerDown);
-      // 드래그 중에 차트가 사라질 수 있다(종목 전환 등) — window 리스너를 반드시 걷는다.
+      // 드래그 중에 차트가 사라질 수 있다(종목 전환 등) — window 리스너를 반드시 걷고,
+      // 잠금도 chart.remove() **전에** 푼다. 이 차트는 곧 버려지지만, "잠갔으면 반드시
+      // 푼다"는 규약을 경로마다 다르게 두면 어느 경로가 새는지 추적할 수 없게 된다.
       stopDragListeners();
       dragRef.current = null;
       el.style.touchAction = '';
+      interactionLock.unlock();
       chart.remove();
       priceChartRef.current = null;
       mainSeriesRef.current = null;
