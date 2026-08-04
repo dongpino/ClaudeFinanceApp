@@ -65,6 +65,15 @@ const shape = (id, t1, p1, t2, p2) => ({
   assert(buildSegments([nanPrice], null, toX, toY).length === 0, '4-4: 가격이 NaN이면 제외');
 }
 
+// ── (4b) 연장 플래그 — 기본 켜짐, extendRight:false면 꺼짐 ───────────
+{
+  const on  = buildSegments([shape('a', '2026-07-01', 1000, '2026-08-01', 3000)], null, toX, toY);
+  assert(on[0].extend === true, '4b-1: 기본은 연장 켜짐');
+  const off = buildSegments([{ ...shape('b', '2026-07-01', 1000, '2026-08-01', 3000), extendRight: false }],
+    null, toX, toY);
+  assert(off[0].extend === false, '4b-2: extendRight:false면 꺼짐(도형별 토글 자리)');
+}
+
 // ── (5) 미리보기 — 커서 끝은 화면 좌표 그대로 ────────────────────────
 {
   const preview = { from: { time: '2026-07-15', price: 2000 }, to: { x: 333, y: 77 } };
