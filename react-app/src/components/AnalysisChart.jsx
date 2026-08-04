@@ -483,6 +483,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       if (drawPropsRef.current.drawMode) return;
       const pt = paneCoordsFrom(e);
       const hit = hitShapeAt(pt.x, pt.y);
+      if (hit?.kind === 'endpoint') { startEndpointDrag(hit); return; }
       if (e.pointerType === 'touch') {
         // 터치에는 hover가 없다 — 탭으로 '선택'해야 ×가 뜬다. 빈 곳을 탭하면 해제.
         if (hit?.kind === 'segment') showShapeHover({ id: hit.id, x: pt.x, y: pt.y, sticky: true });
@@ -490,6 +491,76 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       }
     };
     el.addEventListener('pointerdown', onPointerDown);
+
+    // ── 끝점 드래그 ────────────────────────────────────────────────────
+    // ⚠️ **setPointerCapture를 쓰지 않는다**(이 프로젝트에서 탭 내비게이션을 깨뜨린 전례).
+    //    대신 드래그가 시작되면 **window에 pointermove/up/cancel을 건다** — 포인터가 차트
+    //    밖으로 나가도 이벤트가 계속 오므로 캡처와 같은 효과를 얻으면서 캡처의 부작용이 없다.
+    // ⚠️ 차트가 같이 움직이면 끝점을 맞출 수 없으므로 드래그 동안 handleScroll/handleScale을
+    //    끈다. 복원은 **끄기 전에 읽어 둔 원본 값**으로 한다 — false로 덮은 뒤 부분 객체로
+    //    되돌리면 applyOptions가 병합만 해서 나머지 하위 플래그가 false로 남는다.
+    // ⚠️ iOS 네이티브 스크롤은 pointermove preventDefault로 막히지 않는다(이 프로젝트 실측).
+    //    그래서 드래그 동안만 **non-passive touchmove**를 걸어 preventDefault한다.
+    const blockTouchScroll = ev => { if (dragRef.current) ev.preventDefault(); };
+
+    function startEndpointDrag(hit) {
+      const shape = shapesRef.current.find(s => s.id === hit.id);
+      if (!shape) return;
+      const prevOpts = chart.options();
+      dragRef.current = {
+        id: hit.id,
+        index: hit.index,
+        points: shape.points.map(p => ({ ...p })),
+        restore: { handleScroll: prevOpts.handleScroll, handleScale: prevOpts.handleScale },
+      };
+      forceHideShapeHover();
+      chart.applyOptions({ handleScroll: false, handleScale: false });
+      el.style.touchAction = 'none';
+      window.addEventListener('pointermove', onDragMove);
+      window.addEventListener('pointerup', onDragEnd);
+      window.addEventListener('pointercancel', onDragEnd);
+      window.addEventListener('touchmove', blockTouchScroll, { passive: false });
+    }
+
+    function onDragMove(ev) {
+      const d = dragRef.current;
+      const ms = mainSeriesRef.current;
+      if (!d || !ms) return;
+      const pt = paneCoordsFrom(ev);
+      const price = ms.coordinateToPrice(pt.y);
+      const time  = chart.timeScale().coordinateToTime(pt.x);
+      // ⚠️ 데이터 범위 밖(마지막 봉 오른쪽 여백 등)에서는 time이 null이다 — 그때는 **직전
+      //    시간을 유지**한다. 없는 시각을 지어내면 저장할 수 없는 좌표가 되고, 그건 이번
+      //    단계에서 보류한 "데이터 범위 밖 점 찍기"와 같은 문제다.
+      d.points = d.points.map((p, i) => (i !== d.index ? p : {
+        time:  time ?? p.time,
+        price: Number.isFinite(price) ? roundPrice(price) : p.price,
+      }));
+      // 드래그 중에는 프리미티브에만 반영한다 — 저장과 부모 state 갱신은 놓을 때 한 번.
+      drawPrimRef.current?.setShapes(
+        shapesRef.current.map(s => (s.id === d.id ? { ...s, points: d.points } : s)),
+      );
+    }
+
+    function stopDragListeners() {
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', onDragEnd);
+      window.removeEventListener('pointercancel', onDragEnd);
+      window.removeEventListener('touchmove', blockTouchScroll);
+    }
+
+    function onDragEnd() {
+      const d = dragRef.current;
+      dragRef.current = null;
+      stopDragListeners();
+      el.style.touchAction = '';
+      if (!d) return;
+      chart.applyOptions(d.restore);
+      const next = shapesRef.current.map(s => (s.id === d.id ? { ...s, points: d.points } : s));
+      saveDrawings(drawPropsRef.current.symbolKey, next);
+      drawPrimRef.current?.setShapes(next);
+      drawPropsRef.current.onShapesChange?.(next);
+    }
 
     // ── 거래량 히스토그램 (별도 priceScaleId로 캔들 가격축과 분리, 하단 오버레이) ──
     const volumeData = buildVolumeData(h);
@@ -644,6 +715,10 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     return () => {
       ro.disconnect();
       el.removeEventListener('pointerdown', onPointerDown);
+      // 드래그 중에 차트가 사라질 수 있다(종목 전환 등) — window 리스너를 반드시 걷는다.
+      stopDragListeners();
+      dragRef.current = null;
+      el.style.touchAction = '';
       chart.remove();
       priceChartRef.current = null;
       mainSeriesRef.current = null;
