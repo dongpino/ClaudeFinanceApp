@@ -1257,6 +1257,8 @@ body {
 .ind-toggle.on.bb    { border-color: #ec4899; }
 .ind-toggle.on.rsi   { border-color: #22d3ee; }
 .ind-toggle.on.vol   { border-color: #64748b; }
+/* 그리기 도구 — 지표가 아니라 도구라 기존 지표 7색과 겹치지 않는 라임을 쓴다 */
+.ind-toggle.on.draw  { border-color: #a3e635; }
 .ind-toggle.disabled { opacity: .35; cursor: not-allowed; }
 .ind-dot {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
@@ -1269,11 +1271,21 @@ body {
 .ind-toggle.on .ind-dot.bb    { background: #ec4899; }
 .ind-toggle.on .ind-dot.rsi   { background: #22d3ee; }
 .ind-toggle.on .ind-dot.vol   { background: #64748b; }
+.ind-toggle.on .ind-dot.draw  { background: #a3e635; }
+/* 도형 개수 — 렌더링이 없는 단계의 임시 검증 표시(다음 단계에서 제거) */
+.analysis-shape-count {
+  align-self: center;
+  font-size: 11px; font-weight: 700;
+  color: var(--text-3);
+  white-space: nowrap;
+}
 .ind-toggle-clear-lines {
   margin-left: auto;
   color: var(--text-3);
 }
 .ind-toggle-clear-lines:hover { border-color: var(--down); color: var(--down); }
+.ind-toggle-clear-shapes { color: var(--text-3); }
+.ind-toggle-clear-shapes:hover { border-color: var(--down); color: var(--down); }
 
 @media (max-width: 768px) {
   /* 지표 토글 칩 — 두 줄로 감싸이면 세로 공간을 차트에서 뺏어가므로 가로 스크롤 한 줄로 */
@@ -1283,7 +1295,9 @@ body {
     -webkit-overflow-scrolling: touch;
   }
   .analysis-toggles .ind-toggle,
-  .analysis-toggles .ind-toggle-clear-lines {
+  .analysis-toggles .ind-toggle-clear-lines,
+  .analysis-toggles .ind-toggle-clear-shapes,
+  .analysis-toggles .analysis-shape-count {
     flex-shrink: 0;
   }
 }
@@ -1350,6 +1364,22 @@ body {
 }
 .sr-line-del-btn:hover .sr-line-del-btn-dot,
 .sr-line-del-btn:active .sr-line-del-btn-dot {
+  border-color: var(--down); color: var(--down); background: var(--down-dim);
+}
+/* 도형(추세선) 삭제 × — 지지/저항선과 달리 가격축 옆이 아니라 **커서 옆**에 뜬다.
+   대각선이라 "그 선의 자리"가 y 하나로 정해지지 않기 때문. 안쪽 dot 스타일은 공유한다. */
+.shape-del-btn {
+  position: absolute;
+  transform: translateY(-50%);
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; padding: 0;
+  cursor: pointer;
+  z-index: 5;
+  -webkit-tap-highlight-color: transparent;
+}
+.shape-del-btn:hover .sr-line-del-btn-dot,
+.shape-del-btn:active .sr-line-del-btn-dot {
   border-color: var(--down); color: var(--down); background: var(--down-dim);
 }
 .analysis-rsi-wrap {

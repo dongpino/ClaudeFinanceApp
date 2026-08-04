@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useData } from '../DataContext';
 import useWatchlist from '../useWatchlist';
 import { loadTopPanelCollapsed, saveTopPanelCollapsed } from '../analysisTopPanelStore';
+import { loadDrawings, saveDrawings } from '../drawingsStore';
 import Header from './Header';
 import BottomNav from './BottomNav';
 import AnalysisChart from './AnalysisChart';
@@ -90,6 +91,14 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
   const [srLineCount, setSrLineCount] = useState(0);
   const chartRef = useRef(null);
 
+  // 그리기 도구 — **도형 목록의 소유자는 여기다.**
+  // ⚠️ 종전에는 AnalysisChart가 ref로 목록을 들고 개수만 통지했는데, 그 컴포넌트는
+  //    `item && <AnalysisChart/>`로 조건부 마운트라 종목 전환 중에는 통지할 주체가 아예
+  //    사라진다(로드 실패로 item이 계속 null이면 영구히). 그래서 화면에 이전 종목의 개수가
+  //    남았다. 목록을 여기로 올리면 로딩·실패 여부와 무관하게 symbolKey만으로 갱신된다.
+  const [drawMode, setDrawMode] = useState(false);
+  const [shapes, setShapes] = useState([]);
+
   // 모바일 전용 상단 패널(검색+칩 줄) 접기 — 데스크톱은 CSS 미디어쿼리로 항상 펼침 유지.
   const [topCollapsed, setTopCollapsedState] = useState(loadTopPanelCollapsed);
   function setTopCollapsed(v) {
@@ -160,7 +169,11 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
 
   // 종목 전환 시 "선 지우기" 버튼 상태 리셋 — 새 종목의 실제 개수는
   // AnalysisChart 복원 완료 후 onLinesChange로 다시 채워진다.
-  useEffect(() => { setSrLineCount(0); }, [selected]);
+  // 종목이 바뀌면 그리기 모드도 해제한다 — 이전 종목에서 켜 둔 모드가 새 종목 차트에
+  // 그대로 살아 있으면 첫 클릭이 의도치 않게 점 찍기로 해석된다.
+  // (도형 개수는 여기서 0으로 되돌리지 않는다 — AnalysisChart의 symbolKey effect가
+  //  새 심볼의 실제 개수를 즉시 통지하므로, 0으로 깜빡이는 중간 상태를 만들 필요가 없다.)
+  useEffect(() => { setSrLineCount(0); setDrawMode(false); }, [selected]);
 
   // 종목·타임프레임 전환 시 데이터 fetch — 선택된 종목이 없으면 호출하지 않는다.
   useEffect(() => {
@@ -210,9 +223,18 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
   const dir  = item?.direction ?? 'flat';
 
   // 수동 지지/저항선 localStorage 키 — 가격 기준 저장이라 tf는 포함하지 않는다.
+  // 그리기 도형도 같은 키를 쓴다(drawingsStore) — 한쪽만 다르면 종목 전환 시 두 레이어가
+  // 서로 다른 종목을 가리키게 된다.
   const symbolKey = selected
     ? `${selected.type}:${selected.market ?? ''}:${selected.symbol ?? selected.id}`
     : null;
+
+  // 심볼 전환 시 도형 교체 — "이전 심볼 것은 사라지고 새 심볼 것만 로드된다"의 유일한 트리거.
+  // ⚠️ 차트가 마운트돼 있는지와 **무관하게** 돈다. 이게 개수 표시가 낡던 결함의 수정점이다
+  //    (종전에는 조건부 마운트되는 AnalysisChart만 통지 주체였다).
+  // ⚠️ deps는 symbolKey 하나다 — tf가 바뀌어도 도형은 유지돼야 한다(시간·가격 절대 좌표라
+  //    봉 간격과 무관). selected를 deps로 쓰면 tf 전환마다 불필요한 재로드가 생긴다.
+  useEffect(() => { setShapes(loadDrawings(symbolKey)); }, [symbolKey]);
 
   // 확보 봉 수에 따라 MA 토글 비활성화
   const candleCount = item?.days_available
@@ -653,6 +675,25 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
                 >
                   <span className="ind-dot vol" />거래량
                 </button>
+                <button
+                  className={`ind-toggle${drawMode ? ' on draw' : ''}`}
+                  onClick={() => setDrawMode(v => !v)}
+                  title={drawMode
+                    ? '차트를 두 번 클릭해 시작점·끝점을 찍습니다 (ESC 취소)'
+                    : '추세선 그리기 — 켜면 차트 클릭이 점 찍기로 해석됩니다'}
+                >
+                  <span className="ind-dot draw" />{drawMode ? '그리는 중' : '그리기'}
+                </button>
+                <span className="analysis-shape-count">도형 {shapes.length}개</span>
+                {shapes.length > 0 && (
+                  <button
+                    className="ind-toggle ind-toggle-clear-shapes"
+                    onClick={() => { saveDrawings(symbolKey, []); setShapes([]); }}
+                    title="이 종목에 그린 도형을 모두 삭제합니다"
+                  >
+                    도형 지우기
+                  </button>
+                )}
                 {srLineCount > 0 && (
                   <button
                     className="ind-toggle ind-toggle-clear-lines"
@@ -692,6 +733,10 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
                     showVolume={showVolume && !volumeDisabled}
                     symbolKey={symbolKey}
                     onLinesChange={setSrLineCount}
+                    drawMode={drawMode}
+                    onDrawModeChange={setDrawMode}
+                    shapes={shapes}
+                    onShapesChange={setShapes}
                   />
                 )}
               </div>
