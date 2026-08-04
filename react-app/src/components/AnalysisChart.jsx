@@ -3,6 +3,7 @@ import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { calcMA, calcBB, calcRSIAligned } from '../indicators';
 import { useTheme } from '../ThemeContext';
 import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesStore';
+import { loadDrawings, saveDrawings, makeShape, DRAWING_TYPE } from '../drawingsStore';
 
 // 두 차트의 우측 축 폭을 createChart 시점부터 동일하게 고정 (BTC 등 큰 숫자 기준으로 여유있게)
 const SCALE_WIDTH = 80;
@@ -89,6 +90,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   showBB,
   showRSI, showVolume,
   symbolKey, onLinesChange,
+  drawMode, onDrawModeChange, onShapesChange,
 }, ref) {
   const { theme } = useTheme();
   const priceRef = useRef(null);
@@ -108,6 +110,16 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   srPropsRef.current = { symbolKey, onLinesChange, theme };
   const srPricesRef   = useRef([]);            // 현재 차트에 그려진 가격 목록
   const srLineObjsRef = useRef(new Map());      // price → IPriceLine (현재 mainSeries 소속)
+
+  // ── 그리기 도구(공통 기반) — 추세선·피보나치가 공유할 인터랙션 층 ──────────
+  // 이번 단계는 **좌표 수집과 저장까지만**이다. 렌더링(캔버스 오버레이·createPriceLine 등)은
+  // 다음 단계에서 별도로 붙이며, 그래서 여기에는 도형을 화면에 그리는 코드가 한 줄도 없다.
+  // 최신 props를 ref에 미러링하는 이유는 srPropsRef와 같다 — 차트 생성 시점 클로저에서
+  // 만들어진 구독 콜백이 stale prop을 읽으면 모드 토글이 먹히지 않는다.
+  const drawPropsRef = useRef({ drawMode, onDrawModeChange, onShapesChange, symbolKey });
+  drawPropsRef.current = { drawMode, onDrawModeChange, onShapesChange, symbolKey };
+  const shapesRef       = useRef([]);   // 현재 심볼의 확정 도형 목록
+  const pendingPointRef = useRef(null); // 첫 클릭으로 찍힌 시작점(두 번째 클릭 전까지)
 
   // MA series refs (visibility 토글용)
   const ma20Ref  = useRef(null);
@@ -180,6 +192,61 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   }
 
   useImperativeHandle(ref, () => ({ clearAllLines: clearAllSRLines }));
+
+  // ── 그리기 도구 헬퍼 ─────────────────────────────────────────
+  // ref만 참조하므로 어느 렌더에서 만들어진 함수든 항상 최신 상태를 반영한다(SR 헬퍼와 동일).
+  function notifyShapeCount() {
+    drawPropsRef.current.onShapesChange?.(shapesRef.current.length);
+  }
+
+  /**
+   * 클릭 지점 → { time, price }.
+   *
+   * ⚠️ **시간축은 param.time을 1순위로 쓴다.** 라이브러리가 이미 그 x좌표의 봉으로 스냅해
+   *    돌려주는 값이라 우리가 다시 계산하면 스냅 규칙이 갈라진다. 데이터 범위 밖(오른쪽
+   *    여백 등)에서는 undefined가 되므로(MouseEventParams.time 정의), 그때만 timeScale의
+   *    coordinateToTime으로 되묻는다. 둘 다 없으면 **좌표를 만들 수 없으므로 클릭을 버린다**
+   *    — 없는 시간을 0이나 마지막 봉으로 메우면 그 순간 데이터가 거짓이 된다.
+   * @returns {{time: string|number, price: number}|null}
+   */
+  function pointFromClick(param) {
+    const ms    = mainSeriesRef.current;
+    const chart = priceChartRef.current;
+    if (!ms || !chart || !param?.point) return null;
+    const price = ms.coordinateToPrice(param.point.y);
+    if (price === null || price === undefined || !Number.isFinite(price)) return null;
+    const time = param.time ?? chart.timeScale().coordinateToTime(param.point.x);
+    if (time === null || time === undefined) return null;
+    return { time, price: roundPrice(price) };
+  }
+
+  /**
+   * 그리기 모드에서의 클릭 1회 — 첫 클릭은 시작점, 두 번째 클릭은 끝점.
+   * 두 점이 모이면 도형으로 확정하고 저장한 뒤 **모드를 자동으로 끈다.**
+   * ⚠️ 모드가 꺼져 있으면 첫 줄에서 즉시 반환한다 — off 상태에서 이 구독은 아무 일도 하지 않는다.
+   */
+  function handleDrawClick(param) {
+    if (!drawPropsRef.current.drawMode) return;
+    const pt = pointFromClick(param);
+    if (!pt) return;
+
+    if (!pendingPointRef.current) {
+      pendingPointRef.current = pt;
+      return;
+    }
+    // type은 지금 'trendline' 하나뿐이고, 여기서 type으로 분기하지 않는다 —
+    // 피보나치가 들어와도 이 경로는 그대로이고 달라지는 것은 렌더링 단계다.
+    const shape = makeShape(DRAWING_TYPE.TRENDLINE, [pendingPointRef.current, pt]);
+    pendingPointRef.current = null;
+    if (!shape) return;
+
+    shapesRef.current = [...shapesRef.current, shape];
+    saveDrawings(drawPropsRef.current.symbolKey, shapesRef.current);
+    notifyShapeCount();
+    // 렌더링이 없는 단계라 눈으로 확인할 수단이 이것뿐이다(다음 단계에서 제거 대상).
+    console.log('[drawing] 도형 확정', drawPropsRef.current.symbolKey, shape);
+    drawPropsRef.current.onDrawModeChange?.(false);
+  }
 
   // ── X 버튼 hover 깜빡임 방지 ─────────────────────────────────
   // ref만 참조하므로 정의 시점에 상관없이 항상 최신 상태로 동작한다.
@@ -258,6 +325,10 @@ const AnalysisChart = forwardRef(function AnalysisChart({
 
     // ── 더블클릭: 생성 전용 — 기존 선과 너무 가까우면(±6px) 중복 생성만 방지 ──
     chart.subscribeDblClick(param => {
+      // 그리기 모드에서는 클릭이 **점 찍기로만** 해석된다. 이 가드가 없으면 두 점을 가깝게
+      // 연달아 찍을 때 더블클릭으로도 판정돼 의도치 않은 지지/저항선이 함께 생긴다.
+      // (모드가 꺼져 있으면 이 줄은 통과되므로 기존 동작은 그대로다.)
+      if (drawPropsRef.current.drawMode) return;
       const ms = mainSeriesRef.current;
       if (!ms || !param.point) return;
       const clickedPrice = ms.coordinateToPrice(param.point.y);
@@ -293,6 +364,11 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     }
     chart.subscribeCrosshairMove(updateHoverLine);
     chart.subscribeClick(updateHoverLine);
+
+    // 그리기 모드 클릭 수집 — 모드가 꺼져 있으면 handleDrawClick이 첫 줄에서 반환한다.
+    // 별도 구독으로 두는 이유: 기존 SR hover 구독과 관심사를 섞지 않기 위함이고,
+    // lightweight-charts는 같은 이벤트에 여러 핸들러를 허용한다.
+    chart.subscribeClick(handleDrawClick);
 
     // ── 거래량 히스토그램 (별도 priceScaleId로 캔들 가격축과 분리, 하단 오버레이) ──
     const volumeData = buildVolumeData(h);
@@ -459,6 +535,8 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       volumeRef.current = null;
       srLineObjs.clear(); // chart.remove()로 이미 소멸된 IPriceLine 참조 정리
       forceHideHoverLine();
+      // 차트가 사라지면 진행 중이던 첫 점은 좌표계를 잃는다 — 다음 차트로 넘기지 않는다.
+      pendingPointRef.current = null;
     };
   }, [item]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -551,6 +629,38 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     const c = CHART_COLORS[theme] ?? CHART_COLORS.dark;
     for (const line of srLineObjsRef.current.values()) line.applyOptions({ color: c.srLine });
   }, [theme]);
+
+  // ── 심볼 전환 시 도형 교체 ───────────────────────────────────
+  // 여기가 "이전 심볼 것은 사라지고 새 심볼 것만 로드된다"의 유일한 트리거다.
+  // ⚠️ 차트 생성 effect([item])에 얹지 않고 symbolKey를 독립 deps로 둔다 — item은 데이터
+  //    fetch가 끝나야 바뀌지만 symbolKey는 선택 즉시 바뀐다. item에 얹으면 그 사이 구간에서
+  //    **이전 심볼의 도형이 새 심볼 화면에 남는다.** tf만 바뀐 경우 symbolKey는 그대로이므로
+  //    이 effect는 돌지 않고 도형도 유지된다(가격·시간 좌표는 tf와 무관하게 같은 값이다).
+  useEffect(() => {
+    shapesRef.current = loadDrawings(symbolKey);
+    pendingPointRef.current = null;
+    notifyShapeCount();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- notifyShapeCount는 ref만 읽는다
+  }, [symbolKey]);
+
+  // ── ESC 취소 ────────────────────────────────────────────────
+  // 첫 점만 찍힌 상태에서만 동작한다(요구사항). 리스너는 **그리기 모드일 때만** 붙고,
+  // 모드가 꺼지면 즉시 제거된다 — off 상태에서는 키 입력에 아무 영향이 없다.
+  useEffect(() => {
+    if (!drawMode) {
+      pendingPointRef.current = null; // 모드가 꺼지면 진행 중인 점은 버린다
+      return undefined;
+    }
+    const onKeyDown = e => {
+      if (e.key !== 'Escape' || !pendingPointRef.current) return;
+      pendingPointRef.current = null;
+      // 취소는 모드 종료까지 포함한다 — 모바일에는 ESC가 없어 토글 버튼이 유일한 탈출구이고,
+      // 두 경로의 결과가 다르면 "지금 모드가 켜져 있나"를 화면만 보고 알 수 없게 된다.
+      drawPropsRef.current.onDrawModeChange?.(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [drawMode]);
 
   // ── MA·거래량 토글 (차트 재생성 없이 visibility만 변경) ──────
   useEffect(() => { ma20Ref.current?.applyOptions({ visible: showMA20 });   }, [showMA20]);

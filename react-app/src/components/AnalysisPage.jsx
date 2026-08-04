@@ -90,6 +90,12 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
   const [srLineCount, setSrLineCount] = useState(0);
   const chartRef = useRef(null);
 
+  // 그리기 도구(공통 기반) — 모드 on/off와 도형 개수만 여기서 들고 있고, 좌표 수집과
+  // localStorage 저장은 AnalysisChart 안에서 한다. 개수 표시는 렌더링이 없는 이번 단계의
+  // 임시 검증 수단이며 다음 단계(실제 그리기)에서 대체된다.
+  const [drawMode, setDrawMode] = useState(false);
+  const [shapeCount, setShapeCount] = useState(0);
+
   // 모바일 전용 상단 패널(검색+칩 줄) 접기 — 데스크톱은 CSS 미디어쿼리로 항상 펼침 유지.
   const [topCollapsed, setTopCollapsedState] = useState(loadTopPanelCollapsed);
   function setTopCollapsed(v) {
@@ -160,7 +166,11 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
 
   // 종목 전환 시 "선 지우기" 버튼 상태 리셋 — 새 종목의 실제 개수는
   // AnalysisChart 복원 완료 후 onLinesChange로 다시 채워진다.
-  useEffect(() => { setSrLineCount(0); }, [selected]);
+  // 종목이 바뀌면 그리기 모드도 해제한다 — 이전 종목에서 켜 둔 모드가 새 종목 차트에
+  // 그대로 살아 있으면 첫 클릭이 의도치 않게 점 찍기로 해석된다.
+  // (도형 개수는 여기서 0으로 되돌리지 않는다 — AnalysisChart의 symbolKey effect가
+  //  새 심볼의 실제 개수를 즉시 통지하므로, 0으로 깜빡이는 중간 상태를 만들 필요가 없다.)
+  useEffect(() => { setSrLineCount(0); setDrawMode(false); }, [selected]);
 
   // 종목·타임프레임 전환 시 데이터 fetch — 선택된 종목이 없으면 호출하지 않는다.
   useEffect(() => {
@@ -653,6 +663,17 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
                 >
                   <span className="ind-dot vol" />거래량
                 </button>
+                <button
+                  className={`ind-toggle${drawMode ? ' on draw' : ''}`}
+                  onClick={() => setDrawMode(v => !v)}
+                  title={drawMode
+                    ? '차트를 두 번 클릭해 시작점·끝점을 찍습니다 (ESC 취소)'
+                    : '추세선 그리기 — 켜면 차트 클릭이 점 찍기로 해석됩니다'}
+                >
+                  <span className="ind-dot draw" />{drawMode ? '그리는 중' : '그리기'}
+                </button>
+                {/* 임시 검증 표시 — 다음 단계에서 실제 도형 렌더링으로 대체된다 */}
+                <span className="analysis-shape-count">도형 {shapeCount}개</span>
                 {srLineCount > 0 && (
                   <button
                     className="ind-toggle ind-toggle-clear-lines"
@@ -692,6 +713,9 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
                     showVolume={showVolume && !volumeDisabled}
                     symbolKey={symbolKey}
                     onLinesChange={setSrLineCount}
+                    drawMode={drawMode}
+                    onDrawModeChange={setDrawMode}
+                    onShapesChange={setShapeCount}
                   />
                 )}
               </div>
