@@ -8,6 +8,9 @@
     { "path": "/api/briefing-cron", "schedule": "30 23 * * *" },
     { "path": "/api/probe-daum-status", "schedule": "40 23 * * 0-5" },
     { "path": "/api/probe-cnbc-format", "schedule": "0 14 * * 1-5" },
-    { "path": "/api/holiday-audit-cron", "schedule": "20 21 * * *" }
+    { "path": "/api/holiday-audit-cron", "schedule": "20 21 * * *" },
+    { "path": "/api/probe-observe", "schedule": "20 13 * * 1-5" },
+    { "path": "/api/probe-observe", "schedule": "32 13 * * 1-5" },
+    { "path": "/api/probe-observe", "schedule": "45 13 * * 1-5" }
   ]
 }
