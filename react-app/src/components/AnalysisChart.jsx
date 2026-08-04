@@ -4,14 +4,23 @@ import { calcMA, calcBB, calcRSIAligned } from '../indicators';
 import { useTheme } from '../ThemeContext';
 import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesStore';
 import { saveDrawings, makeShape, DRAWING_TYPE } from '../drawingsStore';
+import { DrawingPrimitive } from '../drawingPrimitive';
 
 // 두 차트의 우측 축 폭을 createChart 시점부터 동일하게 고정 (BTC 등 큰 숫자 기준으로 여유있게)
 const SCALE_WIDTH = 80;
 
 const CHART_COLORS = {
-  dark:  { text: '#9a9aa2', grid: '#26262a', border: '#26262a', srLine: '#e09500' },
-  light: { text: '#3d5070', grid: '#dde1ed', border: '#dde1ed', srLine: '#b87200' },
+  dark:  { text: '#9a9aa2', grid: '#26262a', border: '#26262a', srLine: '#e09500',
+           drawLine: '#a3e635', drawPreview: '#a3e635aa' },
+  light: { text: '#3d5070', grid: '#dde1ed', border: '#dde1ed', srLine: '#b87200',
+           drawLine: '#4d7c0f', drawPreview: '#4d7c0faa' },
 };
+
+// 그리기 색 — 툴바 '그리기' 칩과 같은 라임 계열(라이트 테마는 흰 배경에서 읽히도록 진하게).
+function drawStyleFor(theme) {
+  const c = CHART_COLORS[theme] ?? CHART_COLORS.dark;
+  return { color: c.drawLine, previewColor: c.drawPreview };
+}
 
 // 수동 지지/저항선 — 더블클릭 시 기존 선과 너무 가까우면 중복 생성 방지(px)
 const SR_DEDUPE_TOLERANCE_PX = 6;
@@ -124,6 +133,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   const shapesRef       = useRef(shapes ?? []); // prop 미러 — 구독 콜백이 최신 목록을 읽는 통로
   shapesRef.current     = shapes ?? [];
   const pendingPointRef = useRef(null); // 첫 클릭으로 찍힌 시작점(두 번째 클릭 전까지)
+  const drawPrimRef     = useRef(null); // 차트에 붙은 DrawingPrimitive(차트 수명과 같이 간다)
 
   // MA series refs (visibility 토글용)
   const ma20Ref  = useRef(null);
@@ -244,6 +254,10 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     // 저장 → 부모 state 갱신 순서. 부모가 갱신되면 shapes prop이 내려와 오버레이가 다시 그린다.
     const next = [...shapesRef.current, shape];
     saveDrawings(drawPropsRef.current.symbolKey, next);
+    // 확정선이 즉시 보이도록 프리미티브에도 바로 넣는다 — prop이 돌아오는 것을 기다리면
+    // 한 프레임 비고, 그 사이 미리보기는 이미 지워져 선이 깜빡인 것처럼 보인다.
+    drawPrimRef.current?.setShapes(next);
+    drawPrimRef.current?.setPreview(null);
     drawPropsRef.current.onShapesChange?.(next);
     drawPropsRef.current.onDrawModeChange?.(false);
   }
@@ -369,6 +383,26 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     // 별도 구독으로 두는 이유: 기존 SR hover 구독과 관심사를 섞지 않기 위함이고,
     // lightweight-charts는 같은 이벤트에 여러 핸들러를 허용한다.
     chart.subscribeClick(handleDrawClick);
+
+    // ── 그리기 오버레이(Series Primitive) ─────────────────────────────
+    // 차트와 수명을 같이 한다 — chart.remove()가 시리즈를 파괴하므로 매 재생성마다 새로
+    // 붙이고, 그때 현재 목록으로 즉시 seed한다(shapes prop을 기다리면 한 프레임 빈다).
+    const drawPrim = new DrawingPrimitive(drawStyleFor(theme));
+    mainSeries.attachPrimitive(drawPrim);
+    drawPrim.setShapes(shapesRef.current);
+    drawPrimRef.current = drawPrim;
+
+    // 미리보기 — 첫 점이 찍힌 동안만 커서까지 선을 끈다.
+    // ⚠️ 커서 끝은 시간으로 되돌리지 않고 화면 좌표 그대로 넘긴다. 봉과 봉 사이에서
+    //    timeToCoordinate로 왕복시키면 선 끝이 커서를 따라오지 않고 봉에 붙어 튄다.
+    // ⚠️ 모드가 아닐 때는 setPreview(null)이 조기 반환하므로 마우스 이동에 재렌더가 없다.
+    chart.subscribeCrosshairMove(param => {
+      const prim = drawPrimRef.current;
+      if (!prim) return;
+      const pending = pendingPointRef.current;
+      if (!drawPropsRef.current.drawMode || !pending || !param?.point) { prim.setPreview(null); return; }
+      prim.setPreview({ from: pending, to: { x: param.point.x, y: param.point.y } });
+    });
 
     // ── 거래량 히스토그램 (별도 priceScaleId로 캔들 가격축과 분리, 하단 오버레이) ──
     const volumeData = buildVolumeData(h);
@@ -537,6 +571,8 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       forceHideHoverLine();
       // 차트가 사라지면 진행 중이던 첫 점은 좌표계를 잃는다 — 다음 차트로 넘기지 않는다.
       pendingPointRef.current = null;
+      // detachPrimitive는 부르지 않는다 — chart.remove()가 시리즈째 파괴한 뒤라 대상이 없다.
+      drawPrimRef.current = null;
     };
   }, [item]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -628,22 +664,33 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     rsiChartRef.current?.applyOptions(opts);
     const c = CHART_COLORS[theme] ?? CHART_COLORS.dark;
     for (const line of srLineObjsRef.current.values()) line.applyOptions({ color: c.srLine });
+    drawPrimRef.current?.setStyle(drawStyleFor(theme));
   }, [theme]);
 
+  // ── 도형 목록이 바뀌면 오버레이에 반영 ───────────────────────────────
+  // 부모 state → prop → 여기. 추가(확정)·전체 삭제·심볼 전환이 전부 이 한 경로로 들어온다.
+  useEffect(() => { drawPrimRef.current?.setShapes(shapes ?? []); }, [shapes]);
+
   // 심볼이 바뀌면 진행 중이던 첫 점은 의미를 잃는다(도형 목록 교체는 부모가 한다).
-  useEffect(() => { pendingPointRef.current = null; }, [symbolKey]);
+  useEffect(() => {
+    pendingPointRef.current = null;
+    drawPrimRef.current?.setPreview(null);
+  }, [symbolKey]);
 
   // ── ESC 취소 ────────────────────────────────────────────────
   // 첫 점만 찍힌 상태에서만 동작한다(요구사항). 리스너는 **그리기 모드일 때만** 붙고,
   // 모드가 꺼지면 즉시 제거된다 — off 상태에서는 키 입력에 아무 영향이 없다.
   useEffect(() => {
     if (!drawMode) {
-      pendingPointRef.current = null; // 모드가 꺼지면 진행 중인 점은 버린다
+      // 모드가 꺼지면 진행 중인 점과 미리보기를 함께 버린다(토글 off·확정 직후 모두 여기로).
+      pendingPointRef.current = null;
+      drawPrimRef.current?.setPreview(null);
       return undefined;
     }
     const onKeyDown = e => {
       if (e.key !== 'Escape' || !pendingPointRef.current) return;
       pendingPointRef.current = null;
+      drawPrimRef.current?.setPreview(null);
       // 취소는 모드 종료까지 포함한다 — 모바일에는 ESC가 없어 토글 버튼이 유일한 탈출구이고,
       // 두 경로의 결과가 다르면 "지금 모드가 켜져 있나"를 화면만 보고 알 수 없게 된다.
       drawPropsRef.current.onDrawModeChange?.(false);
