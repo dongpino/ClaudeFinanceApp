@@ -8,7 +8,7 @@
  */
 
 import {
-  distanceToSegment, extendSegmentRight, hitTest,
+  distanceToSegment, extendSegmentRight, extendSegmentLeft, hitTest,
   SEGMENT_HIT_PX, ENDPOINT_HIT_PX,
 } from '../src/drawingGeometry.js';
 
@@ -61,6 +61,40 @@ const seg = (id, x1, y1, x2, y2) => ({ id, kind: 'shape', x1, y1, x2, y2 });
   assert(extendSegmentRight(seg('g', 0, 0, 10, 10), NaN) === null, '2-9: 폭이 비유한이면 null');
 }
 
+// ── (2b) 왼쪽 연장 — (2)와 같은 커버리지의 거울상 ────────────────────
+{
+  // 기울기 1, 왼쪽 끝 0 → (100,100)에서 왼쪽으로 뻗으면 (0,0)
+  const e = extendSegmentLeft(seg('a', 100, 100, 300, 300));
+  assert(e && e.x1 === 100 && e.y1 === 100, '2b-1: 연장 시작점은 왼쪽 끝점');
+  assert(e && e.x2 === 0 && near(e.y2, 0), '2b-2: 화면 왼쪽 끝까지, 기울기 유지');
+
+  // 내려가는 기울기 — 왼쪽으로 가면 위로 올라간다
+  const down = extendSegmentLeft(seg('b', 100, 100, 200, 0));
+  assert(down && near(down.y2, 200), '2b-3: 음의 기울기도 그대로 외삽(화면 밖 y 허용)');
+
+  // 점 순서가 뒤집혀도 **x가 작은 쪽**에서 뻗는다
+  const rev = extendSegmentLeft(seg('c', 300, 300, 100, 100));
+  assert(rev && rev.x1 === 100 && rev.y1 === 100 && near(rev.y2, 0),
+    '2b-4: 클릭 순서와 무관하게 과거(왼쪽) 방향');
+
+  // 늘릴 것이 없는 경우
+  assert(extendSegmentLeft(seg('d', 10, 0, 10, 50)) === null, '2b-5: 수직선(dx=0)은 연장 없음');
+  assert(extendSegmentLeft(seg('e', 0, 0, 500, 100)) === null, '2b-6: 이미 왼쪽 끝이면 없음');
+  assert(extendSegmentLeft(seg('f', -20, 0, 500, 100)) === null, '2b-7: 끝점이 화면 밖이면 없음');
+  assert(extendSegmentLeft(null) === null, '2b-8: 입력 없으면 null');
+  assert(extendSegmentLeft(seg('g', 10, 0, 20, 10), NaN) === null, '2b-9: 경계가 비유한이면 null');
+
+  // 왼쪽 경계가 0이 아닌 경우(기본값 외 인자)
+  const bounded = extendSegmentLeft(seg('h', 100, 100, 200, 200), 40);
+  assert(bounded && bounded.x2 === 40 && near(bounded.y2, 40), '2b-10: 왼쪽 경계 인자 반영');
+
+  // 양쪽 연장은 같은 직선 위에 있다 — 두 연장의 기울기가 원 선분과 일치
+  const base = seg('i', 100, 100, 200, 150);   // 기울기 0.5
+  const r = extendSegmentRight(base, 400), l = extendSegmentLeft(base, 0);
+  assert(near((r.y2 - r.y1) / (r.x2 - r.x1), 0.5), '2b-11: 오른쪽 연장 기울기 일치');
+  assert(near((l.y2 - l.y1) / (l.x2 - l.x1), 0.5), '2b-12: 왼쪽 연장 기울기 일치(같은 직선)');
+}
+
 // ── (3) 히트테스트 — 기본 ────────────────────────────────────────────
 {
   const segs = [seg('a', 0, 100, 200, 100)];
@@ -99,13 +133,16 @@ const seg = (id, x1, y1, x2, y2) => ({ id, kind: 'shape', x1, y1, x2, y2 });
   assert(h.kind === 'endpoint' && h.id === 'new', '5-4: 끝점 동률도 뒤쪽 우선');
 }
 
-// ── (6) 연장 구간은 판정 대상이 아니다 ───────────────────────────────
+// ── (6) 연장 구간은 **양쪽 다** 판정 대상이 아니다 ───────────────────
 {
-  const segs = [seg('a', 0, 100, 100, 100)];
-  // 연장선상(오른쪽 여백)의 점 — 그려지기는 하지만 hover는 걸리지 않아야 한다
-  assert(hitTest(segs, 400, 100) === null, '6-1: 연장 구간 위에서는 hit 없음');
+  const segs = [seg('a', 200, 100, 300, 100)];
+  // 오른쪽 연장선상 — 그려지기는 하지만 hover는 걸리지 않아야 한다
+  assert(hitTest(segs, 600, 100) === null, '6-1: 오른쪽 연장 구간 위에서는 hit 없음');
+  // 왼쪽 연장선상 — 과거 캔들 위를 덮지만 마찬가지로 걸리지 않는다
+  assert(hitTest(segs, 20, 100) === null, '6-2: 왼쪽 연장 구간 위에서도 hit 없음');
   // 끝점 바로 옆까지는 걸린다(선분의 끝)
-  assert(hitTest(segs, 100 + ENDPOINT_HIT_PX, 100).kind === 'endpoint', '6-2: 끝점 반경까지는 걸림');
+  assert(hitTest(segs, 300 + ENDPOINT_HIT_PX, 100).kind === 'endpoint', '6-3: 오른쪽 끝점 반경까지는 걸림');
+  assert(hitTest(segs, 200 - ENDPOINT_HIT_PX, 100).kind === 'endpoint', '6-4: 왼쪽 끝점 반경까지는 걸림');
 }
 
 // ── (7) 미리보기 선분은 판정 대상이 아니다 ───────────────────────────

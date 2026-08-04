@@ -62,6 +62,28 @@ export function extendSegmentRight(seg, width) {
 }
 
 /**
+ * 선분을 **왼쪽(과거 방향) 화면 끝까지** 늘린 연장 구간. extendSegmentRight의 거울상이다.
+ *
+ * 계산 근거는 오른쪽과 동일하다(화면 좌표 외삽 — 위 주석 참조). 방향 판정도 같은 규칙으로
+ * **x가 작은 쪽**에서 뻗는다 — 클릭 순서와 무관하다.
+ *
+ * @param {{x1,y1,x2,y2}} seg
+ * @param {number} [left=0] 페인 왼쪽 경계(px). 기본 0.
+ * @returns {{x1,y1,x2,y2}|null} 늘릴 구간이 없으면 null
+ */
+export function extendSegmentLeft(seg, left = 0) {
+  if (!seg || !Number.isFinite(left)) return null;
+  const leftFirst = seg.x1 <= seg.x2;
+  const ax = leftFirst ? seg.x1 : seg.x2, ay = leftFirst ? seg.y1 : seg.y2;
+  const bx = leftFirst ? seg.x2 : seg.x1, by = leftFirst ? seg.y2 : seg.y1;
+  const dx = bx - ax;
+  if (dx <= 0) return null;   // 두 점이 같은 봉 → 기울기를 정의할 수 없다
+  if (ax <= left) return null; // 이미 왼쪽 끝에 닿았다
+  const slope = (by - ay) / dx;
+  return { x1: ax, y1: ay, x2: left, y2: ay + slope * (left - ax) };
+}
+
+/**
  * 커서 위치에 걸리는 도형 1건.
  *
  * ── 우선순위와 동률 규칙 ─────────────────────────────────────────────
@@ -69,9 +91,12 @@ export function extendSegmentRight(seg, width) {
  *    끝점을 잡으려 했는데 삭제 ×가 뜨면 되돌릴 수 없는 조작(삭제)이 앞에 서게 된다.
  * ② 같은 종류끼리는 **가장 가까운 것**. 거리가 같으면 **배열 뒤쪽**이 이긴다 — 렌더러가
  *    배열 순서대로 그려 뒤쪽이 위에 보이므로, 눈에 보이는 것이 잡히는 것과 일치한다.
- * ⚠️ **연장 구간은 판정하지 않는다.** 연장은 화면 오른쪽 끝까지 가므로 판정 영역에 넣으면
- *    빈 여백 전체가 도형 hover 구역이 되어 크로스헤어·클릭을 방해한다. 사용자가 "그 선"을
+ * ⚠️ **연장 구간은 양쪽 다 판정하지 않는다.** 연장은 화면 끝까지 가므로 판정에 넣으면
+ *    그 띠 전체가 도형 hover 구역이 되어 크로스헤어·클릭을 방해한다. 사용자가 "그 선"을
  *    지목하려는 자연스러운 지점은 실제로 찍은 두 점 사이다.
+ *    왼쪽 연장은 빈 여백이 아니라 **과거 캔들 위**를 덮으므로 오히려 더 강한 제외 근거가
+ *    된다 — 그 영역의 주 용도는 캔들을 크로스헤어로 읽는 것이고, 판정 띠가 그 위를 가로지르면
+ *    도형을 만들지 않은 사용자까지 방해를 받는다.
  *
  * @param {Array<{id,kind,x1,y1,x2,y2}>} segs  buildSegments 결과(kind==='shape'만 본다)
  * @returns {{kind:'endpoint'|'segment', id:string, index?:0|1, distance:number, x:number, y:number}|null}

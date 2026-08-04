@@ -23,7 +23,7 @@
  * 우리가 requestUpdate를 직접 부르는 경우는 **입력이 바뀔 때뿐**이다(도형 목록/미리보기/색).
  */
 
-import { extendSegmentRight } from './drawingGeometry.js';
+import { extendSegmentRight, extendSegmentLeft } from './drawingGeometry.js';
 
 /** 도형 종류로 분기하지 않는다 — 지금은 모든 도형이 2점 선분이다('fib'이 들어오면 그때 분기). */
 const DEFAULT_STYLE = {
@@ -61,10 +61,15 @@ export function buildSegments(shapes, preview, toX, toY) {
     const x1 = toX(pts[0]?.time), y1 = toY(pts[0]?.price);
     const x2 = toX(pts[1]?.time), y2 = toY(pts[1]?.price);
     if (!isNum(x1) || !isNum(y1) || !isNum(x2) || !isNum(y2)) continue;
-    // extend — 오른쪽(미래) 연장 여부. **기본 켜짐**이고, 도형에 extendRight:false가 있으면
-    // 끈다. 지금 그 필드를 쓰는 UI는 없다(도형별 토글은 다음 단계) — 렌더러가 미리 읽게 두어
-    // 나중에 필드 하나만 추가하면 되도록 자리를 남긴다. 저장 구조는 건드리지 않았다.
-    segs.push({ id: s.id, kind: 'shape', x1, y1, x2, y2, extend: s.extendRight !== false });
+    // extendRight/extendLeft — 양방향 연장 여부. **둘 다 기본 켜짐**이고, 도형에
+    // extendRight:false / extendLeft:false가 있으면 그 방향만 끈다. 지금 그 필드를 쓰는
+    // UI는 없다(도형별 토글은 속성 패널과 함께) — 렌더러가 미리 읽게 두어 나중에 필드만
+    // 저장하면 되도록 자리를 남긴다. 저장 구조는 건드리지 않았다.
+    segs.push({
+      id: s.id, kind: 'shape', x1, y1, x2, y2,
+      extendRight: s.extendRight !== false,
+      extendLeft:  s.extendLeft  !== false,
+    });
   }
   if (preview?.from && preview?.to) {
     const x1 = toX(preview.from.time), y1 = toY(preview.from.price);
@@ -98,12 +103,16 @@ class DrawingPaneRenderer {
         ctx.moveTo(s.x1, s.y1);
         ctx.lineTo(s.x2, s.y2);
         ctx.stroke();
-        // ── 오른쪽(미래) 연장 ────────────────────────────────────────
+        // ── 양방향 연장 ──────────────────────────────────────────────
         // 페인 폭은 여기서만 알 수 있으므로(mediaSize) 연장 계산도 그릴 때 한다.
         // 확정 도형만 늘린다 — 미리보기는 아직 두 번째 점이 정해지지 않아 직선이 확정되지 않았다.
-        if (!preview && s.extend) {
-          const ext = extendSegmentRight(s, mediaSize.width);
-          if (ext) {
+        if (!preview) {
+          const exts = [
+            s.extendRight ? extendSegmentRight(s, mediaSize.width) : null,
+            s.extendLeft  ? extendSegmentLeft(s, 0)                : null,
+          ];
+          for (const ext of exts) {
+            if (!ext) continue;
             ctx.beginPath();
             ctx.moveTo(ext.x1, ext.y1);
             ctx.lineTo(ext.x2, ext.y2);
