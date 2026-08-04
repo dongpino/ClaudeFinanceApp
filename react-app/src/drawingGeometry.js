@@ -1,0 +1,107 @@
+/**
+ * drawingGeometry.js — 도형 조작의 공통 기하 계산. **순수 함수만**(DOM·차트 API 없음).
+ *
+ * 선 연장·선별 삭제·끝점 드래그 세 기능이 전부 "커서가 어느 도형 위에 있나"와
+ * "이 선분을 어디까지 늘리나"에 기대므로, 그 계산만 여기로 모아 테스트 가능하게 둔다.
+ * 입력은 전부 **화면 좌표(px)**다 — 시간·가격 좌표로의 환산은 호출측(차트 API를 아는 쪽)이 한다.
+ */
+
+// ── 허용 반경 ────────────────────────────────────────────────────────
+// 선분: 기존 지지/저항선 hover 허용치(AnalysisChart의 SR_HOVER_TOLERANCE_PX = 12)와 같은 값을
+//   쓴다. 같은 화면에서 "선에 가까이 갔다"의 기준이 도형 종류마다 다르면 사용자가 두 규칙을
+//   따로 익혀야 한다. 대각선이라 수직거리로 재는 것만 다르고 기준 거리는 같게 둔다.
+// 끝점: 선분보다 **좁게** 잡는다(10px). 끝점 판정이 선분 판정을 이기므로(아래 hitTest),
+//   같거나 넓으면 선분 중앙부를 노려도 끝점 근처에서 드래그가 먼저 걸려 삭제 hover가 뜨지 않는다.
+//   시각 반지름 3px보다는 넉넉해야 손가락·마우스로 집을 수 있다.
+export const SEGMENT_HIT_PX  = 12;
+export const ENDPOINT_HIT_PX = 10;
+
+/**
+ * 점 (px,py)에서 선분 (x1,y1)-(x2,y2)까지의 **수직 거리**(선분 밖이면 가까운 끝점까지).
+ * 무한 직선이 아니라 선분 기준이다 — 연장 구간은 판정에서 빼기 위함(hitTest 주석 참조).
+ */
+export function distanceToSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - x1, py - y1); // 두 점이 같으면 점까지의 거리
+  // 선분을 [0,1]로 매개화한 뒤 사영 위치 t를 구간 안으로 자른다.
+  let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+/**
+ * 선분을 **오른쪽(미래 방향) 화면 끝까지** 늘린 연장 구간.
+ *
+ * ⚠️ **화면 좌표 외삽이다(시간축 외삽이 아니다).** lightweight-charts의 시간축은 실제 시간
+ *    간격이 아니라 **봉 인덱스**로 균등 배치되고, 두 점을 잇는 선은 그 인덱스 공간에서 직선이다.
+ *    그래서 화면에서 직선을 늘리는 것이 곧 인덱스 공간에서 늘리는 것과 같고, 이미 그려진
+ *    선분과 **정의상 어긋날 수 없다**. 시간축으로 외삽하려면 존재하지 않는 미래 봉의 시각을
+ *    지어내야 하는데(마지막 봉 이후에는 timeToCoordinate가 null), 그건 저장 구조를 건드리지
+ *    않겠다는 이번 단계의 전제와도 충돌한다.
+ *    한계: 가격축을 로그 스케일로 바꾸면 화면 직선 ≠ 가격 선형 직선이 된다(현재 이 앱은
+ *    선형 고정). 다만 로그 차트에서도 추세선은 화면상 직선으로 긋는 것이 통용 관행이다.
+ *
+ * ⚠️ 어느 점을 찍었는지와 무관하게 **x가 큰 쪽**에서 뻗는다 — '미래'는 클릭 순서가 아니라
+ *    시간축 방향이다.
+ *
+ * @param {{x1,y1,x2,y2}} seg
+ * @param {number} width  페인 폭(px)
+ * @returns {{x1,y1,x2,y2}|null} 늘릴 구간이 없으면 null
+ */
+export function extendSegmentRight(seg, width) {
+  if (!seg || !Number.isFinite(width)) return null;
+  const leftFirst = seg.x1 <= seg.x2;
+  const ax = leftFirst ? seg.x1 : seg.x2, ay = leftFirst ? seg.y1 : seg.y2;
+  const bx = leftFirst ? seg.x2 : seg.x1, by = leftFirst ? seg.y2 : seg.y1;
+  const dx = bx - ax;
+  if (dx <= 0) return null;      // 두 점이 같은 봉 → 기울기를 정의할 수 없다
+  if (bx >= width) return null;  // 이미 오른쪽 끝을 넘었다
+  const slope = (by - ay) / dx;
+  return { x1: bx, y1: by, x2: width, y2: by + slope * (width - bx) };
+}
+
+/**
+ * 커서 위치에 걸리는 도형 1건.
+ *
+ * ── 우선순위와 동률 규칙 ─────────────────────────────────────────────
+ * ① **끝점이 선분을 이긴다.** 끝점 근처에서는 이동(드래그) 의도가 삭제 의도보다 우선한다고 본다.
+ *    끝점을 잡으려 했는데 삭제 ×가 뜨면 되돌릴 수 없는 조작(삭제)이 앞에 서게 된다.
+ * ② 같은 종류끼리는 **가장 가까운 것**. 거리가 같으면 **배열 뒤쪽**이 이긴다 — 렌더러가
+ *    배열 순서대로 그려 뒤쪽이 위에 보이므로, 눈에 보이는 것이 잡히는 것과 일치한다.
+ * ⚠️ **연장 구간은 판정하지 않는다.** 연장은 화면 오른쪽 끝까지 가므로 판정 영역에 넣으면
+ *    빈 여백 전체가 도형 hover 구역이 되어 크로스헤어·클릭을 방해한다. 사용자가 "그 선"을
+ *    지목하려는 자연스러운 지점은 실제로 찍은 두 점 사이다.
+ *
+ * @param {Array<{id,kind,x1,y1,x2,y2}>} segs  buildSegments 결과(kind==='shape'만 본다)
+ * @returns {{kind:'endpoint'|'segment', id:string, index?:0|1, distance:number, x:number, y:number}|null}
+ */
+export function hitTest(segs, px, py, opts) {
+  const segmentPx  = opts?.segmentPx  ?? SEGMENT_HIT_PX;
+  const endpointPx = opts?.endpointPx ?? ENDPOINT_HIT_PX;
+
+  let ep = null;
+  for (const s of segs ?? []) {
+    if (s?.kind !== 'shape') continue;
+    for (const index of [0, 1]) {
+      const ex = index === 0 ? s.x1 : s.x2;
+      const ey = index === 0 ? s.y1 : s.y2;
+      const d = Math.hypot(px - ex, py - ey);
+      // `<=`라서 동률이면 나중 항목이 이긴다(위에 그려진 것이 잡힌다).
+      if (d <= endpointPx && (!ep || d <= ep.distance)) {
+        ep = { kind: 'endpoint', id: s.id, index, distance: d, x: ex, y: ey };
+      }
+    }
+  }
+  if (ep) return ep;
+
+  let sg = null;
+  for (const s of segs ?? []) {
+    if (s?.kind !== 'shape') continue;
+    const d = distanceToSegment(px, py, s.x1, s.y1, s.x2, s.y2);
+    if (d <= segmentPx && (!sg || d <= sg.distance)) {
+      sg = { kind: 'segment', id: s.id, distance: d, x: px, y: py };
+    }
+  }
+  return sg;
+}
