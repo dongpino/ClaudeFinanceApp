@@ -1284,6 +1284,8 @@ body {
   color: var(--text-3);
 }
 .ind-toggle-clear-lines:hover { border-color: var(--down); color: var(--down); }
+.ind-toggle-clear-shapes { color: var(--text-3); }
+.ind-toggle-clear-shapes:hover { border-color: var(--down); color: var(--down); }
 
 @media (max-width: 768px) {
   /* 지표 토글 칩 — 두 줄로 감싸이면 세로 공간을 차트에서 뺏어가므로 가로 스크롤 한 줄로 */
@@ -1294,6 +1296,7 @@ body {
   }
   .analysis-toggles .ind-toggle,
   .analysis-toggles .ind-toggle-clear-lines,
+  .analysis-toggles .ind-toggle-clear-shapes,
   .analysis-toggles .analysis-shape-count {
     flex-shrink: 0;
   }

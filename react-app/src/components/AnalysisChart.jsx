@@ -3,7 +3,7 @@ import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { calcMA, calcBB, calcRSIAligned } from '../indicators';
 import { useTheme } from '../ThemeContext';
 import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesStore';
-import { loadDrawings, saveDrawings, makeShape, DRAWING_TYPE } from '../drawingsStore';
+import { saveDrawings, makeShape, DRAWING_TYPE } from '../drawingsStore';
 
 // 두 차트의 우측 축 폭을 createChart 시점부터 동일하게 고정 (BTC 등 큰 숫자 기준으로 여유있게)
 const SCALE_WIDTH = 80;
@@ -90,7 +90,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   showBB,
   showRSI, showVolume,
   symbolKey, onLinesChange,
-  drawMode, onDrawModeChange, onShapesChange,
+  drawMode, onDrawModeChange, shapes, onShapesChange,
 }, ref) {
   const { theme } = useTheme();
   const priceRef = useRef(null);
@@ -111,14 +111,18 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   const srPricesRef   = useRef([]);            // 현재 차트에 그려진 가격 목록
   const srLineObjsRef = useRef(new Map());      // price → IPriceLine (현재 mainSeries 소속)
 
-  // ── 그리기 도구(공통 기반) — 추세선·피보나치가 공유할 인터랙션 층 ──────────
-  // 이번 단계는 **좌표 수집과 저장까지만**이다. 렌더링(캔버스 오버레이·createPriceLine 등)은
-  // 다음 단계에서 별도로 붙이며, 그래서 여기에는 도형을 화면에 그리는 코드가 한 줄도 없다.
+  // ── 그리기 도구 — 추세선·피보나치가 공유하는 인터랙션 층 ──────────────────
+  // ⚠️ **도형 목록의 소유자는 AnalysisPage다(2026-08-04 수정).** 종전에는 이 컴포넌트가
+  //    ref로 목록을 들고 개수만 부모에 통지했는데, 이 컴포넌트는 `item && <AnalysisChart/>`
+  //    로 **조건부 마운트**라 종목 전환 중(그리고 로드 실패 시 영구히) 언마운트되어
+  //    통지할 주체가 사라졌다 — 그동안 툴바에는 이전 종목의 개수가 남았다.
+  //    이제 목록은 부모 state이고 여기서는 prop으로 받아 ref에 미러링만 한다.
   // 최신 props를 ref에 미러링하는 이유는 srPropsRef와 같다 — 차트 생성 시점 클로저에서
   // 만들어진 구독 콜백이 stale prop을 읽으면 모드 토글이 먹히지 않는다.
   const drawPropsRef = useRef({ drawMode, onDrawModeChange, onShapesChange, symbolKey });
   drawPropsRef.current = { drawMode, onDrawModeChange, onShapesChange, symbolKey };
-  const shapesRef       = useRef([]);   // 현재 심볼의 확정 도형 목록
+  const shapesRef       = useRef(shapes ?? []); // prop 미러 — 구독 콜백이 최신 목록을 읽는 통로
+  shapesRef.current     = shapes ?? [];
   const pendingPointRef = useRef(null); // 첫 클릭으로 찍힌 시작점(두 번째 클릭 전까지)
 
   // MA series refs (visibility 토글용)
@@ -195,9 +199,6 @@ const AnalysisChart = forwardRef(function AnalysisChart({
 
   // ── 그리기 도구 헬퍼 ─────────────────────────────────────────
   // ref만 참조하므로 어느 렌더에서 만들어진 함수든 항상 최신 상태를 반영한다(SR 헬퍼와 동일).
-  function notifyShapeCount() {
-    drawPropsRef.current.onShapesChange?.(shapesRef.current.length);
-  }
 
   /**
    * 클릭 지점 → { time, price }.
@@ -240,11 +241,10 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     pendingPointRef.current = null;
     if (!shape) return;
 
-    shapesRef.current = [...shapesRef.current, shape];
-    saveDrawings(drawPropsRef.current.symbolKey, shapesRef.current);
-    notifyShapeCount();
-    // 렌더링이 없는 단계라 눈으로 확인할 수단이 이것뿐이다(다음 단계에서 제거 대상).
-    console.log('[drawing] 도형 확정', drawPropsRef.current.symbolKey, shape);
+    // 저장 → 부모 state 갱신 순서. 부모가 갱신되면 shapes prop이 내려와 오버레이가 다시 그린다.
+    const next = [...shapesRef.current, shape];
+    saveDrawings(drawPropsRef.current.symbolKey, next);
+    drawPropsRef.current.onShapesChange?.(next);
     drawPropsRef.current.onDrawModeChange?.(false);
   }
 
@@ -630,18 +630,8 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     for (const line of srLineObjsRef.current.values()) line.applyOptions({ color: c.srLine });
   }, [theme]);
 
-  // ── 심볼 전환 시 도형 교체 ───────────────────────────────────
-  // 여기가 "이전 심볼 것은 사라지고 새 심볼 것만 로드된다"의 유일한 트리거다.
-  // ⚠️ 차트 생성 effect([item])에 얹지 않고 symbolKey를 독립 deps로 둔다 — item은 데이터
-  //    fetch가 끝나야 바뀌지만 symbolKey는 선택 즉시 바뀐다. item에 얹으면 그 사이 구간에서
-  //    **이전 심볼의 도형이 새 심볼 화면에 남는다.** tf만 바뀐 경우 symbolKey는 그대로이므로
-  //    이 effect는 돌지 않고 도형도 유지된다(가격·시간 좌표는 tf와 무관하게 같은 값이다).
-  useEffect(() => {
-    shapesRef.current = loadDrawings(symbolKey);
-    pendingPointRef.current = null;
-    notifyShapeCount();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- notifyShapeCount는 ref만 읽는다
-  }, [symbolKey]);
+  // 심볼이 바뀌면 진행 중이던 첫 점은 의미를 잃는다(도형 목록 교체는 부모가 한다).
+  useEffect(() => { pendingPointRef.current = null; }, [symbolKey]);
 
   // ── ESC 취소 ────────────────────────────────────────────────
   // 첫 점만 찍힌 상태에서만 동작한다(요구사항). 리스너는 **그리기 모드일 때만** 붙고,
