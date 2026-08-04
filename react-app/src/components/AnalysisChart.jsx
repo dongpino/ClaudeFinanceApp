@@ -5,6 +5,7 @@ import { useTheme } from '../ThemeContext';
 import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesStore';
 import { saveDrawings, makeShape, DRAWING_TYPE } from '../drawingsStore';
 import { DrawingPrimitive } from '../drawingPrimitive';
+import { hitTest } from '../drawingGeometry';
 
 // 두 차트의 우측 축 폭을 createChart 시점부터 동일하게 고정 (BTC 등 큰 숫자 기준으로 여유있게)
 const SCALE_WIDTH = 80;
@@ -134,6 +135,15 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   shapesRef.current     = shapes ?? [];
   const pendingPointRef = useRef(null); // 첫 클릭으로 찍힌 시작점(두 번째 클릭 전까지)
   const drawPrimRef     = useRef(null); // 차트에 붙은 DrawingPrimitive(차트 수명과 같이 간다)
+  const dragRef         = useRef(null); // 끝점 드래그 진행 상태(없으면 null)
+
+  // 도형 hover/선택 — × 삭제 버튼 표시용. sticky는 **터치 탭 선택**이라 자동으로 사라지지 않는다
+  // (터치에는 hover가 없어 "벗어남"이라는 사건 자체가 없다 — 다른 곳을 탭해야 풀린다).
+  const [shapeHover, setShapeHover] = useState(null); // { id, x, y, sticky }
+  const shapeHoverRef        = useRef(null);          // 구독 콜백이 최신 상태를 읽는 통로
+  shapeHoverRef.current      = shapeHover;
+  const isHoveringShapeDelRef = useRef(false);
+  const shapeHoverTimerRef    = useRef(null);
 
   // MA series refs (visibility 토글용)
   const ma20Ref  = useRef(null);
@@ -260,6 +270,45 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     drawPrimRef.current?.setPreview(null);
     drawPropsRef.current.onShapesChange?.(next);
     drawPropsRef.current.onDrawModeChange?.(false);
+  }
+
+  // ── 도형 hover/선택 + 선별 삭제 ──────────────────────────────
+  // 깜빡임 방지 규율은 지지/저항선 ×와 동일하다(선→버튼 이동 중 판정이 빠지는 구간 방지).
+  function clearShapeHoverTimer() {
+    if (shapeHoverTimerRef.current) {
+      clearTimeout(shapeHoverTimerRef.current);
+      shapeHoverTimerRef.current = null;
+    }
+  }
+  function showShapeHover(next) { clearShapeHoverTimer(); setShapeHover(next); }
+  function scheduleShapeHoverHide() {
+    if (isHoveringShapeDelRef.current) return;
+    if (shapeHoverRef.current?.sticky) return; // 탭 선택은 다른 곳을 탭해야 풀린다
+    if (!shapeHoverRef.current) return;
+    clearShapeHoverTimer();
+    shapeHoverTimerRef.current = setTimeout(() => {
+      shapeHoverTimerRef.current = null;
+      if (!isHoveringShapeDelRef.current && !shapeHoverRef.current?.sticky) setShapeHover(null);
+    }, SR_HOVER_HIDE_DELAY_MS);
+  }
+  function forceHideShapeHover() {
+    clearShapeHoverTimer();
+    isHoveringShapeDelRef.current = false;
+    setShapeHover(null);
+  }
+
+  /** 페인 좌표에 걸리는 도형(없으면 null). 판정은 drawingGeometry가 하고 여기선 좌표만 넘긴다. */
+  function hitShapeAt(x, y) {
+    const prim = drawPrimRef.current;
+    return prim ? hitTest(prim.segments(), x, y) : null;
+  }
+
+  function deleteShape(id) {
+    const next = shapesRef.current.filter(s => s.id !== id);
+    saveDrawings(drawPropsRef.current.symbolKey, next);
+    drawPrimRef.current?.setShapes(next);
+    drawPropsRef.current.onShapesChange?.(next);
+    forceHideShapeHover();
   }
 
   // ── X 버튼 hover 깜빡임 방지 ─────────────────────────────────
@@ -403,6 +452,44 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       if (!drawPropsRef.current.drawMode || !pending || !param?.point) { prim.setPreview(null); return; }
       prim.setPreview({ from: pending, to: { x: param.point.x, y: param.point.y } });
     });
+
+    // ── 도형 hover(마우스) — 선 위에 오면 삭제 × 를 커서 옆에 띄운다 ────
+    // ⚠️ **끝점 위에서는 ×를 띄우지 않는다.** 끝점은 드래그(이동) 자리이고, 되돌릴 수 없는
+    //    조작(삭제)이 그 위에 겹치면 안 된다 — hitTest의 우선순위 규칙과 같은 근거다.
+    // ⚠️ 그리기 모드·드래그 중에는 판정 자체를 하지 않는다(그때 클릭·이동의 의미가 다르다).
+    chart.subscribeCrosshairMove(param => {
+      if (drawPropsRef.current.drawMode || dragRef.current) return;
+      if (!param?.point) { scheduleShapeHoverHide(); return; }
+      const hit = hitShapeAt(param.point.x, param.point.y);
+      if (hit?.kind === 'segment') {
+        showShapeHover({ id: hit.id, x: param.point.x, y: param.point.y, sticky: false });
+      } else {
+        scheduleShapeHoverHide();
+      }
+    });
+
+    // ── 포인터 입력 ────────────────────────────────────────────────────
+    // 페인 좌표계의 원점은 차트 엘리먼트의 좌상단과 같다(가격축은 오른쪽, 시간축은 아래라
+    // 첫 번째 셀이 곧 페인이다). 그래서 el의 rect만으로 param.point와 같은 좌표를 얻는다.
+    const paneCoordsFrom = e => {
+      const r = el.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+
+    // ⚠️ **preventDefault를 하지 않는다.** 이 리스너는 판정과 상태 변경만 하고 기본 동작
+    //    (스크롤·핀치줌)에 손대지 않는다 — 그리기 모드 off의 터치 동작 불변 요구가
+    //    이 한 줄에 걸려 있다. 기본 동작을 막는 곳은 끝점 드래그가 시작된 뒤뿐이다.
+    const onPointerDown = e => {
+      if (drawPropsRef.current.drawMode) return;
+      const pt = paneCoordsFrom(e);
+      const hit = hitShapeAt(pt.x, pt.y);
+      if (e.pointerType === 'touch') {
+        // 터치에는 hover가 없다 — 탭으로 '선택'해야 ×가 뜬다. 빈 곳을 탭하면 해제.
+        if (hit?.kind === 'segment') showShapeHover({ id: hit.id, x: pt.x, y: pt.y, sticky: true });
+        else if (!hit) forceHideShapeHover();
+      }
+    };
+    el.addEventListener('pointerdown', onPointerDown);
 
     // ── 거래량 히스토그램 (별도 priceScaleId로 캔들 가격축과 분리, 하단 오버레이) ──
     const volumeData = buildVolumeData(h);
@@ -556,6 +643,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     const srLineObjs = srLineObjsRef.current; // cleanup에서 참조할 안정적인 스냅샷
     return () => {
       ro.disconnect();
+      el.removeEventListener('pointerdown', onPointerDown);
       chart.remove();
       priceChartRef.current = null;
       mainSeriesRef.current = null;
@@ -573,6 +661,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       pendingPointRef.current = null;
       // detachPrimitive는 부르지 않는다 — chart.remove()가 시리즈째 파괴한 뒤라 대상이 없다.
       drawPrimRef.current = null;
+      forceHideShapeHover();
     };
   }, [item]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -675,6 +764,8 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   useEffect(() => {
     pendingPointRef.current = null;
     drawPrimRef.current?.setPreview(null);
+    forceHideShapeHover();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- forceHideShapeHover는 ref/setState만 만진다
   }, [symbolKey]);
 
   // ── ESC 취소 ────────────────────────────────────────────────
@@ -726,6 +817,24 @@ const AnalysisChart = forwardRef(function AnalysisChart({
             onMouseEnter={() => { isHoveringDelBtnRef.current = true; clearHoverHideTimer(); }}
             onMouseLeave={() => { isHoveringDelBtnRef.current = false; scheduleHoverLineHide(); }}
             aria-label={`지지/저항선 ${fp(hoverLine.price)} 삭제`}
+          >
+            <span className="sr-line-del-btn-dot">×</span>
+          </button>
+        )}
+        {/* 도형 삭제 × — 커서(또는 탭한 지점) 바로 옆. 상시 오버레이가 아니라 hover/선택
+            중에만 존재하는 32px 버튼이라, 그리기 모드 off·비hover 상태에서는 DOM 노드가 0개다. */}
+        {shapeHover && (
+          <button
+            type="button"
+            className="shape-del-btn"
+            style={{ left: shapeHover.x + 16, top: shapeHover.y }}
+            onClick={e => { e.stopPropagation(); deleteShape(shapeHover.id); }}
+            onPointerDown={e => e.stopPropagation()}
+            onMouseDown={e => e.stopPropagation()}
+            onTouchStart={e => e.stopPropagation()}
+            onMouseEnter={() => { isHoveringShapeDelRef.current = true; clearShapeHoverTimer(); }}
+            onMouseLeave={() => { isHoveringShapeDelRef.current = false; scheduleShapeHoverHide(); }}
+            aria-label="추세선 삭제"
           >
             <span className="sr-line-del-btn-dot">×</span>
           </button>
