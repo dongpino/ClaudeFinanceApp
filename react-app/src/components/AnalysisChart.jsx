@@ -5,7 +5,7 @@ import { useTheme } from '../ThemeContext';
 import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesStore';
 import { saveDrawings, makeShape, DRAWING_TYPE } from '../drawingsStore';
 import { DrawingPrimitive } from '../drawingPrimitive';
-import { hitTest } from '../drawingGeometry';
+import { hitTest, movePointsParallel } from '../drawingGeometry';
 import { createInteractionLock } from '../chartInteractionLock';
 
 // 두 차트의 우측 축 폭을 createChart 시점부터 동일하게 고정 (BTC 등 큰 숫자 기준으로 여유있게)
@@ -136,7 +136,11 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   shapesRef.current     = shapes ?? [];
   const pendingPointRef = useRef(null); // 첫 클릭으로 찍힌 시작점(두 번째 클릭 전까지)
   const drawPrimRef     = useRef(null); // 차트에 붙은 DrawingPrimitive(차트 수명과 같이 간다)
-  const dragRef         = useRef(null); // 끝점 드래그 진행 상태(없으면 null)
+  const dragRef         = useRef(null); // 도형 드래그 진행 상태(없으면 null). mode: 'endpoint'|'body'
+  // 봉 인덱스 ↔ 시각 표 — 몸통 평행 이동이 **인덱스 공간**에서 델타를 계산하는 데 쓴다.
+  // 차트에 넣은 데이터(priceData) 순서 그대로이므로 라이브러리의 logical 인덱스와 같은 축이다.
+  const barTimesRef     = useRef([]);   // index → time
+  const barIndexRef     = useRef(null); // String(time) → index
 
   // 도형 hover/선택 — × 삭제 버튼 표시용. sticky는 **터치 탭 선택**이라 자동으로 사라지지 않는다
   // (터치에는 hover가 없어 "벗어남"이라는 사건 자체가 없다 — 다른 곳을 탭해야 풀린다).
@@ -381,6 +385,11 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       mainSeries = as;
     }
     mainSeriesRef.current = mainSeries;
+    // 몸통 평행 이동용 인덱스 표 — setData에 넣은 배열과 **같은 순서**여야 logical 인덱스와 맞는다.
+    // 키를 String으로 통일하는 이유: time은 'YYYY-MM-DD' 문자열일 수도 UTCTimestamp 숫자일 수도
+    // 있고(getTime), Map은 1 !== '1'이라 타입이 갈리면 조회가 조용히 실패한다.
+    barTimesRef.current = priceData.map(d => d.time);
+    barIndexRef.current = new Map(priceData.map((d, i) => [String(d.time), i]));
 
     // ── 수동 지지/저항선 복원 (symbol 기준으로 저장 — tf 변경/차트 재생성에 영향 없음) ──
     srLineObjsRef.current.clear();
@@ -486,11 +495,25 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       if (drawPropsRef.current.drawMode) return;
       const pt = paneCoordsFrom(e);
       const hit = hitShapeAt(pt.x, pt.y);
+      // 끝점이 몸통을 이긴다 — 우선순위는 hitTest가 이미 정한다(drawingGeometry의 ① 규칙).
       if (hit?.kind === 'endpoint') { startEndpointDrag(hit); return; }
+      // ── 마우스: 몸통을 잡으면 곧바로 평행 이동 ─────────────────────────
+      if (hit?.kind === 'segment' && e.pointerType !== 'touch') { startBodyDrag(hit, pt); return; }
       if (e.pointerType === 'touch') {
         // 터치에는 hover가 없다 — 탭으로 '선택'해야 ×가 뜬다. 빈 곳을 탭하면 해제.
-        if (hit?.kind === 'segment') showShapeHover({ id: hit.id, x: pt.x, y: pt.y, sticky: true });
-        else if (!hit) forceHideShapeHover();
+        if (hit?.kind === 'segment') {
+          // ── 터치: **선택된 도형의 몸통만** 잡힌다(2단계) ────────────────
+          // ⚠️ 첫 터치부터 몸통을 잡으면, 선 위에서 시작한 세로 스와이프가 페이지 스크롤이
+          //    아니라 도형 이동이 된다 — 그리기 모드 off의 스크롤 동작 불변 요구가 깨진다.
+          //    iOS 네이티브 스크롤은 시작된 뒤에 취소할 수 없으므로(이 프로젝트 실측) 판단을
+          //    pointerdown 시점에 끝내야 하고, 그래서 "이미 선택된 도형"이라는 **명시적 의사
+          //    표시**를 조건으로 둔다. 선택하지 않은 선 위에서는 종전과 완전히 같이 굴러간다.
+          if (shapeHoverRef.current?.sticky && shapeHoverRef.current.id === hit.id) {
+            startBodyDrag(hit, pt);
+            return;
+          }
+          showShapeHover({ id: hit.id, x: pt.x, y: pt.y, sticky: true });
+        } else if (!hit) forceHideShapeHover();
       }
     };
     el.addEventListener('pointerdown', onPointerDown);
@@ -507,17 +530,13 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     //    그래서 드래그 동안만 **non-passive touchmove**를 걸어 preventDefault한다.
     const blockTouchScroll = ev => { if (dragRef.current) ev.preventDefault(); };
 
-    function startEndpointDrag(hit) {
+    // 잠금·리스너·터치 차단은 **두 드래그가 공유한다.** 갈라 두면 한쪽만 고치는 실수가 나고,
+    // 그 실수의 증상이 정확히 "스크롤이 영구히 죽는 것"이다(c4c2324 회귀).
+    function beginDrag(state) {
       // 이미 드래그 중이면 새로 시작하지 않는다 — 두 번째 손가락이 다른 끝점에 닿는 경우가
       // 있고, 그때 드래그 상태가 갈아치워지면 첫 손가락의 종료가 엉뚱한 도형을 저장한다.
       if (dragRef.current) return;
-      const shape = shapesRef.current.find(s => s.id === hit.id);
-      if (!shape) return;
-      dragRef.current = {
-        id: hit.id,
-        index: hit.index,
-        points: shape.points.map(p => ({ ...p })),
-      };
+      dragRef.current = state;
       forceHideShapeHover();
       interactionLock.lock();
       el.style.touchAction = 'none';
@@ -527,11 +546,45 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       window.addEventListener('touchmove', blockTouchScroll, { passive: false });
     }
 
+    function startEndpointDrag(hit) {
+      const shape = shapesRef.current.find(s => s.id === hit.id);
+      if (!shape) return;
+      beginDrag({
+        mode: 'endpoint',
+        id: hit.id,
+        index: hit.index,
+        points: shape.points.map(p => ({ ...p })),
+      });
+    }
+
+    /**
+     * 몸통 평행 이동 시작 — 기울기·길이를 유지한 채 두 점을 같이 옮긴다.
+     *
+     * ⚠️ 델타는 화면 px가 아니라 **봉 인덱스**로 잰다. px를 두 점에 각각 적용하면 두 점이
+     *    서로 다른 봉으로 스냅돼 기울기가 변한다(시간축이 이산이라서 — movePointsParallel 주석).
+     * ⚠️ 점의 시각이 현재 데이터에 없으면 인덱스 공간이 성립하지 않으므로 **시작하지 않는다.**
+     *    (그런 도형은 buildSegments가 그리지 않아 hitTest에 잡히지도 않지만, 좌표계 가정이
+     *     깨진 상태에서 이동을 시작하는 경로를 코드에 남기지 않는다.)
+     */
+    function startBodyDrag(hit, pt) {
+      const shape = shapesRef.current.find(s => s.id === hit.id);
+      if (!shape || !Array.isArray(shape.points) || shape.points.length < 2) return;
+      const idxMap = barIndexRef.current;
+      const indices = shape.points.map(p => idxMap?.get(String(p?.time)));
+      if (indices.some(i => !Number.isFinite(i))) return;
+      const startLogical = chart.timeScale().coordinateToLogical(pt.x);
+      const startPrice   = mainSeriesRef.current?.coordinateToPrice(pt.y);
+      if (!Number.isFinite(startLogical) || !Number.isFinite(startPrice)) return;
+      const points = shape.points.map(p => ({ ...p }));
+      beginDrag({ mode: 'body', id: hit.id, points, origPoints: points, indices, startLogical, startPrice });
+    }
+
     function onDragMove(ev) {
       const d = dragRef.current;
       const ms = mainSeriesRef.current;
       if (!d || !ms) return;
       const pt = paneCoordsFrom(ev);
+      if (d.mode === 'body') { onBodyDragMove(d, pt, ms); return; }
       const price = ms.coordinateToPrice(pt.y);
       const time  = chart.timeScale().coordinateToTime(pt.x);
       // ⚠️ 데이터 범위 밖(마지막 봉 오른쪽 여백 등)에서는 time이 null이다 — 그때는 **직전
@@ -541,6 +594,30 @@ const AnalysisChart = forwardRef(function AnalysisChart({
         time:  time ?? p.time,
         price: Number.isFinite(price) ? roundPrice(price) : p.price,
       }));
+      // 드래그 중에는 프리미티브에만 반영한다 — 저장과 부모 state 갱신은 놓을 때 한 번.
+      drawPrimRef.current?.setShapes(
+        shapesRef.current.map(s => (s.id === d.id ? { ...s, points: d.points } : s)),
+      );
+    }
+
+    /**
+     * 몸통 이동 1프레임. **원본(origPoints)에서 매번 새로 계산한다** — 직전 결과에 델타를
+     * 누적하면 봉 스냅 오차가 프레임마다 쌓여 선이 서서히 어긋난다.
+     */
+    function onBodyDragMove(d, pt, ms) {
+      const logical = chart.timeScale().coordinateToLogical(pt.x);
+      const price   = ms.coordinateToPrice(pt.y);
+      // 좌표를 못 얻은 프레임은 **건너뛴다**(직전 상태 유지) — 0으로 메우면 선이 튄다.
+      if (!Number.isFinite(logical) || !Number.isFinite(price)) return;
+      const moved = movePointsParallel({
+        points:      d.origPoints,
+        indices:     d.indices,
+        times:       barTimesRef.current,
+        rawBarDelta: Math.round(logical - d.startLogical),
+        priceDelta:  price - d.startPrice,
+      });
+      // 가격 반올림은 끝점 드래그와 **같은 규칙**을 쓴다(roundPrice).
+      d.points = moved.map(p => ({ ...p, price: Number.isFinite(p.price) ? roundPrice(p.price) : p.price }));
       // 드래그 중에는 프리미티브에만 반영한다 — 저장과 부모 state 갱신은 놓을 때 한 번.
       drawPrimRef.current?.setShapes(
         shapesRef.current.map(s => (s.id === d.id ? { ...s, points: d.points } : s)),
