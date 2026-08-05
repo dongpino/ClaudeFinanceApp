@@ -37,14 +37,25 @@ export default function AvgPriceEditPanel({ onClose }) {
 
   // 토큰이 없으면 프롬프트로 받는다(요구사항: 최초 저장 시/401 수신 시 프롬프트).
   // 입력을 취소하거나 빈 값을 넣으면 null을 반환해 저장을 계속 진행하지 않는다.
+  // ⚠️ 입력을 **저장 전에** 검사한다. 한글 등이 섞인 토큰은 Authorization 헤더에 실을 수
+  //    없어 fetch가 요청 전에 던지고(실측 2026-08-05), 저장해 두면 그 값이 매번 같은 자리에서
+  //    터진다. 잘못된 입력은 저장소에 들이지 않는다.
+  // ⚠️ 실패 사유를 **호출부로 돌려준다.** 여기서 setError를 부르면 handleSave의 일반 문구가
+  //    곧바로 덮어써 "토큰이 있어야 합니다"만 남는다 — 원인(문자 종류)이 화면에서 사라진다.
+  /** @returns {{token: string|null, error: string|null}} */
   function ensureToken() {
     const existing = loadEditToken();
-    if (existing) return existing;
+    if (existing) return { token: existing, error: null };
     const entered = window.prompt('평단가 저장에 사용할 토큰을 입력하세요');
     const trimmed = entered?.trim();
-    if (!trimmed) return null;
-    saveEditToken(trimmed);
-    return trimmed;
+    if (!trimmed) return { token: null, error: '토큰이 있어야 저장할 수 있습니다' };
+    if (!saveEditToken(trimmed)) {
+      return {
+        token: null,
+        error: '토큰에 한글 등 사용할 수 없는 문자가 있습니다. 영문·숫자·기호로 다시 입력해 주세요.',
+      };
+    }
+    return { token: trimmed, error: null };
   }
 
   function buildValueFromDraft() {
@@ -62,9 +73,9 @@ export default function AvgPriceEditPanel({ onClose }) {
     setNotice('');
 
     const hadTokenBefore = !!loadEditToken();
-    const token = ensureToken();
+    const { token, error: tokenError } = ensureToken();
     if (!token) {
-      setError('토큰이 있어야 저장할 수 있습니다');
+      setError(tokenError ?? '토큰이 있어야 저장할 수 있습니다');
       return;
     }
 
