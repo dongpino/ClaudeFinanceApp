@@ -28,6 +28,7 @@
 import { fetchKRQuotes, fetchKRDailyHistory } from './naver-stock.js';
 import { fetchStockPrices } from './finnhub.js';
 import { fetchDailyHistory as fetchUSDailyHistory } from './twelvedata.js';
+import { krStockSymbol } from '../_lib/symbol-map.js';
 
 const HOME_HISTORY_DAYS = 30; // 홈 카드 스파크라인 — 다른 홈 카드(지수 등)와 동일한 기간
 const DETAIL_HISTORY_DAYS = 90; // 상세 화면 — 다른 종목의 history_90d와 동일한 기간
@@ -40,6 +41,34 @@ const WATCHLIST = [
 ];
 
 export const WATCHLIST_IDS = WATCHLIST.map(w => w.symbol);
+
+/**
+ * ── history 출처 라벨 — 지수 경로와 **같은 규약**으로 적는다 ──────────
+ * 형식 '{벤더} {계열} {심볼}' (us-indices.js:245-276의 'Naver world .DJI' /
+ * 'Naver marketIndex bond/US10YT=RR' / 'FRED DJIA'와 같은 모양).
+ *
+ * 왜 필요한가: checkCross가 이 값을 그대로 실어 나르는데(relative-guard.js:641)
+ * 워치리스트 4종만 undefined라 **대조 상대가 quote와 같은 벤더인지 다른 벤더인지**를
+ * 사후에 물을 수 없었다. 실측 [저장소:9072dee8:probe:observe:2026-08-04 4회차]
+ * HYPR historySource=null 4/4.
+ *
+ * ⚠️ **어느 소스가 돌았는지는 회차마다 다르다.** fetchKRDailyHistory는 Naver 실패 시
+ *    Daum으로 폴오버하고(naver-stock.js:132-140), 어느 쪽이었는지는 반환값 source로만
+ *    드러난다. 그래서 상수로 굳히지 않고 **그 값에서 파생**한다(확립 규약: 상수는 신호
+ *    부재 시 폴백으로만). 지수 쪽이 폴백 경로에 다른 라벨을 다는 것과 같은 이유다.
+ * ⚠️ 미지의 source가 오면 **원문을 그대로 남긴다** — 라벨을 지어내면 그 순간 기록이
+ *    사실과 갈라진다. 모르는 것은 모르는 채로 적는 편이 되짚을 수 있다.
+ */
+function krHistorySource(source, code) {
+  // m.stock.naver.com/api/stock/{code}/price (naver-stock.js:148)
+  // ⚠️ quote(/basic, naver-stock.js:76)와 **같은 벤더·같은 API 계열**이고 엔드포인트만
+  //    다르다. 교차성 판단에 필요한 것이 바로 그 사실이라 계열까지 적는다.
+  if (source === 'Naver mobile API') return `Naver stock/price ${code}`;
+  // finance.daum.net/api/charts/{A+code}/days (daum-stock.js:131)
+  // 심볼은 벤더 자신의 표기로 적는다(지수 경로가 '.DJI'·'NAS@IXIC'를 쓰는 것과 동일).
+  if (source === 'Daum') return `Daum charts/days ${krStockSymbol(code, 'daum')}`;
+  return source ?? null;
+}
 
 async function buildKRItem({ symbol, name }, include90d) {
   const wantRows = include90d ? DETAIL_HISTORY_DAYS : HOME_HISTORY_DAYS;
@@ -61,6 +90,8 @@ async function buildKRItem({ symbol, name }, include90d) {
     history,
     history_90d,
     ohlc_available: Boolean(historyResult?.ohlc_available),
+    // 실패(historyResult=null)면 null — 지수 경로가 fetch 성공 시에만 라벨을 다는 것과 같다.
+    historySource: historyResult ? krHistorySource(historyResult.source, symbol) : null,
     as_of: history.length ? `${history.at(-1).date} (Naver 종가)` : undefined,
     currency: 'krw',
   };
@@ -85,6 +116,10 @@ async function buildUSItem({ symbol, name }, include90d) {
     history,
     history_90d,
     ohlc_available: Boolean(historyResult?.ohlc_available),
+    // api.twelvedata.com/time_series?symbol={symbol}&interval=1day (twelvedata.js:36)
+    // 폴백이 없는 단일 경로라 분기가 없다 — quote는 Finnhub /quote(finnhub.js:93)라
+    // **벤더가 실제로 다르다.** 그 사실이 여기 기록으로 남아야 교차 여부를 물을 수 있다.
+    historySource: historyResult ? `Twelve Data time_series ${symbol}` : null,
     as_of: history.length ? `${history.at(-1).date} (Twelve Data 종가)` : undefined,
     currency: 'usd',
   };
