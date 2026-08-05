@@ -18,7 +18,7 @@ const CHART_COLORS = {
            drawLine: '#4d7c0f', drawPreview: '#4d7c0faa' },
 };
 
-// 그리기 색 — 툴바 '그리기' 칩과 같은 라임 계열(라이트 테마는 흰 배경에서 읽히도록 진하게).
+// 그리기 색 — 툴바 '추세선' 칩과 같은 라임 계열(라이트 테마는 흰 배경에서 읽히도록 진하게).
 function drawStyleFor(theme) {
   const c = CHART_COLORS[theme] ?? CHART_COLORS.dark;
   return { color: c.drawLine, previewColor: c.drawPreview };
