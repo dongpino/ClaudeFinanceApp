@@ -7,7 +7,7 @@
  *
  * Shape = {
  *   id:        string,                              // 고유 식별자
- *   type:      string,                              // 'trendline' (나중에 'fib'이 들어올 자리)
+ *   type:      string,                              // 'trendline' | 'fib'
  *   points:    [{ time, price }, { time, price }],  // 항상 2점
  *   createdAt: number,                              // epoch ms
  * }
@@ -23,9 +23,13 @@
 
 export const STORAGE_KEY = 'finance_drawings_v1';
 
-/** 도형 종류 — 지금은 추세선 하나. 'fib'이 들어올 자리다(분기 코드는 아직 없다). */
+/**
+ * 도형 종류. **값이 곧 툴바에서 켜진 도구 이름이다** — 생성 경로가 이 값을 그대로 type에
+ * 넣으므로(AnalysisChart.handleDrawClick), 도구가 늘어도 저장·검증 코드는 바뀌지 않는다.
+ */
 export const DRAWING_TYPE = {
   TRENDLINE: 'trendline',
+  FIB:       'fib',
 };
 
 function loadAll() {

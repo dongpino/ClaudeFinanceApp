@@ -145,6 +145,87 @@ export function movePointsParallel({ points, indices, times, rawBarDelta, priceD
   });
 }
 
+// ── 피보나치 되돌림 ──────────────────────────────────────────────────
+/**
+ * 레벨 9종. 되돌림(0~1)과 확장(1 초과)을 한 배열에 둔다 — 계산식이 같고(선형 보간),
+ * 1을 넘는 값은 자연스럽게 100% 점 **바깥**으로 나간다.
+ */
+export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618];
+
+/** 라벨끼리 이만큼(px)은 떨어져야 그린다 — 아래 pickLabelLevels가 쓰는 기본값. */
+export const LABEL_MIN_GAP_PX = 12;
+
+/**
+ * 비율 하나의 가격. **첫 점이 100%, 둘째 점이 0%다.**
+ *
+ * ── 왜 클릭 순서인가(가격 고저가 아니라) ─────────────────────────────
+ * 되돌림은 "움직임이 **끝난** 지점(0%)에서 **시작** 지점(100%)으로 되돌아온 비율"이다.
+ * 저점→고점으로 그으면 고점이 0%가 되고, 조정이 오면 23.6 → 38.2 → …로 내려온다.
+ * 가격 고저로 정하면 **상승 스윙과 하락 스윙이 같은 그림**이 되어 사용자가 그린 방향이
+ * 사라지고, 그러면 1을 넘는 확장 레벨(161.8·261.8)이 어느 쪽으로 뻗어야 하는지가
+ * 정해지지 않는다. 방향은 사용자가 클릭 순서로 말한 것이므로 그것을 보존한다.
+ * ⚠️ 추세선의 "x가 큰 쪽" 규칙은 여기 쓰지 않는다 — 그건 화면 연장 방향을 정하는 규칙이고,
+ *    Fib의 0/100은 **가격 축의 의미**라 다른 축의 규칙을 빌려올 자리가 아니다.
+ */
+export function fibLevelPrice(price0, price100, ratio) {
+  return price0 + (price100 - price0) * ratio;
+}
+
+/**
+ * 두 점 → 레벨별 가격.
+ * @param {Array<{price:number}>} points  [0]=첫 클릭(100%), [1]=둘째 클릭(0%)
+ * @returns {Array<{ratio:number, price:number}>} 좌표가 성립하지 않으면 빈 배열
+ */
+export function buildFibLevels(points, levels = FIB_LEVELS) {
+  const p100 = points?.[0]?.price;
+  const p0   = points?.[1]?.price;
+  if (!Number.isFinite(p100) || !Number.isFinite(p0)) return [];
+  return (levels ?? []).map(ratio => ({ ratio, price: fibLevelPrice(p0, p100, ratio) }));
+}
+
+/**
+ * 라벨을 그릴 레벨 고르기 — **선은 다 그리고 라벨만 솎는다.**
+ *
+ * 레벨이 9개라 스윙이 좁으면 라벨이 서로 겹쳐 읽을 수 없게 된다. 겹칠 때 무엇을 살릴지는
+ * 우선순위 문제이고, **0%와 100%(앵커)를 먼저 자리 잡게 한다** — 그 둘은 사용자가 직접 찍은
+ * 점이라 사라지면 "내가 어디를 찍었는지"를 화면에서 잃는다. 나머지는 y 오름차순 그리디.
+ *
+ * @param {Array<{y:number, ratio:number}>} levels
+ * @returns {boolean[]} 입력과 같은 길이 — 그 레벨의 라벨을 그릴지
+ */
+export function pickLabelLevels(levels, minGapPx = LABEL_MIN_GAP_PX) {
+  const show = new Array(levels?.length ?? 0).fill(false);
+  if (!Array.isArray(levels) || levels.length === 0) return show;
+  const placed = [];
+  const fits = y => placed.every(py => Math.abs(y - py) >= minGapPx);
+  const put = list => {
+    for (const o of list) {
+      if (!Number.isFinite(o.y) || !fits(o.y)) continue;
+      show[o.i] = true;
+      placed.push(o.y);
+    }
+  };
+  const all = levels
+    .map((l, i) => ({ y: l?.y, ratio: l?.ratio, i }))
+    .sort((a, b) => a.y - b.y);
+  const isAnchor = o => o.ratio === 0 || o.ratio === 1;
+  put(all.filter(isAnchor));   // 앵커 먼저
+  put(all.filter(o => !isAnchor(o)));
+  return show;
+}
+
+/**
+ * 레벨 라벨 문구. '61.8% 25,913.9' 형태.
+ * 비율은 정수면 소수점을 붙이지 않고(0%·50%·100%), 가격은 천 단위 구분 + 소수 2자리까지.
+ */
+export function formatFibLabel(ratio, price) {
+  const pct = Number((ratio * 100).toFixed(1));
+  const p = Number.isFinite(price)
+    ? price.toLocaleString('en-US', { maximumFractionDigits: 2 })
+    : '-';
+  return `${pct}% ${p}`;
+}
+
 /**
  * 커서 위치에 걸리는 도형 1건.
  *
@@ -189,7 +270,18 @@ export function hitTest(segs, px, py, opts) {
   let sg = null;
   for (const s of segs ?? []) {
     if (s?.kind !== 'shape') continue;
-    const d = distanceToSegment(px, py, s.x1, s.y1, s.x2, s.y2);
+    // ⚠️ **몸통이 선 하나라고 가정하지 않는다.** Fib은 레벨 9개라 잡을 선이 여럿이다.
+    //    hitLines가 있으면 그 선들 중 **가장 가까운 것**까지의 거리를 그 도형의 거리로 본다
+    //    ("그려진 선 위에서만 잡힌다"는 원칙은 그대로 — 레벨 사이 빈 공간은 잡히지 않는다).
+    //    없으면 종전대로 두 점을 잇는 선분 하나다(추세선). 이 함수는 도형 type을 모른다.
+    const lines = Array.isArray(s.hitLines) && s.hitLines.length
+      ? s.hitLines
+      : [{ x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2 }];
+    let d = Infinity;
+    for (const ln of lines) {
+      const dd = distanceToSegment(px, py, ln.x1, ln.y1, ln.x2, ln.y2);
+      if (dd < d) d = dd;
+    }
     if (d <= segmentPx && (!sg || d <= sg.distance)) {
       sg = { kind: 'segment', id: s.id, distance: d, x: px, y: py };
     }

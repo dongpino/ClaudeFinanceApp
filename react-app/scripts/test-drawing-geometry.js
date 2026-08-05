@@ -10,6 +10,7 @@
 import {
   distanceToSegment, extendSegmentRight, extendSegmentLeft, hitTest,
   clampBarDelta, movePointsParallel,
+  FIB_LEVELS, fibLevelPrice, buildFibLevels, pickLabelLevels, formatFibLabel,
   SEGMENT_HIT_PX, ENDPOINT_HIT_PX,
 } from '../src/drawingGeometry.js';
 
@@ -230,6 +231,86 @@ const seg = (id, x1, y1, x2, y2) => ({ id, kind: 'shape', x1, y1, x2, y2 });
   const shortSeg = [seg('t', 100, 100, 104, 100)];
   assert(hitTest(shortSeg, 102, 100).kind === 'endpoint', '10-6: 짧은 선분에서도 끝점이 몸통을 이긴다');
   assert(hitTest(shortSeg, 102, 100).index === 1, '10-7: 거리 동률이면 뒤쪽 끝점(위에 그려진 것)');
+}
+
+// ── (11) 피보나치 레벨 가격 — 첫 점 100%, 둘째 점 0% ─────────────────
+{
+  // 상승 스윙: 저점(100)에서 고점(200)으로 그었다 → 첫 클릭 100 = 100%, 둘째 클릭 200 = 0%
+  const up = [{ time: 'd1', price: 100 }, { time: 'd9', price: 200 }];
+  const lv = buildFibLevels(up);
+  assert(lv.length === FIB_LEVELS.length, '11-1: 레벨 9개');
+  assert(lv[0].ratio === 0 && lv[0].price === 200, '11-2: 0%는 둘째 클릭(움직임이 끝난 지점)');
+  assert(lv[6].ratio === 1 && lv[6].price === 100, '11-3: 100%는 첫 클릭(움직임이 시작된 지점)');
+  assert(near(lv[3].price, 150), '11-4: 50%는 중간값');
+  assert(near(lv[4].price, 138.2), '11-5: 61.8% 되돌림');
+  // 확장은 100% 점 **바깥**으로 나간다 — 상승 스윙이면 저점 아래
+  assert(near(lv[7].price, 38.2), '11-6: 161.8% 확장은 100% 바깥');
+  assert(near(lv[8].price, -61.8), '11-7: 261.8%도 같은 방향으로 계속 나간다');
+
+  // 하락 스윙: 고점(200)에서 저점(100)으로 그었다 → 0%는 저점, 100%는 고점
+  const down = buildFibLevels([{ time: 'd1', price: 200 }, { time: 'd9', price: 100 }]);
+  assert(down[0].price === 100 && down[6].price === 200, '11-8: 방향이 뒤집히면 0/100도 뒤집힌다');
+  assert(near(down[4].price, 161.8), '11-9: 하락 스윙의 61.8%는 위로 되돌린다');
+  // 같은 두 가격이라도 **클릭 순서가 다르면 다른 그림**이다(가격 고저 기준이 아니라는 증거)
+  assert(lv[0].price !== down[0].price, '11-10: 클릭 순서가 결과를 바꾼다');
+
+  assert(buildFibLevels([{ price: NaN }, { price: 1 }]).length === 0, '11-11: 비유한 가격이면 빈 배열');
+  assert(buildFibLevels(null).length === 0, '11-12: 점이 없으면 빈 배열');
+  assert(near(fibLevelPrice(200, 100, 0.382), 161.8), '11-13: 단일 비율 계산');
+}
+
+// ── (12) 라벨 솎기 — 선은 다 그리고 라벨만 고른다 ────────────────────
+{
+  const spread = [{ y: 10, ratio: 0 }, { y: 40, ratio: 0.5 }, { y: 70, ratio: 1 }];
+  assert(pickLabelLevels(spread).every(Boolean), '12-1: 충분히 벌어지면 전부 표시');
+
+  const same = [{ y: 50, ratio: 0 }, { y: 50, ratio: 0.5 }, { y: 50, ratio: 1 }];
+  assert(pickLabelLevels(same).filter(Boolean).length === 1, '12-2: 완전히 겹치면 하나만');
+
+  // 앵커 우선 — 그리디였다면 y가 작은 23.6%가 먼저 자리를 잡아 0%가 밀렸을 배치
+  const anchorFirst = [{ y: 100, ratio: 0.236 }, { y: 106, ratio: 0 }];
+  const picked = pickLabelLevels(anchorFirst, 12);
+  assert(picked[1] === true && picked[0] === false, '12-3: 0%(앵커)가 23.6%보다 먼저 자리를 잡는다');
+
+  assert(pickLabelLevels([{ y: NaN, ratio: 0 }])[0] === false, '12-4: 좌표가 없으면 표시하지 않는다');
+  assert(pickLabelLevels([]).length === 0 && pickLabelLevels(null).length === 0, '12-5: 빈 입력 방어');
+  assert(pickLabelLevels(spread).length === spread.length, '12-6: 입력과 길이가 같다');
+}
+
+// ── (13) 라벨 문구 ───────────────────────────────────────────────────
+{
+  assert(formatFibLabel(0, 1234.5) === '0% 1,234.5', '13-1: 정수 비율은 소수점 없이 + 천 단위 구분');
+  assert(formatFibLabel(0.236, 100) === '23.6% 100', '13-2: 소수 비율은 한 자리');
+  assert(formatFibLabel(0.5, 0.98) === '50% 0.98', '13-3: 저가 종목도 소수 2자리까지');
+  assert(formatFibLabel(1, 25913.85) === '100% 25,913.85', '13-4: 100%');
+  assert(formatFibLabel(2.618, 1) === '261.8% 1', '13-5: 확장 레벨');
+  assert(formatFibLabel(0, NaN).endsWith('-'), '13-6: 가격이 없으면 -');
+}
+
+// ── (14) hitLines — 몸통이 선 하나라고 가정하지 않는다 ───────────────
+{
+  // Fib 형태: 두 앵커 (100,100)·(300,300), 레벨 3개가 수평으로 깔린 것
+  const fib = {
+    id: 'f', kind: 'shape', x1: 100, y1: 100, x2: 300, y2: 300,
+    hitLines: [
+      { x1: 100, y1: 100, x2: 300, y2: 100 },
+      { x1: 100, y1: 200, x2: 300, y2: 200 },
+      { x1: 100, y1: 300, x2: 300, y2: 300 },
+    ],
+  };
+  assert(hitTest([fib], 200, 200).kind === 'segment', '14-1: 가운데 레벨선 위도 잡힌다');
+  assert(hitTest([fib], 200, 205).kind === 'segment', '14-2: 레벨선 12px 안이면 잡힌다');
+  // 레벨 **사이**의 빈 공간은 잡히지 않는다 — 바운딩 박스가 아니라 선이 판정 기준이다
+  assert(hitTest([fib], 200, 150) === null, '14-3: 레벨 사이 빈 공간은 잡히지 않는다');
+  // 연장 구간(x < 100)은 판정 대상이 아니다 — 추세선과 같은 규칙
+  assert(hitTest([fib], 50, 200) === null, '14-4: 구간 밖(연장)은 판정하지 않는다');
+  // 앵커는 여전히 끝점으로 잡히고 몸통을 이긴다
+  assert(hitTest([fib], 100, 100).kind === 'endpoint', '14-5: 앵커는 끝점 판정이 이긴다');
+  assert(hitTest([fib], 300, 300).index === 1, '14-6: 둘째 앵커의 index는 1');
+  // hitLines가 없으면 종전 동작(두 점을 잇는 선분 하나)
+  const tl = seg('t', 100, 100, 300, 300);
+  assert(hitTest([tl], 200, 200).kind === 'segment', '14-7: hitLines 없으면 대각선 그대로');
+  assert(hitTest([tl], 200, 150) === null, '14-8: 대각선에서 벗어난 점은 잡히지 않는다');
 }
 
 console.log(fail === 0 ? `✓ 전체 통과 — pass ${pass}, fail ${fail}` : `✗ 실패 — pass ${pass}, fail ${fail}`);

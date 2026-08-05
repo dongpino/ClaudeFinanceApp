@@ -103,5 +103,42 @@ const shape = (id, t1, p1, t2, p2) => ({
   assert(buildSegments([], null, toX, toY).length === 0, '5-7: preview가 null이면 없음');
 }
 
+// ── (6) 피보나치 — 레벨선·구간 경계·앵커 ────────────────────────────
+{
+  const fib = (id, t1, p1, t2, p2) => ({
+    id, type: 'fib', createdAt: 0,
+    points: [{ time: t1, price: p1 }, { time: t2, price: p2 }],
+  });
+  // 저점 1000(첫 클릭=100%) → 고점 3000(둘째 클릭=0%)
+  const segs = buildSegments([fib('f', '2026-07-01', 1000, '2026-08-01', 3000)], null, toX, toY);
+  assert(segs.length === 1 && segs[0].type === 'fib', '6-1: type이 보존된다(렌더러 분기 근거)');
+  assert(segs[0].levels.length === 9, '6-2: 레벨 9개');
+  assert(segs[0].levels[0].price === 3000 && segs[0].levels[6].price === 1000,
+    '6-3: 0%는 둘째 클릭, 100%는 첫 클릭');
+  assert(segs[0].levels[0].y === toY(3000), '6-4: 레벨 y는 가격축 변환 결과');
+  // 구간 경계는 x 정렬 결과 — 클릭 순서와 무관하다
+  assert(segs[0].xMin === 10 && segs[0].xMax === 400, '6-5: xMin/xMax는 정렬된 경계');
+  const rev = buildSegments([fib('f', '2026-08-01', 3000, '2026-07-01', 1000)], null, toX, toY);
+  assert(rev[0].xMin === 10 && rev[0].xMax === 400, '6-6: 거꾸로 그어도 경계는 같다');
+  assert(rev[0].levels[0].price === 1000, '6-7: 다만 0%는 클릭 순서를 따른다');
+
+  // 앵커 두 점은 추세선과 **같은 자리**에 남는다 — 조작 코드가 종류를 몰라도 되는 근거
+  assert(segs[0].x1 === 10 && segs[0].y1 === toY(1000), '6-8: 앵커1 좌표');
+  assert(segs[0].x2 === 400 && segs[0].y2 === toY(3000), '6-9: 앵커2 좌표');
+
+  // 판정선 — 레벨마다 수평선 하나, x는 구간 경계로 고정(연장 구간 제외)
+  assert(segs[0].hitLines.length === 9, '6-10: 판정선도 9개');
+  assert(segs[0].hitLines.every(l => l.x1 === 10 && l.x2 === 400), '6-11: 판정선은 구간 안으로 제한');
+  assert(segs[0].hitLines[0].y1 === segs[0].hitLines[0].y2, '6-12: 판정선은 수평');
+
+  // 데이터 범위 밖 규칙은 추세선과 동일 — 그 도형만 건너뛴다
+  assert(buildSegments([fib('f', '2026-01-01', 1000, '2026-08-01', 3000)], null, toX, toY).length === 0,
+    '6-13: 좌표 없는 Fib은 통째로 건너뛴다');
+  // 추세선은 hitLines를 갖지 않는다(있으면 종전 판정이 바뀐다)
+  const tl = buildSegments([shape('a', '2026-07-01', 1000, '2026-08-01', 3000)], null, toX, toY);
+  assert(tl[0].hitLines === undefined, '6-14: 추세선에는 hitLines가 붙지 않는다');
+  assert(tl[0].type === 'trendline', '6-15: 추세선도 type을 싣는다');
+}
+
 console.log(fail === 0 ? `✓ 전체 통과 — pass ${pass}, fail ${fail}` : `✗ 실패 — pass ${pass}, fail ${fail}`);
 process.exit(fail === 0 ? 0 : 1);

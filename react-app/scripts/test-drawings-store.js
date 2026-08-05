@@ -130,5 +130,28 @@ const pts = (t1, p1, t2, p2) => [{ time: t1, price: p1 }, { time: t2, price: p2 
   assert(!threw, '6-1: localStorage 쓰기 실패를 삼킨다(호출부가 죽지 않는다)');
 }
 
+// ── (7) 피보나치 — **저장 구조가 그대로임을 고정한다** ───────────────
+// 도구가 늘어도 이 층은 바뀌지 않아야 한다. type을 문자열로 나르기만 하는 설계가
+// 실제로 성립하는지가 여기서 드러난다(분기 코드가 하나도 없어야 한다).
+{
+  store = {};
+  const pts = [{ time: '2026-07-01', price: 1000 }, { time: '2026-08-01', price: 3000 }];
+  const fib = makeShape(DRAWING_TYPE.FIB, pts);
+  assert(fib !== null && fib.type === 'fib', '7-1: fib 도형이 만들어진다');
+  assert(Array.isArray(fib.points) && fib.points.length === 2, '7-2: 점은 여전히 2개(구조 불변)');
+  assert(typeof fib.id === 'string' && Number.isFinite(fib.createdAt), '7-3: id·createdAt 규약 동일');
+
+  const tl = makeShape(DRAWING_TYPE.TRENDLINE, pts);
+  saveDrawings('stock:kr:005930', [tl, fib]);
+  const back = loadDrawings('stock:kr:005930');
+  assert(back.length === 2, '7-4: 두 종류가 한 목록에 섞여 저장·복원된다');
+  assert(back[1].type === 'fib' && back[1].points[1].price === 3000, '7-5: type과 좌표가 왕복에서 보존');
+  assert(JSON.parse(store[STORAGE_KEY])['stock:kr:005930'].length === 2, '7-6: 저장 키 구조 동일');
+
+  // 검증 규칙도 종류와 무관하다 — 깨진 fib은 그것만 빠진다
+  saveDrawings('stock:kr:000660', [fib, { id: 'x', type: 'fib', points: [{ time: 'd', price: NaN }] }]);
+  assert(loadDrawings('stock:kr:000660').length === 1, '7-7: 깨진 fib만 걸러진다');
+}
+
 console.log(fail === 0 ? `✓ 전체 통과 — pass ${pass}, fail ${fail}` : `✗ 실패 — pass ${pass}, fail ${fail}`);
 process.exit(fail === 0 ? 0 : 1);

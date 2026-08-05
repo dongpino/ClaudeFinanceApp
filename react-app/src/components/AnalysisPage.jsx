@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useData } from '../DataContext';
 import useWatchlist from '../useWatchlist';
 import { loadTopPanelCollapsed, saveTopPanelCollapsed } from '../analysisTopPanelStore';
-import { loadDrawings, saveDrawings } from '../drawingsStore';
+import { loadDrawings, saveDrawings, DRAWING_TYPE } from '../drawingsStore';
 import Header from './Header';
 import BottomNav from './BottomNav';
 import AnalysisChart from './AnalysisChart';
@@ -96,7 +96,12 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
   //    `item && <AnalysisChart/>`로 조건부 마운트라 종목 전환 중에는 통지할 주체가 아예
   //    사라진다(로드 실패로 item이 계속 null이면 영구히). 그래서 화면에 이전 종목의 개수가
   //    남았다. 목록을 여기로 올리면 로딩·실패 여부와 무관하게 symbolKey만으로 갱신된다.
-  const [drawMode, setDrawMode] = useState(false);
+  // ⚠️ 도구는 **하나만 켜진다** — boolean 두 개가 아니라 '지금 켜진 도구' 하나를 든다.
+  //    켜짐/꺼짐을 도구마다 따로 두면 "둘 다 켜진 상태"가 표현 가능해지고, 그 상태에서
+  //    클릭이 어느 도형을 만들어야 하는지 답이 없다. 애초에 만들 수 없게 한 값이다.
+  //    null = 꺼짐, 그 외에는 DRAWING_TYPE 값 하나(그대로 shape.type이 된다).
+  const [drawTool, setDrawTool] = useState(null);
+  const toggleDrawTool = tool => setDrawTool(cur => (cur === tool ? null : tool));
   const [shapes, setShapes] = useState([]);
 
   // 모바일 전용 상단 패널(검색+칩 줄) 접기 — 데스크톱은 CSS 미디어쿼리로 항상 펼침 유지.
@@ -173,7 +178,7 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
   // 그대로 살아 있으면 첫 클릭이 의도치 않게 점 찍기로 해석된다.
   // (도형 개수는 여기서 0으로 되돌리지 않는다 — AnalysisChart의 symbolKey effect가
   //  새 심볼의 실제 개수를 즉시 통지하므로, 0으로 깜빡이는 중간 상태를 만들 필요가 없다.)
-  useEffect(() => { setSrLineCount(0); setDrawMode(false); }, [selected]);
+  useEffect(() => { setSrLineCount(0); setDrawTool(null); }, [selected]);
 
   // 종목·타임프레임 전환 시 데이터 fetch — 선택된 종목이 없으면 호출하지 않는다.
   useEffect(() => {
@@ -675,18 +680,28 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
                 >
                   <span className="ind-dot vol" />거래량
                 </button>
+                {/* 도구 버튼 — 하나를 켜면 다른 하나는 자동으로 꺼진다(toggleDrawTool).
+                    켜진 상태에만 '그리는 중'을 덧붙이는 이유는 이 토글이 다른 토글(거래량·MA)과
+                    달리 **차트 클릭의 의미를 바꾸기** 때문이다 — 표시가 곧 모드 경고다. */}
                 <button
-                  className={`ind-toggle${drawMode ? ' on draw' : ''}`}
-                  onClick={() => setDrawMode(v => !v)}
-                  title={drawMode
+                  className={`ind-toggle${drawTool === DRAWING_TYPE.TRENDLINE ? ' on draw' : ''}`}
+                  onClick={() => toggleDrawTool(DRAWING_TYPE.TRENDLINE)}
+                  title={drawTool === DRAWING_TYPE.TRENDLINE
                     ? '추세선 — 차트를 두 번 클릭해 시작점·끝점을 찍습니다 (ESC 취소)'
                     : '추세선 그리기 — 켜면 차트 클릭이 점 찍기로 해석됩니다'}
                 >
-                  {/* 버튼 이름은 **도구 이름**이다 — 피보나치가 붙으면 도구별 버튼이 되므로
-                      '그리기'라는 총칭은 그때 어느 도구인지를 말하지 못한다. 켜진 상태에만
-                      '그리는 중'을 덧붙이는 이유는 이 토글이 다른 토글(거래량·MA)과 달리
-                      **차트 클릭의 의미를 바꾸기** 때문이다 — 표시가 곧 모드 경고다. */}
-                  <span className="ind-dot draw" />{drawMode ? '추세선 그리는 중' : '추세선'}
+                  <span className="ind-dot draw" />
+                  {drawTool === DRAWING_TYPE.TRENDLINE ? '추세선 그리는 중' : '추세선'}
+                </button>
+                <button
+                  className={`ind-toggle${drawTool === DRAWING_TYPE.FIB ? ' on draw' : ''}`}
+                  onClick={() => toggleDrawTool(DRAWING_TYPE.FIB)}
+                  title={drawTool === DRAWING_TYPE.FIB
+                    ? '피보나치 되돌림 — 움직임의 시작점·끝점을 찍습니다. 두 번째 점이 0%입니다 (ESC 취소)'
+                    : '피보나치 되돌림 — 두 점 사이에 0·23.6·38.2·50·61.8·78.6·100·161.8·261.8% 레벨을 긋습니다'}
+                >
+                  <span className="ind-dot draw" />
+                  {drawTool === DRAWING_TYPE.FIB ? '피보나치 그리는 중' : '피보나치'}
                 </button>
                 <span className="analysis-shape-count">도형 {shapes.length}개</span>
                 {shapes.length > 0 && (
@@ -737,8 +752,8 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
                     showVolume={showVolume && !volumeDisabled}
                     symbolKey={symbolKey}
                     onLinesChange={setSrLineCount}
-                    drawMode={drawMode}
-                    onDrawModeChange={setDrawMode}
+                    drawTool={drawTool}
+                    onDrawToolChange={setDrawTool}
                     shapes={shapes}
                     onShapesChange={setShapes}
                   />
