@@ -23,14 +23,26 @@
  * 우리가 requestUpdate를 직접 부르는 경우는 **입력이 바뀔 때뿐**이다(도형 목록/미리보기/색).
  */
 
-import { extendSegmentRight, extendSegmentLeft } from './drawingGeometry.js';
+import {
+  extendSegmentRight, extendSegmentLeft,
+  buildFibLevels, pickLabelLevels, formatFibLabel,
+} from './drawingGeometry.js';
 
-/** 도형 종류로 분기하지 않는다 — 지금은 모든 도형이 2점 선분이다('fib'이 들어오면 그때 분기). */
+/**
+ * 두 도형이 **같은 시각 언어**를 쓰도록 스타일을 한 곳에 둔다.
+ * ⚠️ extendAlpha는 "찍은 두 점 사이는 진하고, 그 바깥 연장은 흐리다"는 규약이다. 지금은
+ *    Fib만 쓴다 — 추세선 연장에도 같은 값을 적용하자는 제안이 미결로 남아 있어 이번에는
+ *    건드리지 않았다(지시 범위 밖). 값을 여기 둔 것은 그때 한 줄로 합류시키기 위함이다.
+ */
 const DEFAULT_STYLE = {
   color:        '#a3e635',
   previewColor: '#a3e635aa',
   lineWidth:    1.5,
   endpointRadius: 3,
+  extendAlpha:  0.55,
+  labelFont:    '11px system-ui, -apple-system, sans-serif',
+  labelPadX:    4,
+  labelGapY:    3,
 };
 
 const isNum = v => Number.isFinite(v);
@@ -61,12 +73,29 @@ export function buildSegments(shapes, preview, toX, toY) {
     const x1 = toX(pts[0]?.time), y1 = toY(pts[0]?.price);
     const x2 = toX(pts[1]?.time), y2 = toY(pts[1]?.price);
     if (!isNum(x1) || !isNum(y1) || !isNum(x2) || !isNum(y2)) continue;
+    // ── 피보나치 — 두 점이 만드는 **가격 구간**에 수평 레벨을 깐다 ──────
+    // ⚠️ 앵커 두 점의 좌표(x1,y1)/(x2,y2)는 추세선과 **같은 자리**에 남긴다. 끝점 드래그·
+    //    몸통 이동·앵커 점 렌더가 전부 그 두 값만 보므로, 여기서 형태를 맞춰 두면 조작
+    //    코드가 도형 종류를 몰라도 된다(공통 기반이 실제로 재사용되는 지점).
+    if (s.type === 'fib') {
+      const xMin = Math.min(x1, x2), xMax = Math.max(x1, x2);
+      const levels = buildFibLevels(pts)
+        .map(l => ({ ...l, y: toY(l.price) }))
+        .filter(l => isNum(l.y));
+      if (!levels.length) continue;
+      segs.push({
+        id: s.id, kind: 'shape', type: 'fib', x1, y1, x2, y2, xMin, xMax, levels,
+        // 판정은 **그려진 레벨선 위**에서만 — 바운딩 박스가 아니다(hitTest 주석).
+        hitLines: levels.map(l => ({ x1: xMin, y1: l.y, x2: xMax, y2: l.y })),
+      });
+      continue;
+    }
     // extendRight/extendLeft — 양방향 연장 여부. **둘 다 기본 켜짐**이고, 도형에
     // extendRight:false / extendLeft:false가 있으면 그 방향만 끈다. 지금 그 필드를 쓰는
     // UI는 없다(도형별 토글은 속성 패널과 함께) — 렌더러가 미리 읽게 두어 나중에 필드만
     // 저장하면 되도록 자리를 남긴다. 저장 구조는 건드리지 않았다.
     segs.push({
-      id: s.id, kind: 'shape', x1, y1, x2, y2,
+      id: s.id, kind: 'shape', type: s.type ?? 'trendline', x1, y1, x2, y2,
       extendRight: s.extendRight !== false,
       extendLeft:  s.extendLeft  !== false,
     });
@@ -79,6 +108,56 @@ export function buildSegments(shapes, preview, toX, toY) {
     }
   }
   return segs;
+}
+
+const strokeLine = (ctx, x1, y1, x2, y2) => {
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+};
+
+/**
+ * 피보나치 1건. **구간 안은 불투명, 좌우 연장은 같은 색 저투명도**(style.extendAlpha).
+ *
+ * ⚠️ 라벨 x는 "구간 왼쪽 끝을 페인 안으로 자른 위치"다 — 도형이 화면 왼쪽으로 밀려나가도
+ *    라벨이 따라 들어와 계속 읽힌다. 오른쪽 끝에 붙이지 않는 이유는 그쪽이 최신 캔들·
+ *    크로스헤어·가격축 라벨과 겹치는 구역이기 때문이다.
+ * ⚠️ 레벨선은 **전부 그리고 라벨만 솎는다**(pickLabelLevels). 선을 지우면 값이 사라지지만
+ *    라벨은 겹치면 어차피 못 읽으므로, 지우는 쪽이 정보 손실이 작다.
+ */
+function drawFib(ctx, s, style, mediaSize) {
+  const show = pickLabelLevels(s.levels);
+  const labelX = Math.max(s.xMin, 0) + style.labelPadX;
+  ctx.setLineDash([]);
+  ctx.strokeStyle = style.color;
+  ctx.font = style.labelFont;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+
+  for (let i = 0; i < s.levels.length; i++) {
+    const { y, ratio, price } = s.levels[i];
+    ctx.globalAlpha = 1;
+    strokeLine(ctx, s.xMin, y, s.xMax, y);
+    // 좌우 연장 — 페인 폭은 그릴 때만 알 수 있으므로(mediaSize) 여기서 자른다.
+    ctx.globalAlpha = style.extendAlpha;
+    if (s.xMin > 0) strokeLine(ctx, 0, y, s.xMin, y);
+    if (s.xMax < mediaSize.width) strokeLine(ctx, s.xMax, y, mediaSize.width, y);
+    ctx.globalAlpha = 1;
+    if (show[i]) {
+      ctx.fillStyle = style.color;
+      ctx.fillText(formatFibLabel(ratio, price), labelX, y - style.labelGapY);
+    }
+  }
+
+  // 앵커 두 점 — 추세선의 끝점 표시와 **같은 모양**이다. 어느 두 점을 찍었는지 눈으로
+  // 확인하는 수단이자, 끝점 드래그로 잡을 자리를 알려 주는 표시다.
+  ctx.fillStyle = style.color;
+  for (const [cx, cy] of [[s.x1, s.y1], [s.x2, s.y2]]) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, style.endpointRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 class DrawingPaneRenderer {
@@ -96,6 +175,8 @@ class DrawingPaneRenderer {
       ctx.lineCap = 'round';
       ctx.lineWidth = style.lineWidth;
       for (const s of segs) {
+        // 도형 종류로 갈리는 지점은 **여기 하나뿐**이다 — 좌표 생성·판정·조작은 공통이다.
+        if (s.type === 'fib') { drawFib(ctx, s, style, mediaSize); continue; }
         const preview = s.kind === 'preview';
         ctx.beginPath();
         ctx.setLineDash(preview ? [5, 4] : []);
