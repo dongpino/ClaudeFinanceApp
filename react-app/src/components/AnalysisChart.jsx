@@ -3,7 +3,9 @@ import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { calcMA, calcBB, calcRSIAligned } from '../indicators';
 import { useTheme } from '../ThemeContext';
 import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesStore';
-import { saveDrawings, makeShape, DRAWING_TYPE } from '../drawingsStore';
+// DRAWING_TYPE을 여기서 import하지 않는다 — 이 컴포넌트는 켜진 도구 이름을 prop으로 받아
+// 그대로 나르기만 하고, 도형 종류를 **아는** 쪽은 툴바(AnalysisPage)와 렌더러다.
+import { saveDrawings, makeShape } from '../drawingsStore';
 import { DrawingPrimitive } from '../drawingPrimitive';
 import { hitTest, movePointsParallel } from '../drawingGeometry';
 import { createInteractionLock } from '../chartInteractionLock';
@@ -101,7 +103,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   showBB,
   showRSI, showVolume,
   symbolKey, onLinesChange,
-  drawMode, onDrawModeChange, shapes, onShapesChange,
+  drawTool, onDrawToolChange, shapes, onShapesChange,
 }, ref) {
   const { theme } = useTheme();
   const priceRef = useRef(null);
@@ -130,8 +132,8 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   //    이제 목록은 부모 state이고 여기서는 prop으로 받아 ref에 미러링만 한다.
   // 최신 props를 ref에 미러링하는 이유는 srPropsRef와 같다 — 차트 생성 시점 클로저에서
   // 만들어진 구독 콜백이 stale prop을 읽으면 모드 토글이 먹히지 않는다.
-  const drawPropsRef = useRef({ drawMode, onDrawModeChange, onShapesChange, symbolKey });
-  drawPropsRef.current = { drawMode, onDrawModeChange, onShapesChange, symbolKey };
+  const drawPropsRef = useRef({ drawTool, onDrawToolChange, onShapesChange, symbolKey });
+  drawPropsRef.current = { drawTool, onDrawToolChange, onShapesChange, symbolKey };
   const shapesRef       = useRef(shapes ?? []); // prop 미러 — 구독 콜백이 최신 목록을 읽는 통로
   shapesRef.current     = shapes ?? [];
   const pendingPointRef = useRef(null); // 첫 클릭으로 찍힌 시작점(두 번째 클릭 전까지)
@@ -252,7 +254,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
    * ⚠️ 모드가 꺼져 있으면 첫 줄에서 즉시 반환한다 — off 상태에서 이 구독은 아무 일도 하지 않는다.
    */
   function handleDrawClick(param) {
-    if (!drawPropsRef.current.drawMode) return;
+    if (!drawPropsRef.current.drawTool) return;
     const pt = pointFromClick(param);
     if (!pt) return;
 
@@ -260,9 +262,10 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       pendingPointRef.current = pt;
       return;
     }
-    // type은 지금 'trendline' 하나뿐이고, 여기서 type으로 분기하지 않는다 —
-    // 피보나치가 들어와도 이 경로는 그대로이고 달라지는 것은 렌더링 단계다.
-    const shape = makeShape(DRAWING_TYPE.TRENDLINE, [pendingPointRef.current, pt]);
+    // ⚠️ 여기서 type으로 **분기하지 않는다.** 켜져 있는 도구 이름이 그대로 type이 된다 —
+    //    두 점을 찍는 절차가 두 도구에서 완전히 같기 때문이고, 실제로 피보나치를 넣으면서
+    //    이 경로는 이 한 줄(상수 → 변수)만 바뀌었다. 달라지는 곳은 렌더링 단계다.
+    const shape = makeShape(drawPropsRef.current.drawTool, [pendingPointRef.current, pt]);
     pendingPointRef.current = null;
     if (!shape) return;
 
@@ -274,7 +277,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     drawPrimRef.current?.setShapes(next);
     drawPrimRef.current?.setPreview(null);
     drawPropsRef.current.onShapesChange?.(next);
-    drawPropsRef.current.onDrawModeChange?.(false);
+    drawPropsRef.current.onDrawToolChange?.(null);
   }
 
   // ── 도형 hover/선택 + 선별 삭제 ──────────────────────────────
@@ -403,7 +406,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       // 그리기 모드에서는 클릭이 **점 찍기로만** 해석된다. 이 가드가 없으면 두 점을 가깝게
       // 연달아 찍을 때 더블클릭으로도 판정돼 의도치 않은 지지/저항선이 함께 생긴다.
       // (모드가 꺼져 있으면 이 줄은 통과되므로 기존 동작은 그대로다.)
-      if (drawPropsRef.current.drawMode) return;
+      if (drawPropsRef.current.drawTool) return;
       const ms = mainSeriesRef.current;
       if (!ms || !param.point) return;
       const clickedPrice = ms.coordinateToPrice(param.point.y);
@@ -461,7 +464,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       const prim = drawPrimRef.current;
       if (!prim) return;
       const pending = pendingPointRef.current;
-      if (!drawPropsRef.current.drawMode || !pending || !param?.point) { prim.setPreview(null); return; }
+      if (!drawPropsRef.current.drawTool || !pending || !param?.point) { prim.setPreview(null); return; }
       prim.setPreview({ from: pending, to: { x: param.point.x, y: param.point.y } });
     });
 
@@ -470,7 +473,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     //    조작(삭제)이 그 위에 겹치면 안 된다 — hitTest의 우선순위 규칙과 같은 근거다.
     // ⚠️ 그리기 모드·드래그 중에는 판정 자체를 하지 않는다(그때 클릭·이동의 의미가 다르다).
     chart.subscribeCrosshairMove(param => {
-      if (drawPropsRef.current.drawMode || dragRef.current) return;
+      if (drawPropsRef.current.drawTool || dragRef.current) return;
       if (!param?.point) { scheduleShapeHoverHide(); return; }
       const hit = hitShapeAt(param.point.x, param.point.y);
       if (hit?.kind === 'segment') {
@@ -492,7 +495,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     //    (스크롤·핀치줌)에 손대지 않는다 — 그리기 모드 off의 터치 동작 불변 요구가
     //    이 한 줄에 걸려 있다. 기본 동작을 막는 곳은 끝점 드래그가 시작된 뒤뿐이다.
     const onPointerDown = e => {
-      if (drawPropsRef.current.drawMode) return;
+      if (drawPropsRef.current.drawTool) return;
       const pt = paneCoordsFrom(e);
       const hit = hitShapeAt(pt.x, pt.y);
       // 끝점이 몸통을 이긴다 — 우선순위는 hitTest가 이미 정한다(drawingGeometry의 ① 규칙).
@@ -934,7 +937,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   // 첫 점만 찍힌 상태에서만 동작한다(요구사항). 리스너는 **그리기 모드일 때만** 붙고,
   // 모드가 꺼지면 즉시 제거된다 — off 상태에서는 키 입력에 아무 영향이 없다.
   useEffect(() => {
-    if (!drawMode) {
+    if (!drawTool) {
       // 모드가 꺼지면 진행 중인 점과 미리보기를 함께 버린다(토글 off·확정 직후 모두 여기로).
       pendingPointRef.current = null;
       drawPrimRef.current?.setPreview(null);
@@ -946,11 +949,11 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       drawPrimRef.current?.setPreview(null);
       // 취소는 모드 종료까지 포함한다 — 모바일에는 ESC가 없어 토글 버튼이 유일한 탈출구이고,
       // 두 경로의 결과가 다르면 "지금 모드가 켜져 있나"를 화면만 보고 알 수 없게 된다.
-      drawPropsRef.current.onDrawModeChange?.(false);
+      drawPropsRef.current.onDrawToolChange?.(null);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [drawMode]);
+  }, [drawTool]);
 
   // ── MA·거래량 토글 (차트 재생성 없이 visibility만 변경) ──────
   useEffect(() => { ma20Ref.current?.applyOptions({ visible: showMA20 });   }, [showMA20]);
