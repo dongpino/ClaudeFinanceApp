@@ -12,6 +12,7 @@
  * GET /api/probe-observe?key=…      — 수동 캡처(DEBUG_SIGNALS_KEY)
  * GET /api/probe-observe?key=…&view=1 — 쌓인 회차 조회(수집 유도 없음, Redis만 읽음)
  * 선택 파라미터: ?window=us-open (창 라벨 명시) / ?ids=nasdaq,vix (관측 대상 축소)
+ * 기본 관측 대상은 **검사 2a 대상 전체**다(ASSET_META의 cross·semi에서 파생 — DEFAULT_IDS 주석).
  *
  * ── 판정 좌표는 반드시 원본이다 ──────────────────────────────────────
  * 서빙본의 `change`는 recalcChange 분기1이 h[-1]/h[-2]로 만든 값이라 **축퇴를 가린다.**
@@ -50,9 +51,31 @@ import { originOf, alignBySignal, checkCross, tradingDateOf } from './_lib/relat
 
 const KEY = 'probe:observe';
 
-// 관측 대상 6종 — 지시받은 범위다(응답에서 파생되는 값이 아니라 **관측 범위 선택**이라
-// 상수가 맞는 자리). ?ids=로 회차별 축소·확대 가능.
-const DEFAULT_IDS = ['nasdaq', 'dow', 'sp500', 'sox', 'vix', 'HYPR'];
+/**
+ * 기본 관측 대상 — **검사 2a 대상 전체를 ASSET_META에서 파생한다(2026-08-05).**
+ *
+ * 종전에는 6종 하드코딩이었다(nasdaq·dow·sp500·sox·vix·HYPR — 신설 당시 지시받은 범위).
+ * 그 결과 검사 2a 대상 11종 중 **5종(dxy·us10y·419530·028300·080220)이 관측 밖**이었고,
+ * 그 5종은 "검증 실패"가 아니라 **판정할 데이터가 없는** 상태로 남았다.
+ *   실측 [저장소:9072dee8:probe:observe:2026-08-04 4회차] 계상 축 31개 중 진짜 검사 6개.
+ *
+ * ⚠️ **파생하는 이유**: 이 프로브의 관측 대상은 "검사 2a가 무엇을 검사하는가"와 정의상
+ *    같은 집합이다. 그 집합을 정하는 것이 등급(ASSET_META.cross)이므로, 등급이 바뀌면
+ *    프로브가 따라와야 둘이 갈라지지 않는다 — 하드코딩은 그 순간 조용히 어긋나고,
+ *    어긋난 사실이 "그 종목은 관측된 적 없음"으로만 드러나 알아채기 어렵다.
+ *    checkCross가 tauto·tautological·무등급을 최상단에서 조기반환하므로
+ *    (relative-guard.js:565-569) cross·semi가 곧 "정렬 판정에 도달하는 항목"이다.
+ * ⚠️ **market-data.js의 ITEM_ORDER를 import하지 않는다** — 파일 상단 격리 원칙대로 서빙
+ *    모듈을 끌어오지 않는다. ASSET_META는 네트워크·Redis 없는 순수 상수 테이블이라
+ *    import해도 관측 대상이 오염되지 않는다(relative-guard와 같은 근거).
+ *    홈 응답에 없는 id가 섞이면 그 회차에 {absent:true}로 남을 뿐이고 그것도 기록이다.
+ * ⚠️ 순서는 ASSET_META 정의 순서를 그대로 따른다 — 별도 정렬을 두면 그것대로 유지 대상이 된다.
+ * ?ids=로 회차별 축소·확대는 종전대로 가능하다(capture()의 idsQ가 이 값을 덮는다).
+ */
+const CHECK_2A_GRADES = new Set(['cross', 'semi']);
+export const DEFAULT_IDS = Object.entries(ASSET_META)
+  .filter(([, m]) => CHECK_2A_GRADES.has(m?.cross))
+  .map(([id]) => id);
 
 const FETCH_TIMEOUT_MS = 25_000;   // MISS면 실제 수집이 돌아 수 초~십수 초 걸린다
 
