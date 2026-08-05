@@ -4,6 +4,8 @@ import { useData } from '../DataContext';
 import Chart from './Chart';
 import BottomNav from './BottomNav';
 import { getAnalysisSelection } from '../analysisLink';
+import { getAvgPrice } from '../avgPriceStore';
+import { parityPercent, parityDirection } from '../parity';
 
 const ARROW = { up: '▲', down: '▼', flat: '-' };
 const DETAIL_TIMEOUT_MS = 20_000;
@@ -121,6 +123,19 @@ export default function DetailPage({ onBack, activePage, onPageChange, onOpenAna
   // 버튼 자체가 렌더되지 않는다("눌리는데 실패하는 버튼 금지").
   const analysisSelection = getAnalysisSelection(item);
 
+  // ── 주가 패리티 — 현재가가 평단가의 몇 %인가 ────────────────────────
+  // ⚠️ Preview 배포(VITE_HIDE_WATCHLIST=1)에서는 삼항이 null로 접혀 getAvgPrice 호출이
+  //    dead가 된다. MarketCard.jsx·Chart.jsx와 **같은 패턴을 그대로** 쓴다 — 한 곳이라도
+  //    빠지면 avgPriceStore가 번들에 남아 워치리스트 심볼이 노출된다(그 모듈 주석 참조).
+  // ⚠️ 평단가 미입력이면 parity가 null이고 아래 JSX가 통째로 건너뛴다. 0%로 적지 않는다 —
+  //    0%는 "전액 손실"과 구분되지 않는다.
+  // 갱신 경로: 편집 저장 → saveAvgPrices → 캐시 반영 → subscribeAvgPrices 통지 →
+  //   DataContext가 tick을 올려 리렌더 → useData 소비자인 이 화면이 다시 계산한다.
+  //   (getAvgPrice는 순수 동기 함수라 구독을 여기서 따로 걸지 않는다.)
+  const avgPrice = import.meta.env.VITE_HIDE_WATCHLIST === '1' ? null : getAvgPrice(item.id);
+  const parity = parityPercent(price, avgPrice);
+  const parityDir = parityDirection(parity);
+
   return (
     <div className="detail-page">
       <div className="detail-scroll">
@@ -163,6 +178,21 @@ export default function DetailPage({ onBack, activePage, onPageChange, onOpenAna
             >
               분석 탭에서 열기 →
             </button>
+          </div>
+        )}
+
+        {/* 주가 패리티 — 평단가가 있는 종목(우미 워치리스트)에서만 렌더된다.
+            자리를 현재가 섹션이 아니라 **90일 통계 바로 위**로 잡은 이유: 현재가 옆에 두면
+            등락률(오늘의 변동)과 같은 시야에 들어와 "180%"가 오늘 등락으로 읽힐 여지가 있다.
+            여기는 이미 '기간 요약' 성격의 구역이라 문맥이 맞고, 라벨과 카드 경계가 함께 붙어
+            다른 축의 수라는 것이 형태로 드러난다. */}
+        {/* ⚠️ 환경 상수를 **조건 맨 앞**에 둔다(HomePage.jsx:728과 같은 형태). 이래야 Preview
+            배포에서 이 표현식 전체가 false로 접혀 라벨 문자열·클래스명까지 번들에서 사라진다.
+            avgPrice 삼항만으로는 parity가 런타임 null이 될 뿐 JSX는 번들에 남는다(실측). */}
+        {import.meta.env.VITE_HIDE_WATCHLIST !== '1' && parity != null && (
+          <div className="detail-parity">
+            <span className="detail-parity-label">평단가 대비</span>
+            <span className={`detail-parity-value ${parityDir}`}>{parity}%</span>
           </div>
         )}
 
