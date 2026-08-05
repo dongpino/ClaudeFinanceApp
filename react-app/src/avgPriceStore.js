@@ -17,7 +17,9 @@
  * DataContext.jsx가 진다(이미 앱 전역 데이터를 들고 있는 곳이라 자연스러운 지점).
  */
 
-import { loadEditToken } from './editTokenStore';
+// 확장자를 붙인다 — Vite는 없어도 해석하지만 Node는 못 한다. 이 모듈이 회귀 테스트
+// (scripts/test-edit-token.js)에서 그대로 import되므로 두 런타임 모두에서 풀려야 한다.
+import { loadEditToken, isHeaderSafeToken } from './editTokenStore.js';
 
 const WATCHLIST_IDS = ['HYPR', '419530', '028300', '080220'];
 
@@ -60,7 +62,9 @@ function applyToCache(value) {
  */
 export async function loadAvgPrices() {
   const token = loadEditToken();
-  if (!token) return;
+  // loadEditToken이 이미 걸러 주지만 여기서도 막는다 — **fetch에 닿기 전에** 끊는 것이
+  // 이 방어의 요점이고, 토큰 출처가 늘어나도 이 지점은 유지돼야 한다.
+  if (!token || !isHeaderSafeToken(token)) return;
   try {
     const res = await fetch('/api/user-prefs?key=avgPrices', {
       headers: { Authorization: `Bearer ${token}` },
@@ -82,6 +86,15 @@ export async function saveAvgPrices(value) {
   const token = loadEditToken();
   if (!token) {
     const e = new Error('토큰이 없습니다');
+    e.code = 'AUTH_ERROR';
+    throw e;
+  }
+  // ⚠️ **fetch를 부르기 전에 끊는다.** 비-ASCII가 섞이면 fetch는 요청을 보내지 않고
+  //    TypeError를 던지는데, 그 메시지가 '네트워크 오류'로 감싸여 사용자에게는 서버 장애로
+  //    보였다(2026-08-05 실측). 원인이 입력값이므로 AUTH_ERROR로 분류해 토큰 재입력
+  //    경로를 타게 한다 — 호출부(AvgPriceEditPanel)가 이미 그 흐름을 갖고 있다.
+  if (!isHeaderSafeToken(token)) {
+    const e = new Error('토큰에 한글 등 사용할 수 없는 문자가 있습니다 (영문·숫자·기호만 가능)');
     e.code = 'AUTH_ERROR';
     throw e;
   }
