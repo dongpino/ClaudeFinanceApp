@@ -679,10 +679,14 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
                   className={`ind-toggle${drawMode ? ' on draw' : ''}`}
                   onClick={() => setDrawMode(v => !v)}
                   title={drawMode
-                    ? '차트를 두 번 클릭해 시작점·끝점을 찍습니다 (ESC 취소)'
+                    ? '추세선 — 차트를 두 번 클릭해 시작점·끝점을 찍습니다 (ESC 취소)'
                     : '추세선 그리기 — 켜면 차트 클릭이 점 찍기로 해석됩니다'}
                 >
-                  <span className="ind-dot draw" />{drawMode ? '그리는 중' : '그리기'}
+                  {/* 버튼 이름은 **도구 이름**이다 — 피보나치가 붙으면 도구별 버튼이 되므로
+                      '그리기'라는 총칭은 그때 어느 도구인지를 말하지 못한다. 켜진 상태에만
+                      '그리는 중'을 덧붙이는 이유는 이 토글이 다른 토글(거래량·MA)과 달리
+                      **차트 클릭의 의미를 바꾸기** 때문이다 — 표시가 곧 모드 경고다. */}
+                  <span className="ind-dot draw" />{drawMode ? '추세선 그리는 중' : '추세선'}
                 </button>
                 <span className="analysis-shape-count">도형 {shapes.length}개</span>
                 {shapes.length > 0 && (
