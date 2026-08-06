@@ -33,6 +33,33 @@ const SR_HOVER_TOLERANCE_PX = 12;
 // 선에서 벗어나도 즉시 숨기지 않고 이 시간(ms) 동안 대기 — 그 사이 X 버튼에 도달하면 유지되어
 // hover 판정이 버튼 표시/숨김을 빠르게 반복하는 깜빡임을 막는다.
 const SR_HOVER_HIDE_DELAY_MS = 180;
+
+// ── hover 중재 z레벨 ────────────────────────────────────────────────────
+// 값이 클수록 위. **화면 렌더 순서와 일치시킨 값이다.** 도형은 Series Primitive이고 그
+// paneView가 zOrder 'top'을 돌려주므로 캔들 위에 그려진다(drawingPrimitive.js). S/R은
+// 라이브러리 네이티브 createPriceLine이라 그 아래에 깔린다. 눈에 위에 보이는 것이 잡히는
+// 것과 같아야 하므로 순서를 그대로 옮겼다. 도구가 늘면 이 표에 값만 부여한다.
+const HOVER_LEVEL = { SHAPE: 20, SR: 10 };
+
+/**
+ * 겹친 hover 후보 중 승자 하나. 없으면 null.
+ *
+ * ⚠️ **거리를 인자로 받지 않는다.** S/R은 가격축 수직 거리, 도형은 점-선분 거리라 척도가
+ *    달라 같은 6px이 두 계통에서 다른 근접도를 뜻한다 — 비교가 성립하지 않는다. 인자로
+ *    두면 언젠가 쓰게 되므로 애초에 받지 않는다. 중재는 z레벨 하나로만 한다.
+ * ⚠️ 도형 계통 **내부**의 우선순위(어느 도형이 잡히는가)는 hitTest가 이미 정한다. 여기는
+ *    "도형 계통이 이겼다"까지만 안다.
+ *
+ * @returns {{level:number, kind:'shape'|'sr', hit:object}|null}
+ */
+function pickHoverWinner(shapeHit, srHit) {
+  const cands = [];
+  if (shapeHit) cands.push({ level: HOVER_LEVEL.SHAPE, kind: 'shape', hit: shapeHit });
+  if (srHit)    cands.push({ level: HOVER_LEVEL.SR,    kind: 'sr',    hit: srHit });
+  if (!cands.length) return null;
+  return cands.reduce((a, b) => (b.level > a.level ? b : a));
+}
+
 const fp = n => n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const roundPrice = n => Math.round(n * 100) / 100;
 
@@ -116,6 +143,9 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   // 표시/숨김이 반복되는 깜빡임을 막기 위함.
   const isHoveringDelBtnRef = useRef(false);
   const hoverHideTimerRef   = useRef(null);
+  // 이번 crosshairMove의 S/R 후보 — 표시하지 않고 담아만 둔다. 같은 이벤트에서 뒤이어
+  // 발화하는 도형 콜백이 이 값을 읽어 중재한다(합류 지점은 도형 콜백 하나뿐이다).
+  const srHitRef = useRef(null);
 
   // 수동 지지/저항선 — 최신 props를 ref에 미러링해 effect/이벤트 콜백에서 항상
   // 최신 값을 읽는다(콜백은 chart 생성 시점 클로저라 stale closure 위험이 있음).
@@ -436,21 +466,33 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     // 모바일: 단순 탭은 touchmove가 없어 crosshairMove가 갱신되지 않으므로,
     // 클릭/탭 모두에서 발생하는 subscribeClick도 같은 로직으로 병행 구독한다
     // (탭 → 표시, 다른 곳 탭 → 갱신/숨김).
-    function updateHoverLine(param) {
+    // 판정만 한다 — 표시 여부는 중재가 정한다. 판정 내용은 종전 그대로다.
+    function findSRHit(param) {
       const ms = mainSeriesRef.current;
-      if (!ms || !param.point) { scheduleHoverLineHide(); return; }
-      let hit = null;
+      if (!ms || !param.point) return null;
       for (const p of srPricesRef.current) {
         const coord = ms.priceToCoordinate(p);
         if (coord !== null && Math.abs(coord - param.point.y) <= SR_HOVER_TOLERANCE_PX) {
-          hit = { price: p, y: coord };
-          break;
+          return { price: p, y: coord };
         }
       }
+      return null;
+    }
+
+    function updateHoverLine(param) {
+      const hit = findSRHit(param);
       if (hit) showHoverLine(hit);
       else scheduleHoverLineHide();
     }
-    chart.subscribeCrosshairMove(updateHoverLine);
+
+    // ⚠️ **이 구독이 도형 hover 구독(아래)보다 먼저 등록돼야 한다.** 같은 델리게이트에
+    //    등록순으로 동기 발화하므로(rAF·디바운스 없음 — 실측), 여기서 담아 둔 후보를 같은
+    //    이벤트 안에서 도형 콜백이 읽어 중재할 수 있다. 두 구독의 순서를 바꾸면 도형 콜백이
+    //    **직전 프레임의** S/R 후보를 보게 되어 중재가 한 프레임씩 어긋난다.
+    //    그래서 여기서는 표시하지 않는다 — 표시는 합류 지점(도형 콜백) 한 곳에서만 한다.
+    chart.subscribeCrosshairMove(param => { srHitRef.current = findSRHit(param); });
+    // 터치 탭 경로는 중재 대상이 아니다 — 탭에는 crosshairMove가 없어(실측) 도형 콜백이
+    // 아예 발화하지 않는다. 중재할 상대가 없으므로 종전대로 여기서 바로 표시한다.
     chart.subscribeClick(updateHoverLine);
 
     // 그리기 모드 클릭 수집 — 모드가 꺼져 있으면 handleDrawClick이 첫 줄에서 반환한다.
@@ -482,12 +524,26 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     // ⚠️ **끝점 위에서는 ×를 띄우지 않는다.** 끝점은 드래그(이동) 자리이고, 되돌릴 수 없는
     //    조작(삭제)이 그 위에 겹치면 안 된다 — hitTest의 우선순위 규칙과 같은 근거다.
     // ⚠️ 그리기 모드·드래그 중에는 판정 자체를 하지 않는다(그때 클릭·이동의 의미가 다르다).
+    // ⚠️ **여기가 두 계통의 합류 지점이다.** S/R 구독(위)보다 **나중에 등록돼야** 한다 —
+    //    srHitRef가 이번 이벤트 값으로 채워진 뒤에 읽어야 하기 때문이고, 등록 순서가 곧
+    //    중재 순서다. 표시/숨김은 두 계통 모두 이 콜백 안에서만 결정된다.
     chart.subscribeCrosshairMove(param => {
-      if (drawPropsRef.current.drawTool || dragRef.current) return;
-      if (!param?.point) { scheduleShapeHoverHide(); return; }
-      const hit = hitShapeAt(param.point.x, param.point.y);
-      if (hit?.kind === 'segment') {
-        showShapeHover({ id: hit.id, x: param.point.x, y: param.point.y, sticky: false });
+      const srHit = srHitRef.current;
+      // 그리기·드래그 중에는 도형 계통이 판정에 참여하지 않는다(그때 커서의 의미가 다르다).
+      // 그래도 S/R 쪽 결정은 내려야 하므로, 후보만 비운 채 중재를 그대로 태운다.
+      const busy = Boolean(drawPropsRef.current.drawTool || dragRef.current);
+      const hit  = (!busy && param?.point) ? hitShapeAt(param.point.x, param.point.y) : null;
+      // ⚠️ 끝점은 도형 후보로 치지 않는다 — 끝점 위에서는 ×를 띄우지 않는 기존 규칙 그대로다
+      //    (드래그 자리에 되돌릴 수 없는 조작을 겹치지 않는다). 그래서 끝점 위에서는 S/R이 이긴다.
+      const winner = pickHoverWinner(hit?.kind === 'segment' ? hit : null, srHit);
+
+      if (winner?.kind === 'sr') showHoverLine(winner.hit);
+      else scheduleHoverLineHide();
+
+      // 그리기·드래그 중에는 도형 hover 상태를 건드리지 않는다(beginDrag가 이미 숨겼다).
+      if (busy) return;
+      if (winner?.kind === 'shape') {
+        showShapeHover({ id: winner.hit.id, x: param.point.x, y: param.point.y, sticky: false });
       } else {
         scheduleShapeHoverHide();
       }
