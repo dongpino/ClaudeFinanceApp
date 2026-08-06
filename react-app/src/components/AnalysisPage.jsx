@@ -29,6 +29,21 @@ function matchesIndexQuery(item, q) {
 // 검색 결과 클릭으로 코스피를 선택했을 때와 완전히 같은 객체 모양을 보장한다.
 const DEFAULT_ITEM = INDEX_ITEMS.find(it => it.id === 'kospi');
 
+// 추세선의 **신규 생성 진입점**만 끈다(2026-08-06). 작은 화면에서 두 점의 각도를 세밀하게
+// 맞추는 조작이 실용적이지 않다는 사용성 판단이고, 기능 제거가 아니다. 그래서 렌더링·hover·
+// × 삭제·드래그·저장 데이터(finance_drawings_v1)와 공용 기반(Shape 자료구조·hitTest·
+// drawingGeometry·중재자)은 전부 그대로 두고, 이 파일의 툴바 버튼 노출만 막는다.
+// 이미 그어 둔 추세선은 계속 보이고 그대로 조작된다. 피보나치는 2점 이후 레벨이 자동
+// 계산돼 조작 부담이 낮으므로 유지한다.
+//
+// **되돌리기: 이 값을 true로 바꾸면 끝이다.** 다른 곳은 손댈 것이 없다.
+//
+// ⚠️ 이 코드베이스의 VITE_HIDE_WATCHLIST 패턴(import.meta.env)을 따르지 않았다. 그 플래그는
+//    **배포본을 가르는** 값이라(Preview 빌드에서만 '1') 미설정이 곧 "감추지 않음"이고 그게
+//    의도와 맞는다. 여기는 배포와 무관한 제품 결정이라 환경변수로 두면 Vercel 3개 환경에
+//    값을 넣기 전까지 버튼이 다시 보인다 — 기본값이 의도의 반대가 된다. 그래서 상수로 둔다.
+const SHOW_TRENDLINE_TOOL = false;
+
 const TF_OPTIONS = [
   { value: '1m',  label: '1분'   },
   { value: '5m',  label: '5분'   },
@@ -683,6 +698,8 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
                 {/* 도구 버튼 — 하나를 켜면 다른 하나는 자동으로 꺼진다(toggleDrawTool).
                     켜진 상태에만 '그리는 중'을 덧붙이는 이유는 이 토글이 다른 토글(거래량·MA)과
                     달리 **차트 클릭의 의미를 바꾸기** 때문이다 — 표시가 곧 모드 경고다. */}
+                {/* 노출만 막는다 — 버튼 코드는 지우지 않는다(SHOW_TRENDLINE_TOOL 주석 참조). */}
+                {SHOW_TRENDLINE_TOOL && (
                 <button
                   className={`ind-toggle${drawTool === DRAWING_TYPE.TRENDLINE ? ' on draw' : ''}`}
                   onClick={() => toggleDrawTool(DRAWING_TYPE.TRENDLINE)}
@@ -693,6 +710,7 @@ export default function AnalysisPage({ activePage, onPageChange, pendingSelectio
                   <span className="ind-dot draw" />
                   {drawTool === DRAWING_TYPE.TRENDLINE ? '추세선 그리는 중' : '추세선'}
                 </button>
+                )}
                 <button
                   className={`ind-toggle${drawTool === DRAWING_TYPE.FIB ? ' on draw' : ''}`}
                   onClick={() => toggleDrawTool(DRAWING_TYPE.FIB)}
