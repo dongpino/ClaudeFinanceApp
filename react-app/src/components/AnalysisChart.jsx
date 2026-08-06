@@ -5,7 +5,9 @@ import { useTheme } from '../ThemeContext';
 import { loadLines as loadSRLines, saveLines as saveSRLines } from '../srLinesStore';
 // DRAWING_TYPE을 여기서 import하지 않는다 — 이 컴포넌트는 켜진 도구 이름을 prop으로 받아
 // 그대로 나르기만 하고, 도형 종류를 **아는** 쪽은 툴바(AnalysisPage)와 렌더러다.
-import { saveDrawings, makeShape } from '../drawingsStore';
+// drawingLabel은 그 규칙의 예외가 아니라 연장이다 — type 값이 아니라 type→문구 변환을
+// 통째로 넘겨받으므로, 여기는 여전히 도형 종류를 모른다.
+import { saveDrawings, makeShape, drawingLabel } from '../drawingsStore';
 import { DrawingPrimitive } from '../drawingPrimitive';
 import { hitTest, movePointsParallel } from '../drawingGeometry';
 import { createInteractionLock } from '../chartInteractionLock';
@@ -352,6 +354,15 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   function hitShapeAt(x, y) {
     const prim = drawPrimRef.current;
     return prim ? hitTest(prim.segments(), x, y) : null;
+  }
+
+  /**
+   * 도형 id → 표시용 이름. **shapeHover에는 type이 없다**({ id, x, y, sticky }) — 그 상태
+   * 형태를 건드리면 표시·숨김·중재 경로가 전부 영향권에 들어가므로, 상태는 그대로 두고
+   * 목록에서 id로 찾아 **읽기만** 한다. 못 찾으면 drawingLabel이 중립 문구로 답한다.
+   */
+  function shapeLabel(id) {
+    return drawingLabel(shapesRef.current.find(s => s.id === id)?.type);
   }
 
   function deleteShape(id) {
@@ -1098,7 +1109,7 @@ const AnalysisChart = forwardRef(function AnalysisChart({
             onTouchStart={e => e.stopPropagation()}
             onMouseEnter={() => { isHoveringShapeDelRef.current = true; clearShapeHoverTimer(); }}
             onMouseLeave={() => { isHoveringShapeDelRef.current = false; scheduleShapeHoverHide(); }}
-            aria-label="추세선 삭제"
+            aria-label={`${shapeLabel(shapeHover.id)} 삭제`}
           >
             <span className="sr-line-del-btn-dot">×</span>
           </button>
