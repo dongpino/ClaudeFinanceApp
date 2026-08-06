@@ -507,7 +507,13 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     const onPointerDown = e => {
       if (drawPropsRef.current.drawTool) return;
       const pt = paneCoordsFrom(e);
-      const hit = hitShapeAt(pt.x, pt.y);
+      // ⚠️ **판정 좌표만 floor한다.** 나머지 두 hitShapeAt 호출처(:419 더블클릭 가드, :488 hover)는
+      //    lightweight-charts의 param.point를 쓰는데 그 값이 정수 내림이다(실측: pointer.px
+      //    199.69997 → click.px 199, Δ 값역 [0,1)). 여기만 소수를 유지하면 같은 화면에서
+      //    거리 기준이 갈리고, 두 계통의 거리를 비교하는 중재자가 동점 부근에서 뒤집힌다.
+      // ⚠️ pt 본체를 깎지 않는 이유: :514/:525 몸통 드래그 기준점과 :528 × 위치는 원본 소수
+      //    좌표를 그대로 받아야 한다(깎으면 각각 1px 계단화·위치 튐). 그래서 이 호출부에서만 맞춘다.
+      const hit = hitShapeAt(Math.floor(pt.x), Math.floor(pt.y));
       // 끝점이 몸통을 이긴다 — 우선순위는 hitTest가 이미 정한다(drawingGeometry의 ① 규칙).
       if (hit?.kind === 'endpoint') { startEndpointDrag(hit); return; }
       // ── 마우스: 몸통을 잡으면 곧바로 평행 이동 ─────────────────────────
