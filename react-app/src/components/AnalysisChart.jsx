@@ -407,6 +407,16 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       // 연달아 찍을 때 더블클릭으로도 판정돼 의도치 않은 지지/저항선이 함께 생긴다.
       // (모드가 꺼져 있으면 이 줄은 통과되므로 기존 동작은 그대로다.)
       if (drawPropsRef.current.drawTool) return;
+      // 도형(추세선·피보나치) 몸통 위에서의 더블클릭은 S/R 생성으로 보지 않는다.
+      // 위 가드는 **그리는 중**만 막는다 — 도구가 꺼진 평상시에도 도형 위를 더블클릭하면
+      // 아래 dedupe가 기존 **S/R 선과의 거리만** 재고 도형은 보지 않으므로, 이미 그어 둔
+      // 추세선·피보나치 레벨선 위에 S/R 선이 겹쳐 생긴다(그리기 중이 아니라 평소 조작에서 난다).
+      // ⚠️ **S/R 계통이 도형 계통을 참조하는 첫 지점이다.** 지금까지 두 계통은 저장 키만
+      //    공유하고 로직은 서로를 몰랐다. 여기서는 hitShapeAt의 **판정만** 빌려 쓰고 도형 쪽
+      //    상태(shapeHover 등)는 건드리지 않는다 — 결합을 이 한 줄에 가둬 두기 위함이다.
+      // ⚠️ param.point가 없으면 도형 판정 자체가 불가능하므로 막지 않고 기존 동작을 따른다
+      //    (판정 불가를 차단으로 바꾸지 않는다 — 그 경우는 바로 아래 줄이 종전대로 처리한다).
+      if (param.point && hitShapeAt(param.point.x, param.point.y)?.kind === 'segment') return;
       const ms = mainSeriesRef.current;
       if (!ms || !param.point) return;
       const clickedPrice = ms.coordinateToPrice(param.point.y);
