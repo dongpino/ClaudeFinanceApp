@@ -146,6 +146,9 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   // 이번 crosshairMove의 S/R 후보 — 표시하지 않고 담아만 둔다. 같은 이벤트에서 뒤이어
   // 발화하는 도형 콜백이 이 값을 읽어 중재한다(합류 지점은 도형 콜백 하나뿐이다).
   const srHitRef = useRef(null);
+  // 직전 프레임의 승자 계통('shape' | 'sr' | null) — 이탈과 전환을 가르는 유일한 기준이다.
+  // 이탈(→null)은 지연 숨김, 전환(A→B)은 즉시 숨김.
+  const hoverWinnerRef = useRef(null);
 
   // 수동 지지/저항선 — 최신 props를 ref에 미러링해 effect/이벤트 콜백에서 항상
   // 최신 값을 읽는다(콜백은 chart 생성 시점 클로저라 stale closure 위험이 있음).
@@ -319,11 +322,21 @@ const AnalysisChart = forwardRef(function AnalysisChart({
     }
   }
   function showShapeHover(next) { clearShapeHoverTimer(); setShapeHover(next); }
-  function scheduleShapeHoverHide() {
+  /**
+   * @param {boolean} immediate 전환(승자 교체)이면 true — 지연 없이 지운다.
+   *   지연(SR_HOVER_HIDE_DELAY_MS)은 **이탈**("커서가 대상에서 벗어났다")을 위한 것이다.
+   *   전환에 그 지연이 걸리면 새 승자는 이미 떠 있는데 진 쪽이 180ms 더 남아, 두 ×가
+   *   함께 보이는 구간이 생긴다 — ⑤-1의 "하나만 표시"가 그 구간에서 깨진다.
+   *   ⚠️ immediate 여부와 무관하게 **가드는 그대로다**(버튼 위 hover·sticky). 바꾸는 것은
+   *      숨기는 '시점'이지 '여부'가 아니다.
+   */
+  function scheduleShapeHoverHide(immediate = false) {
     if (isHoveringShapeDelRef.current) return;
     if (shapeHoverRef.current?.sticky) return; // 탭 선택은 다른 곳을 탭해야 풀린다
     if (!shapeHoverRef.current) return;
-    clearShapeHoverTimer();
+    clearShapeHoverTimer();                    // ⚠️ 예약분을 먼저 지운다 — 남으면 뒤늦게
+                                               //    발화해 전환으로 새로 띄운 ×를 지운다.
+    if (immediate) { setShapeHover(null); return; }
     shapeHoverTimerRef.current = setTimeout(() => {
       shapeHoverTimerRef.current = null;
       if (!isHoveringShapeDelRef.current && !shapeHoverRef.current?.sticky) setShapeHover(null);
@@ -364,9 +377,11 @@ const AnalysisChart = forwardRef(function AnalysisChart({
   }
 
   // 즉시 숨기지 않고 디바운스 — 버튼에 마우스가 있으면 아예 예약하지 않는다.
-  function scheduleHoverLineHide() {
+  // immediate의 의미와 근거는 scheduleShapeHoverHide와 같다(전환은 지연 없이, 이탈은 지연).
+  function scheduleHoverLineHide(immediate = false) {
     if (isHoveringDelBtnRef.current) return;
-    clearHoverHideTimer();
+    clearHoverHideTimer();                     // ⚠️ 예약분 제거 — 이유는 도형 쪽과 동일.
+    if (immediate) { setHoverLine(null); return; }
     hoverHideTimerRef.current = setTimeout(() => {
       hoverHideTimerRef.current = null;
       if (!isHoveringDelBtnRef.current) setHoverLine(null);
@@ -426,6 +441,10 @@ const AnalysisChart = forwardRef(function AnalysisChart({
 
     // ── 수동 지지/저항선 복원 (symbol 기준으로 저장 — tf 변경/차트 재생성에 영향 없음) ──
     srLineObjsRef.current.clear();
+    // 차트가 새로 생기면 중재 상태도 새로 시작한다 — 이전 종목의 승자가 남아 있으면
+    // 첫 이벤트가 전환으로 오판돼 지연 없이 지워진다(증상은 작지만 상태가 거짓이다).
+    srHitRef.current = null;
+    hoverWinnerRef.current = null;
     const restoredPrices = loadSRLines(symbolKey);
     for (const price of restoredPrices) createSRLineObj(price);
     srPricesRef.current = restoredPrices;
@@ -537,15 +556,23 @@ const AnalysisChart = forwardRef(function AnalysisChart({
       //    (드래그 자리에 되돌릴 수 없는 조작을 겹치지 않는다). 그래서 끝점 위에서는 S/R이 이긴다.
       const winner = pickHoverWinner(hit?.kind === 'segment' ? hit : null, srHit);
 
-      if (winner?.kind === 'sr') showHoverLine(winner.hit);
-      else scheduleHoverLineHide();
+      // 이탈이냐 전환이냐 — 진 쪽을 언제 지울지는 이 한 줄이 정한다.
+      // 승자가 있는데 직전 승자와 **계통이 다르면** 전환이다(A→B). 이때 진 쪽은 지연 없이
+      // 지운다 — 새 승자는 아래에서 동기로 뜨므로, 지연을 두면 그 시간만큼 두 ×가 겹친다.
+      // 승자가 없어지는 것(→null)은 이탈이므로 종전의 180ms 지연을 그대로 쓴다.
+      const kind      = winner?.kind ?? null;
+      const switching = kind !== null && hoverWinnerRef.current !== null && kind !== hoverWinnerRef.current;
+      hoverWinnerRef.current = kind;
+
+      if (kind === 'sr') showHoverLine(winner.hit);
+      else scheduleHoverLineHide(switching);
 
       // 그리기·드래그 중에는 도형 hover 상태를 건드리지 않는다(beginDrag가 이미 숨겼다).
       if (busy) return;
-      if (winner?.kind === 'shape') {
+      if (kind === 'shape') {
         showShapeHover({ id: winner.hit.id, x: param.point.x, y: param.point.y, sticky: false });
       } else {
-        scheduleShapeHoverHide();
+        scheduleShapeHoverHide(switching);
       }
     });
 
