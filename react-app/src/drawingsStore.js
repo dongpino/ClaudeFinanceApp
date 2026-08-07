@@ -32,6 +32,32 @@ export const DRAWING_TYPE = {
   FIB:       'fib',
 };
 
+/**
+ * 도형 종류의 사람이 읽는 이름. **DRAWING_TYPE 바로 옆에 둔다** — 도구가 늘면 이 표
+ * 한 곳만 고치면 되고, 문구를 쓰는 쪽(삭제 버튼 aria-label 등)은 type 값을 몰라도 된다.
+ */
+const DRAWING_TYPE_LABEL = {
+  [DRAWING_TYPE.TRENDLINE]: '추세선',
+  [DRAWING_TYPE.FIB]:       '피보나치',
+};
+
+/** 모르는 type이거나 도형을 못 찾았을 때 쓰는 중립 문구. */
+export const DRAWING_LABEL_FALLBACK = '도형';
+
+/**
+ * 표시용 이름 하나. 조회만 하고 아무것도 바꾸지 않는다.
+ *
+ * ⚠️ **폴백을 특정 종류(예: '추세선')로 두지 않는다.** 한 종류로 폴백하면 다른 종류가 그
+ *    이름으로 읽히고, 그게 이 함수가 생긴 이유 그대로다 — 도형 삭제 버튼의 aria-label이
+ *    Fib에서도 "추세선 삭제"로 읽혔다(공용 버튼 하나에 문구가 하드코딩돼 있었다).
+ *
+ * @param {string|undefined} type Shape.type
+ * @returns {string}
+ */
+export function drawingLabel(type) {
+  return DRAWING_TYPE_LABEL[type] ?? DRAWING_LABEL_FALLBACK;
+}
+
 function loadAll() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');

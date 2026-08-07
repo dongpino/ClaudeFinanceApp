@@ -1432,24 +1432,139 @@ function IssueSection({ phase, issues }) {
 // 안으로 이동해 버튼 바로 아래(미생성 상태) 또는 헤더와 본문 사이(표시 상태)에
 // 인라인으로 삽입된다 — 호출부(BriefingPage 본체/HistoryDetailBody)에서
 // historyPhase==='done' && dates.length>0일 때만 렌더하도록 가드한다.
+// 데스크톱 전용 입력 수단(아래 (a)(b)) — 이 줄은 overflow-x:auto라 예전부터 넘치고
+// 있었지만(실측: 더보기 후 scrollWidth 1691 vs clientWidth 데스크톱 1218 / 모바일 328)
+// 데스크톱에는 그걸 움직일 입력이 하나도 없었다. 스크롤바는 index.css의
+// .brf-history-scroll::-webkit-scrollbar { display:none }으로 숨겨져 있고(디자인 결정,
+// 그대로 둔다), 일반 마우스 휠은 deltaY만 보내며, 드래그 스크롤은 없다. 그래서
+// 오른쪽 끝 칩에 영영 닿을 수 없었다. 모바일 터치 스와이프는 이미 정상 동작하므로
+// (a)(b) 어느 쪽도 터치 경로를 건드리지 않는다.
+const ARROW_SCROLL_RATIO = 0.8; // 화살표 1클릭 = 보이는 폭의 80%(문맥 칩 몇 개를 남긴다)
+// 끝 도달 판정 여유. scrollLeft는 소수가 될 수 있는데(브라우저 배율·HiDPI)
+// scrollWidth/clientWidth는 정수로 반올림돼 "끝에 닿았는데 atEnd가 false"가 남는다.
+// 그 상태가 남으면 (a)의 경계 해제가 영영 안 걸려 페이지 세로 스크롤이 막힌다.
+const EDGE_EPS = 1;
+
 function HistoryChipRow({ dates, selectedDate, showAll, onToggleShowAll, onSelectDate }) {
   const visible = dates.slice(0, showAll ? 30 : 7);
   const hasMore = !showAll && dates.length > 7;
 
+  const rowRef = useRef(null);
+  // overflowing: 화살표를 렌더할지 / atStart·atEnd: 해당 방향 화살표를 비활성할지
+  const [nav, setNav] = useState({ overflowing: false, atStart: true, atEnd: true });
+
+  const syncNav = useCallback(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    // scroll 이벤트마다 새 객체로 setState하면 스크롤 프레임마다 리렌더가 돈다 —
+    // 세 값이 그대로면 이전 객체를 그대로 돌려 리렌더를 끊는다.
+    setNav(prev => {
+      const overflowing = max > EDGE_EPS;
+      const atStart     = el.scrollLeft <= EDGE_EPS;
+      const atEnd       = el.scrollLeft >= max - EDGE_EPS;
+      return prev.overflowing === overflowing && prev.atStart === atStart && prev.atEnd === atEnd
+        ? prev
+        : { overflowing, atStart, atEnd };
+    });
+  }, []);
+
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+
+    // (a) 세로 휠 → 가로 스크롤 변환.
+    // React의 onWheel은 루트 컨테이너에 passive로 위임되므로(런타임 확인: div#root의
+    // wheel 리스너 passive=true) 거기서는 preventDefault가 듣지 않는다. 그래서 엘리먼트에
+    // 직접 { passive: false }로 건다.
+    function onWheel(e) {
+      const max = el.scrollWidth - el.clientWidth;
+      // 넘치지 않으면 가로챌 이유가 없다 — 가로채면 이 줄 위에서 페이지가 안 내려간다.
+      if (max <= EDGE_EPS) return;
+      // 가로 성분이 주인 입력(트랙패드 가로 제스처)은 브라우저 기본 동작이 이미 옳다.
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+
+      // deltaMode: 0=픽셀, 1=줄, 2=페이지. Chrome 마우스 휠은 0이지만 Firefox는 1(줄)로
+      // 준다 — 정규화하지 않으면 한 노치에 3px씩만 움직인다.
+      const unit  = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientWidth : 1;
+      const delta = e.deltaY * unit;
+
+      // 경계 정책: 그 방향으로 더 갈 곳이 없으면 preventDefault 없이 그대로 흘려보내
+      // 브라우저가 조상(.briefing-scroll)의 세로 스크롤을 이어가게 한다. 끝에 닿은 뒤에도
+      // 계속 가로채면 칩 줄 위에서 페이지가 영영 안 내려가는 게 이 변경의 가장 흔한 사고다.
+      if (delta < 0 && el.scrollLeft <= EDGE_EPS) return;
+      if (delta > 0 && el.scrollLeft >= max - EDGE_EPS) return;
+
+      e.preventDefault();
+      el.scrollLeft = Math.max(0, Math.min(max, el.scrollLeft + delta));
+    }
+    el.addEventListener('wheel', onWheel, { passive: false });
+
+    // 끝 도달 여부는 스크롤 위치에서만 바뀐다 — preventDefault를 쓰지 않으므로 passive.
+    el.addEventListener('scroll', syncNav, { passive: true });
+    // 넘침 여부는 clientWidth가 바뀔 때 바뀐다: 창 크기 변경, 그리고 날짜 선택으로 칩 줄이
+    // .brf-ai-result 안으로 옮겨 붙는 경우. resize 이벤트는 창에만 반응해 후자를 놓치므로
+    // ResizeObserver를 쓴다(관찰 시작 시 1회 발화하므로 초기 동기화도 겸한다).
+    const ro = new ResizeObserver(syncNav);
+    ro.observe(el);
+
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('scroll', syncNav);
+      ro.disconnect();
+    };
+  }, [syncNav]);
+
+  // 칩 개수 변화(더보기 7→30)는 scrollWidth만 바꾸고 el 자신의 박스 크기는 그대로여서
+  // ResizeObserver가 울리지 않는다 — 렌더 후 직접 재계산한다.
+  useEffect(syncNav, [syncNav, visible.length, hasMore]);
+
+  function scrollByPage(dir) {
+    const el = rowRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * el.clientWidth * ARROW_SCROLL_RATIO, behavior: 'smooth' });
+  }
+
+  // (b) 좌우 화살표. 칩 줄과 **나란히** 놓아(겹치지 않게) 칩 클릭을 가리지 않는다.
+  // 칩은 최신순(왼쪽이 최신)이라 좌=최근 쪽, 우=지난 쪽으로 읽어 aria-label을 붙인다.
   return (
-    <div className="brf-history-scroll">
-      {visible.map(date => (
+    <div className="brf-history-nav">
+      {nav.overflowing && (
         <button
-          key={date}
-          className={`brf-history-chip${selectedDate === date ? ' active' : ''}`}
-          onClick={() => onSelectDate(date)}
+          type="button"
+          className="brf-history-arrow"
+          aria-label="최근 날짜 쪽으로 스크롤"
+          disabled={nav.atStart}
+          onClick={() => scrollByPage(-1)}
         >
-          {formatHistoryChipDate(date)}
+          ‹
         </button>
-      ))}
-      {hasMore && (
-        <button className="brf-history-chip brf-history-more" onClick={onToggleShowAll}>
-          더보기
+      )}
+      <div className="brf-history-scroll" ref={rowRef}>
+        {visible.map(date => (
+          <button
+            key={date}
+            className={`brf-history-chip${selectedDate === date ? ' active' : ''}`}
+            onClick={() => onSelectDate(date)}
+          >
+            {formatHistoryChipDate(date)}
+          </button>
+        ))}
+        {hasMore && (
+          <button className="brf-history-chip brf-history-more" onClick={onToggleShowAll}>
+            더보기
+          </button>
+        )}
+      </div>
+      {nav.overflowing && (
+        <button
+          type="button"
+          className="brf-history-arrow"
+          aria-label="지난 날짜 쪽으로 스크롤"
+          disabled={nav.atEnd}
+          onClick={() => scrollByPage(1)}
+        >
+          ›
         </button>
       )}
     </div>
